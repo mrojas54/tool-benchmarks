@@ -6,19 +6,20 @@
 
 **Architecture:** A shared parser (`transcript.py`) turns `~/.claude/projects/**/*.jsonl` into normalized, id-joined `ToolCall` records. Two consumers sit on top: `passive.py` aggregates history into a per-tool cost leaderboard + ToolSearch deferral-tax callout, and `probe.py` scores sentinel-marked active probes into a controlled tool-vs-Bash comparison table.
 
-**Tech Stack:** Python 3 standard library only (`json`, `dataclasses`, `pathlib`, `statistics`, `argparse`, `datetime`, `unittest`). No third-party packages.
+**Tech Stack:** Python 3 standard library only at *runtime* (`json`, `dataclasses`, `pathlib`, `statistics`, `argparse`, `datetime`, `unittest`) — the shipped `toolbench` package imports nothing third-party. The *project* is managed with **uv**: `pyproject.toml` + `uv.lock` pin the interpreter and the dev-only toolchain (`ruff`, `mypy`, `pytest`), installed via `uv add --dev` and run via `uv run`. Runtime deps stay empty.
 
 ## Global Constraints
 
 Every task's requirements implicitly include these. Values copied verbatim from the design spec (`docs/2026-07-07-tool-benchmarks-design.md`):
 
-- **Python standard library only** — no third-party dependencies, so the harness runs anywhere `python3` exists.
+- **Python standard library only (runtime)** — the shipped `toolbench` package has zero third-party imports, so the harness runs anywhere `python3` exists. Dev tooling (`ruff`, `mypy`, `pytest`) lives under `[dependency-groups] dev` in `pyproject.toml`, never in runtime deps.
+- **uv-managed project** — `uv init` bootstraps `pyproject.toml`; deps added only via `uv add --dev <pkg>` (never `pip install`); tools run via `uv run <cmd>`. `pyproject.toml` and `uv.lock` are committed.
 - **Read-only** over `~/.claude/projects` — no transcript mutation.
 - **Markdown output only** — no HTML report (that stays owned by the `session-report` skill).
 - **No live token-API calls** — all numbers derive from on-disk transcripts.
 - **Token estimate convention:** `est_tokens(chars) = chars / 4`, applied identically to inputs and outputs.
 - **Fixed active-probe corpus:** the 5 files in `/Users/michellerojas/c11-sidequests` — no unrelated refactors of that corpus.
-- **Runnable from repo root** as `python3 -m toolbench.passive` / `python3 -m toolbench.probe`; tests via `python3 -m unittest discover tests`.
+- **Runnable from repo root** as `uv run python -m toolbench.passive` / `uv run python -m toolbench.probe` (or bare `python3 -m ...` outside the uv env); tests via `uv run python -m unittest discover tests`.
 - **Malformed input is never fatal** — bad JSONL lines are counted, skipped, and surfaced in the report footer.
 
 ---
@@ -27,6 +28,8 @@ Every task's requirements implicitly include these. Values copied verbatim from 
 
 | Path | Responsibility |
 |------|----------------|
+| `pyproject.toml` | uv project manifest: interpreter pin, empty runtime deps, `dev` group (`ruff`, `mypy`, `pytest`), ruff/mypy config. |
+| `uv.lock` | Locked dev toolchain (committed). |
 | `toolbench/__init__.py` | Package marker (empty). |
 | `toolbench/transcript.py` | Shared substrate: `ToolCall`, `ParseResult`, `result_len`, `parse_session`, `iter_session_files`. |
 | `toolbench/passive.py` | Targets #3 + #2-passive: aggregate history → leaderboard + ToolSearch callout + summary; CLI. |
@@ -48,6 +51,7 @@ Every task's requirements implicitly include these. Values copied verbatim from 
 The pure, dependency-free core: the record type and the result-length normalizer. No file I/O yet.
 
 **Files:**
+- Create: `pyproject.toml` + `uv.lock` (via `uv init` / `uv add --dev`)
 - Create: `toolbench/__init__.py` (empty)
 - Create: `toolbench/transcript.py`
 - Test: `tests/test_transcript.py`
@@ -57,6 +61,43 @@ The pure, dependency-free core: the record type and the result-length normalizer
 - Produces:
   - `ToolCall` dataclass with fields `name: str`, `input_json: str`, `output_chars: int`, `session_id: str`, `ts: str`, `usage: dict | None`, `no_result: bool = False`; and read-only properties `input_chars -> int` (= `len(input_json)`), `tokens -> float` (= `output_chars / 4`), `input_tokens -> float` (= `input_chars / 4`).
   - `result_len(payload) -> int` — normalizes a `toolUseResult` (dict, str, list-of-blocks, or None) to a character count.
+
+- [ ] **Step 0: Scaffold the uv project**
+
+From the repo root, bootstrap the uv-managed project and add the dev-only toolchain:
+
+```bash
+uv init --bare --name toolbench          # writes pyproject.toml, no src/ layout, no sample code
+uv add --dev ruff mypy pytest            # dev group only — runtime deps stay empty
+```
+
+Then edit `pyproject.toml` so it declares the interpreter floor, an empty runtime dependency list, and tool config:
+
+```toml
+[project]
+name = "toolbench"
+version = "0.1.0"
+description = "Measure the real token cost of Claude Code tools from on-disk transcripts."
+requires-python = ">=3.11"
+dependencies = []                        # runtime is stdlib-only — keep this empty
+
+[dependency-groups]
+dev = ["ruff", "mypy", "pytest"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+```
+
+Run `uv sync` to materialize the locked env. Commit `pyproject.toml` and `uv.lock`.
+
+Verify: `uv run python -c "import sys; print(sys.version)"` prints ≥3.11, and `uv run ruff --version` / `uv run mypy --version` / `uv run pytest --version` all resolve.
 
 - [ ] **Step 1: Create the empty package marker**
 
@@ -185,8 +226,8 @@ Expected: PASS (7 tests).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add toolbench/__init__.py toolbench/transcript.py tests/test_transcript.py
-git commit -m "feat: ToolCall record and result_len normalizer"
+git add pyproject.toml uv.lock toolbench/__init__.py toolbench/transcript.py tests/test_transcript.py
+git commit -m "feat: uv scaffold + ToolCall record and result_len normalizer"
 ```
 
 ---
