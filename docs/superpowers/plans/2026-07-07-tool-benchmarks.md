@@ -159,7 +159,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 3: Run tests to verify they fail**
 
-Run: `python3 -m unittest tests.test_transcript -v`
+Run: `uv run python -m unittest tests.test_transcript -v`
 Expected: FAIL / ERROR with `ImportError: cannot import name 'ToolCall'` (module not written yet).
 
 - [ ] **Step 4: Write the minimal implementation**
@@ -220,7 +220,7 @@ def result_len(payload) -> int:
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `python3 -m unittest tests.test_transcript -v`
+Run: `uv run python -m unittest tests.test_transcript -v`
 Expected: PASS (7 tests).
 
 - [ ] **Step 6: Commit**
@@ -311,7 +311,7 @@ class ParseSessionTests(unittest.TestCase):
 
 - [ ] **Step 3: Run tests to verify they fail**
 
-Run: `python3 -m unittest tests.test_transcript -v`
+Run: `uv run python -m unittest tests.test_transcript -v`
 Expected: FAIL with `ImportError: cannot import name 'ParseResult'`.
 
 - [ ] **Step 4: Write the implementation**
@@ -387,7 +387,7 @@ def parse_session(path) -> ParseResult:
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `python3 -m unittest tests.test_transcript -v`
+Run: `uv run python -m unittest tests.test_transcript -v`
 Expected: PASS (14 tests total).
 
 - [ ] **Step 6: Commit**
@@ -459,7 +459,7 @@ class IterSessionFilesTests(unittest.TestCase):
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `python3 -m unittest tests.test_transcript -v`
+Run: `uv run python -m unittest tests.test_transcript -v`
 Expected: FAIL with `ImportError: cannot import name 'iter_session_files'`.
 
 - [ ] **Step 3: Write the implementation**
@@ -488,7 +488,7 @@ def iter_session_files(root="~/.claude/projects", project=None, since=None) -> "
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `python3 -m unittest tests.test_transcript -v`
+Run: `uv run python -m unittest tests.test_transcript -v`
 Expected: PASS (18 tests total).
 
 - [ ] **Step 5: Commit**
@@ -579,7 +579,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `python3 -m unittest tests.test_passive -v`
+Run: `uv run python -m unittest tests.test_passive -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'toolbench.passive'`.
 
 - [ ] **Step 3: Write the implementation**
@@ -719,12 +719,12 @@ if __name__ == "__main__":
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `python3 -m unittest tests.test_passive -v`
+Run: `uv run python -m unittest tests.test_passive -v`
 Expected: PASS (6 tests).
 
 - [ ] **Step 5: Smoke-test the CLI end-to-end**
 
-Run: `python3 -m toolbench.passive --all`
+Run: `uv run python -m toolbench.passive --all`
 Expected: prints `wrote reports/<today>-tool-usage.md (...)` and the file exists with the three `##` sections. (If your `~/.claude/projects` is empty, it prints the "no sessions matched" message and exits 0 — both outcomes are acceptable here.)
 
 - [ ] **Step 6: Commit**
@@ -768,7 +768,7 @@ Fixed, sentinel-marked probe pairs over the 5-file corpus at
 this build ships vs. its Bash equivalent. Execute all probes in one Claude
 Code session, then score with:
 
-    python3 -m toolbench.probe --session <path-to-that-session.jsonl>
+    uv run python -m toolbench.probe --session <path-to-that-session.jsonl>
 
 The scorer locates each call by a unique sentinel substring in the call input.
 Where a tool cannot carry an arbitrary marker, the sentinel is a stable,
@@ -860,7 +860,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 4: Run tests to verify they fail**
 
-Run: `python3 -m unittest tests.test_probe -v`
+Run: `uv run python -m unittest tests.test_probe -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'toolbench.probe'`.
 
 - [ ] **Step 5: Write the implementation**
@@ -959,12 +959,12 @@ if __name__ == "__main__":
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `python3 -m unittest tests.test_probe -v`
+Run: `uv run python -m unittest tests.test_probe -v`
 Expected: PASS (6 tests).
 
 - [ ] **Step 7: Smoke-test the probe CLI**
 
-Run: `python3 -m toolbench.probe --session tests/fixtures/probe_session.jsonl`
+Run: `uv run python -m toolbench.probe --session tests/fixtures/probe_session.jsonl`
 Expected: prints the `# active-probe comparison` table with a measured `Read` row (10) and a seeded search row (`723 (seed)` for the tool arm).
 
 - [ ] **Step 8: Commit**
@@ -989,7 +989,7 @@ Document each entry point and confirm the whole suite passes together.
 
 - [ ] **Step 1: Run the full test suite**
 
-Run: `python3 -m unittest discover tests -v`
+Run: `uv run python -m unittest discover tests -v`
 Expected: PASS — 30 tests (14 transcript + 6 passive + 6 probe + the 4 iter cases counted within transcript). All green before writing the README.
 
 - [ ] **Step 2: Write the README**
@@ -1015,21 +1015,21 @@ From the repo root:
 
 ```bash
 # Passive: history leaderboard + ToolSearch tax + summary
-python3 -m toolbench.passive --all
-python3 -m toolbench.passive --project c11-sidequests --since 2026-07-01T00:00:00Z
-python3 -m toolbench.passive --all --out reports/custom.md
+uv run python -m toolbench.passive --all
+uv run python -m toolbench.passive --project c11-sidequests --since 2026-07-01T00:00:00Z
+uv run python -m toolbench.passive --all --out reports/custom.md
 # -> writes reports/YYYY-MM-DD-tool-usage.md by default
 
 # Active: score sentinel-marked probes from one session
 #   1. Execute the probes in protocols/active-probes.md in a Claude session
 #   2. Score that session's transcript:
-python3 -m toolbench.probe --session ~/.claude/projects/<proj>/<session>.jsonl
+uv run python -m toolbench.probe --session ~/.claude/projects/<proj>/<session>.jsonl
 ```
 
 ## Test
 
 ```bash
-python3 -m unittest discover tests
+uv run python -m unittest discover tests
 ```
 
 ## Layout
