@@ -82,29 +82,29 @@ class ToolCallTests(unittest.TestCase):
 
 class ResultIdPayloadTests(unittest.TestCase):
     def test_id_top_level_only(self) -> None:
-        entry = {"toolUseID": "toolu_1"}
+        entry: dict[str, object] = {"toolUseID": "toolu_1"}
         self.assertEqual(_result_id(entry, None), "toolu_1")
 
     def test_id_block_local_only(self) -> None:
         entry: dict[str, object] = {}
-        block = {"tool_use_id": "toolu_2"}
+        block: dict[str, object] = {"tool_use_id": "toolu_2"}
         self.assertEqual(_result_id(entry, block), "toolu_2")
 
     def test_id_block_local_preferred_when_both_present(self) -> None:
-        entry = {"toolUseID": "toolu_top"}
-        block = {"tool_use_id": "toolu_block"}
+        entry: dict[str, object] = {"toolUseID": "toolu_top"}
+        block: dict[str, object] = {"tool_use_id": "toolu_block"}
         self.assertEqual(_result_id(entry, block), "toolu_block")
 
     def test_id_missing(self) -> None:
         self.assertIsNone(_result_id({}, None))
 
     def test_payload_top_level_only(self) -> None:
-        entry = {"toolUseResult": "abc"}
+        entry: dict[str, object] = {"toolUseResult": "abc"}
         self.assertEqual(_result_payload(entry, None), ("abc", "top_level"))
 
     def test_payload_block_local_wins_over_top_level(self) -> None:
-        entry = {"toolUseResult": {"stale": "decoy"}}
-        block = {"content": "the real payload"}
+        entry: dict[str, object] = {"toolUseResult": {"stale": "decoy"}}
+        block: dict[str, object] = {"content": "the real payload"}
         self.assertEqual(
             _result_payload(entry, block), ("the real payload", "block_local")
         )
