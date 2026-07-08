@@ -1,0 +1,126 @@
+# tool-benchmarks
+
+A re-runnable harness that analyzes **tooling inefficiencies across agent
+systems** — Claude Code, Codex, Hermes, and other
+[AgentsView](https://github.com/)-supported runtimes — from their on-disk
+session transcripts. The goal is evidence for where agent work wastes
+context, time, retries, or tool calls, emitted as a single markdown report.
+
+Builds on the native-tool-vs-Bash benchmarking methodology from claude-mem
+observation #8376.
+
+## What it measures
+
+1. **Cross-agent tool cost** — which tools, agents, projects, and workflows
+   dump the most context back into sessions.
+2. **Tooling inefficiency patterns** — repeated failed calls, slow tools,
+   edit churn, retry loops, context pressure, subagent fan-out.
+3. **Deferral / discovery tax** — what deferred-tool loading and searching
+   (e.g. `ToolSearch`) costs across Claude Code, Codex, and Hermes.
+4. **Controlled tool-vs-shell probes** — for comparable local tasks, when
+   native tools (Grep/Glob/Read) are cheaper or more reliable than shell
+   commands.
+
+The primary metric is **context cost** = joined tool-result payload tokens
+(`chars / 4`). Cache flags are caveat-only and never rank tools; failure /
+slow / retry-churn feed the inefficiency callouts only.
+
+## Scope guards (non-goals)
+
+- **Markdown only** — no HTML report (the `session-report` skill owns that).
+- **No live token-API calls** — all numbers derive from on-disk transcripts.
+- **Read-only** — never mutates transcripts or the probe corpus's source
+  projects.
+- **Python standard library only** — no third-party runtime dependencies, so
+  the harness runs anywhere `python3` exists.
+- **No web-chat benchmarking** — local/agentic surfaces with inspectable
+  sessions only.
+
+## Architecture
+
+```
+raw roots + AgentsView exports
+          │
+ source adapters (transcript.py + sources.py)
+          │
+     ┌────┴─────┐
+ passive.py   probe.py
+     └────┬─────┘
+   reports/YYYY-MM-DD-tool-usage.md
+```
+
+- **`transcript.py`** — parses a session's JSONL, joining each assistant
+  `tool_use` block to its result by id, and normalizes payloads to a
+  character length. Malformed lines are counted and skipped, never fatal.
+- **`sources.py`** — multi-agent discovery. Either scans raw local transcript
+  roots or pages the AgentsView CLI (`--index-source auto | agentsview |
+  raw`). `auto` tries AgentsView first and falls back to raw scanning,
+  recording the reason.
+- **`passive.py`** — streams and aggregates **incrementally** (per-agent /
+  per-tool reducers only, never a whole-corpus `list[ToolCall]`), then emits
+  a four-section report: agent breakdown, tool leaderboard, inefficiency
+  callouts, summary.
+- **`probe.py`** — runs matched tool-vs-Bash probe pairs over the vendored
+  corpus and emits a context-token comparison table under `reports/`.
+
+## Probe corpus
+
+Five files are vendored under [`tools/`](tools/) — a log-spaced size spread
+(~121 → ~2,242 lines) so the tool-vs-Bash comparison shows how context cost
+scales with target size:
+
+| File | Lines |
+|------|-------|
+| `regex_check.py` | 121 |
+| `mcp.py` | 352 |
+| `monitor.py` | 768 |
+| `llm_extraction.py` | 1,332 |
+| `code_analysis.py` | 2,242 |
+
+They are committed so probes re-run from a clean checkout with no external
+absolute paths. Probe *output* lands in `reports/`, kept separate from these
+inputs.
+
+## Status
+
+**Contract complete; implementation pending.** The design, acceptance
+criteria, and build plan are finalized and the probe corpus is in place. The
+`toolbench/` package is built via tickets **T1–T6** in
+[`BUILDPLAN.md`](BUILDPLAN.md).
+
+Source-of-truth documents:
+
+- [`SPEC.md`](SPEC.md) — 25 numbered acceptance criteria (S1–S25).
+- [`EVALUATION.md`](EVALUATION.md) — verification map for every criterion.
+- [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the T1–T6 tickets.
+- [`docs/2026-07-07-tool-benchmarks-design.md`](docs/2026-07-07-tool-benchmarks-design.md)
+  — full v2 design spec.
+
+## Usage (planned)
+
+The project is [uv](https://docs.astral.sh/uv/)-managed (`pyproject.toml` +
+`uv.lock`, empty runtime deps, `dev` group `ruff`/`mypy`/`pytest`). Once
+`toolbench/` is built:
+
+```sh
+# Passive analyzer — default scope is every agent, every project
+uv run python -m toolbench.passive --agent all --all
+
+# Scope by project / time / index source
+uv run python -m toolbench.passive --project my-repo --since 2026-06-01
+uv run python -m toolbench.passive --all --index-source agentsview
+
+# Active tool-vs-Bash probes
+uv run python -m toolbench.probe
+
+# Tests
+uv run python -m unittest discover tests
+```
+
+The fast test suite is hermetic — it fakes the `agentsview` CLI and never
+touches `~/.claude`, so the inner loop never depends on a live daemon.
+
+## Quality gate
+
+Before any PR: `uv run ruff check .`, `uv run mypy --strict toolbench tests`,
+and the full unittest suite must be green.
