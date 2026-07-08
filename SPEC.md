@@ -17,7 +17,9 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   block-local `content` payloads to a character length.
 - **S4 — `ToolCall`.** Carries `agent, source, project, name, input_chars,
   output_chars, tokens (=output_chars/4), input_tokens (=input_chars/4),
-  session_id, ts, usage, duration_ms, error`.
+  session_id, ts, usage, duration_ms, error, model`. `model` is the model
+  string of the assistant turn that emitted the `tool_use` (sibling of
+  `usage` on the transcript `message`); `None` when the source omits it.
 - **S5 — malformed non-fatal.** Malformed / partial JSON lines are counted,
   skipped, never fatal; the count is exposed for the report footer
   (`ParseResult(calls, malformed)`).
@@ -51,10 +53,11 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   `--index-source`, `--verbose`; default scope `--agent all --all`.
 - **S13 — subagents.** Included by default; `--exclude-subagents` removes
   paths containing `/subagents/`.
-- **S14 — report sections.** Four, in order: (1) Agent breakdown, (2) Tool
-  leaderboard (per agent+tool), (3) Inefficiency callouts (ToolSearch/
-  deferral tax, failures, oversized outputs, subagent fan-out, churn),
-  (4) Summary.
+- **S14 — report sections.** Five, in order: (1) Agent breakdown, (2) Tool
+  leaderboard (per agent+tool), (3) Model breakdown (per agent+model+tool,
+  `model` normalized to `unknown` when absent), (4) Inefficiency callouts
+  (ToolSearch/deferral tax, failures, oversized outputs, subagent fan-out,
+  churn), (5) Summary.
 - **S15 — report provenance.** The report states the index source used,
   sessions scanned, tool calls joined, malformed-line count, whether
   subagents were included, and any AgentsView fallback reason; it notes
