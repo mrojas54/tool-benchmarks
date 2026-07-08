@@ -16,7 +16,7 @@ class ResultLenTests(unittest.TestCase):
             {"type": "text", "text": "abc"},
             {"type": "text", "text": "defgh"},
         ]
-        self.assertEqual(result_len(payload), len("abc") + len("defgh"))
+        self.assertEqual(result_len(payload), len("abc") + len("defgh"))  # 8
 
     def test_block_local_content(self) -> None:
         payload = {
@@ -25,7 +25,7 @@ class ResultLenTests(unittest.TestCase):
                 {"type": "text", "text": "defgh"},
             ]
         }
-        self.assertEqual(result_len(payload), len("abc") + len("defgh"))
+        self.assertEqual(result_len(payload), len("abc") + len("defgh"))  # 8
 
 
 class ToolCallTests(unittest.TestCase):
