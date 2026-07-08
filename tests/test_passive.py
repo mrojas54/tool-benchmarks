@@ -414,6 +414,14 @@ class MainExitContractTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn("no sessions matched", out.getvalue())
 
+    def test_strict_agentsview_nonzero_exit_exits_1(self) -> None:
+        runner = FakeRunner([_completed(stderr="daemon down", returncode=1)])
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code = main(["--index-source", "agentsview"], runner=runner)
+        self.assertEqual(code, 1)
+        self.assertIn("daemon down", err.getvalue())
+
     def test_agentsview_source_wired_through_temp_file_bridge(self) -> None:
         raw_text = (FIXTURES / "sample.jsonl").read_text()
         payload = {
