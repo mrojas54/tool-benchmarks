@@ -1,6 +1,6 @@
 import unittest
 
-from toolbench.records import ToolCall, result_len
+from toolbench.transcript import ToolCall, result_len
 
 
 class ResultLenTests(unittest.TestCase):

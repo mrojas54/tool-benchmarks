@@ -1,4 +1,4 @@
-"""Core records shared across the toolbench package (S3, S4)."""
+"""Parser & records (S3, S4). parse_session/ParseResult land here in T2."""
 
 from __future__ import annotations
 
