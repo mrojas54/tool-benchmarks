@@ -54,6 +54,7 @@ class ToolCall:
     usage: dict[str, object] | None
     duration_ms: float | None
     error: str | None
+    model: str | None
     no_result: bool = False
     result_source: str | None = None
 
@@ -83,6 +84,7 @@ class _PendingCall:
     session_id: str
     ts: str
     usage: dict[str, object] | None
+    model: str | None
 
 
 def _result_id(entry: dict[str, object], block: dict[str, object] | None) -> str | None:
@@ -160,12 +162,14 @@ def parse_session(
                     if not isinstance(tool_use_id, str) or not isinstance(name, str):
                         continue
                     usage = message.get("usage") if isinstance(message, dict) else None
+                    model = message.get("model") if isinstance(message, dict) else None
                     pending[tool_use_id] = _PendingCall(
                         name=name,
                         input_chars=result_len(tool_use_block.get("input")),
                         session_id=session_id_str,
                         ts=ts_str,
                         usage=usage if isinstance(usage, dict) else None,
+                        model=model if isinstance(model, str) else None,
                     )
 
             result_blocks: list[dict[str, object] | None] = []
@@ -200,6 +204,7 @@ def parse_session(
                         usage=pending_call.usage,
                         duration_ms=None,
                         error=error,
+                        model=pending_call.model,
                         result_source=payload_source,
                     )
                 )
@@ -218,6 +223,7 @@ def parse_session(
                 usage=pending_call.usage,
                 duration_ms=None,
                 error=None,
+                model=pending_call.model,
                 no_result=True,
                 result_source=None,
             )

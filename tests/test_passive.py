@@ -10,6 +10,7 @@ from tempfile import TemporaryDirectory
 
 from toolbench.passive import (
     OVERSIZED_OUTPUT_TOKENS,
+    UNKNOWN_MODEL,
     Reducer,
     _apply_date_range,
     _is_subagent_path,
@@ -60,6 +61,7 @@ def make_call(**overrides: object) -> ToolCall:
         "usage": None,
         "duration_ms": None,
         "error": None,
+        "model": "claude-opus-4-8",
     }
     fields.update(overrides)
     return ToolCall(**fields)  # type: ignore[arg-type]
@@ -99,6 +101,48 @@ class ReducerAbsorbTests(unittest.TestCase):
         self.assertEqual(set(reducer.agents), {"claude-code", "codex"})
         self.assertEqual(reducer.agents["claude-code"].sessions, 1)
         self.assertEqual(reducer.agents["codex"].sessions, 1)
+
+    def test_tools_by_model_splits_same_tool_across_models(self) -> None:
+        reducer = Reducer()
+        reducer.absorb(
+            "claude-code",
+            ParseResult(
+                calls=[
+                    make_call(name="Read", output_chars=400, model="claude-opus-4-8"),
+                    make_call(name="Read", output_chars=800, model="claude-haiku-4-5"),
+                ],
+                malformed=0,
+            ),
+        )
+        # Same (agent, tool) folds together, but the model dimension separates them.
+        self.assertEqual(reducer.tools[("claude-code", "Read")].output_tokens, 100 + 200)
+        opus = reducer.tools_by_model[("claude-code", "claude-opus-4-8", "Read")]
+        haiku = reducer.tools_by_model[("claude-code", "claude-haiku-4-5", "Read")]
+        self.assertEqual(opus.output_tokens, 100)
+        self.assertEqual(haiku.output_tokens, 200)
+        self.assertEqual(opus.calls, 1)
+        self.assertEqual(haiku.calls, 1)
+
+    def test_tools_by_model_normalizes_missing_model_to_unknown(self) -> None:
+        reducer = Reducer()
+        reducer.absorb("codex", ParseResult(calls=[make_call(name="Bash", model=None)], malformed=0))
+        self.assertIn(("codex", UNKNOWN_MODEL, "Bash"), reducer.tools_by_model)
+
+    def test_tools_by_model_tracks_errors_and_cache_hits(self) -> None:
+        reducer = Reducer()
+        reducer.absorb(
+            "claude-code",
+            ParseResult(
+                calls=[
+                    make_call(name="Bash", model="claude-opus-4-8", error="tool_error"),
+                    make_call(name="Bash", model="claude-opus-4-8", usage={"cache_read_input_tokens": 10}),
+                ],
+                malformed=0,
+            ),
+        )
+        stats = reducer.tools_by_model[("claude-code", "claude-opus-4-8", "Bash")]
+        self.assertEqual(stats.errors, 1)
+        self.assertEqual(stats.cache_hits, 1)
 
     def test_errors_and_no_result_counted(self) -> None:
         reducer = Reducer()
@@ -283,7 +327,7 @@ class RenderReportTests(unittest.TestCase):
         )
         return reducer
 
-    def test_four_sections_present_in_order(self) -> None:
+    def test_five_sections_present_in_order(self) -> None:
         report = render_report(
             self._reducer(),
             index_source="auto",
@@ -292,7 +336,13 @@ class RenderReportTests(unittest.TestCase):
             include_subagents=True,
             since_note=None,
         )
-        headers = ["## Agent Breakdown", "## Tool Leaderboard", "## Inefficiency Callouts", "## Summary"]
+        headers = [
+            "## Agent Breakdown",
+            "## Tool Leaderboard",
+            "## Model Breakdown",
+            "## Inefficiency Callouts",
+            "## Summary",
+        ]
         indices = [report.index(h) for h in headers]
         self.assertEqual(indices, sorted(indices))
 
@@ -340,8 +390,34 @@ class RenderReportTests(unittest.TestCase):
             include_subagents=True,
             since_note=None,
         )
-        leaderboard = report[report.index("## Tool Leaderboard") : report.index("## Inefficiency Callouts")]
+        leaderboard = report[report.index("## Tool Leaderboard") : report.index("## Model Breakdown")]
         self.assertLess(leaderboard.index("Bash"), leaderboard.index("Read"))
+
+    def test_model_breakdown_rows_split_by_model(self) -> None:
+        reducer = Reducer()
+        reducer.absorb(
+            "claude-code",
+            ParseResult(
+                calls=[
+                    make_call(name="Read", output_chars=400, model="claude-opus-4-8"),
+                    make_call(name="Read", output_chars=8000, model="claude-haiku-4-5"),
+                ],
+                malformed=0,
+            ),
+        )
+        report = render_report(
+            reducer,
+            index_source="auto",
+            fallback_reason=None,
+            skipped_roots=[],
+            include_subagents=True,
+            since_note=None,
+        )
+        section = report[report.index("## Model Breakdown") : report.index("## Inefficiency Callouts")]
+        self.assertIn("| claude-code | claude-opus-4-8 | Read | 1 | 100 |", section)
+        self.assertIn("| claude-code | claude-haiku-4-5 | Read | 1 | 2000 |", section)
+        # Ranked by context tokens descending: haiku (2000) outranks opus (100).
+        self.assertLess(section.index("claude-haiku-4-5"), section.index("claude-opus-4-8"))
 
 
 class MainExitContractTests(unittest.TestCase):
@@ -381,6 +457,7 @@ class MainExitContractTests(unittest.TestCase):
             for header in (
                 "## Agent Breakdown",
                 "## Tool Leaderboard",
+                "## Model Breakdown",
                 "## Inefficiency Callouts",
                 "## Summary",
             ):

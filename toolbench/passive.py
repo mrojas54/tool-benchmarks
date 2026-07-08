@@ -21,6 +21,7 @@ from toolbench.transcript import ParseResult, parse_session
 
 OVERSIZED_OUTPUT_TOKENS = 5000
 SUBAGENT_TOOL_NAMES = frozenset({"Agent", "Task"})
+UNKNOWN_MODEL = "unknown"
 
 
 @dataclass
@@ -68,6 +69,7 @@ class Reducer:
     malformed_total: int = 0
     agents: dict[str, AgentStats] = field(default_factory=dict)
     tools: dict[tuple[str, str], ToolStats] = field(default_factory=dict)
+    tools_by_model: dict[tuple[str, str, str], ToolStats] = field(default_factory=dict)
     inefficiency: InefficiencyCounters = field(default_factory=InefficiencyCounters)
 
     def absorb(self, agent: str, result: ParseResult) -> None:
@@ -94,17 +96,26 @@ class Reducer:
             tool_stats.output_tokens += call.tokens
             tool_stats.input_tokens += call.input_tokens
 
+            model_key = (agent, call.model or UNKNOWN_MODEL, call.name)
+            model_stats = self.tools_by_model.setdefault(model_key, ToolStats())
+            model_stats.calls += 1
+            model_stats.output_tokens += call.tokens
+            model_stats.input_tokens += call.input_tokens
+
             is_bad = call.error is not None or call.no_result
             if call.error is not None:
                 tool_stats.errors += 1
+                model_stats.errors += 1
                 agent_stats.errors += 1
                 self.inefficiency.failures += 1
             if call.no_result:
                 tool_stats.no_result += 1
+                model_stats.no_result += 1
                 agent_stats.no_result += 1
 
             if _is_cache_hit(call.usage):
                 tool_stats.cache_hits += 1
+                model_stats.cache_hits += 1
 
             if call.name == "ToolSearch":
                 self.inefficiency.tool_search_calls += 1
@@ -278,7 +289,7 @@ def render_report(
     include_subagents: bool,
     since_note: str | None,
 ) -> str:
-    """Render the four-section report (S14) with provenance (S15)."""
+    """Render the five-section report (S14) with provenance (S15)."""
     lines: list[str] = ["# Tool Usage Report", ""]
 
     lines.append("## Agent Breakdown")
@@ -303,6 +314,21 @@ def render_report(
         lines.append(
             f"| {agent} | {tool} | {stats.calls} | {stats.output_tokens} | "
             f"{stats.input_tokens} | {stats.errors} | {cache_note} |"
+        )
+    lines.append("")
+
+    lines.append("## Model Breakdown")
+    lines.append("")
+    lines.append("| agent | model | tool | calls | context_tokens | input_tokens | errors |")
+    lines.append("|---|---|---|---|---|---|---|")
+    # Descending by context tokens; key breaks ties so the table is deterministic.
+    ranked_by_model = sorted(
+        reducer.tools_by_model.items(), key=lambda kv: (-kv[1].output_tokens, kv[0])
+    )
+    for (agent, model, tool), stats in ranked_by_model:
+        lines.append(
+            f"| {agent} | {model} | {tool} | {stats.calls} | {stats.output_tokens} | "
+            f"{stats.input_tokens} | {stats.errors} |"
         )
     lines.append("")
 
