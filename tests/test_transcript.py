@@ -42,6 +42,7 @@ class ToolCallTests(unittest.TestCase):
             "usage": None,
             "duration_ms": 12.5,
             "error": None,
+            "model": "claude-opus-4-8",
         }
         fields.update(overrides)
         return ToolCall(**fields)  # type: ignore[arg-type]
@@ -59,6 +60,7 @@ class ToolCallTests(unittest.TestCase):
         self.assertIsNone(call.usage)
         self.assertEqual(call.duration_ms, 12.5)
         self.assertIsNone(call.error)
+        self.assertEqual(call.model, "claude-opus-4-8")
 
     def test_derived_tokens_floor_division(self) -> None:
         call = self._make(input_chars=41, output_chars=101)

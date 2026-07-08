@@ -52,6 +52,7 @@ class ToolCall:
     usage: dict[str, object] | None
     duration_ms: float | None
     error: str | None
+    model: str | None
 
     @property
     def tokens(self) -> int:

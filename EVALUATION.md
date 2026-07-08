@@ -28,7 +28,7 @@ One row per SPEC criterion, each tagged by how it is verified:
 | S1 | id-join over fixtures (both key locations) | `autonomous` | `test` |
 | S2 | block-local vs top-level payload precedence | `autonomous` | `test` (block-local fixture) |
 | S3 | `result_len` over 4 shapes | `autonomous` | `test` |
-| S4 | `ToolCall` field set + derived props | `autonomous` | `test` |
+| S4 | `ToolCall` field set (incl. `model`) + derived props | `autonomous` | `test` |
 | S5 | malformed counted + skipped | `autonomous` | `test` |
 | S6 | interrupted kept, `output_chars=0` | `autonomous` | `test` |
 | S7 | raw discovery filters + FileNotFoundError | `autonomous` | `test` (tmp tree) |
@@ -38,7 +38,7 @@ One row per SPEC criterion, each tagged by how it is verified:
 | S11 | incremental — no whole-corpus list | `autonomous` (reducer unit) / `operator-assisted` (mem at scale) | `test` + `--all --limit 200 --verbose` |
 | S12 | CLI arg parsing / defaults | `autonomous` | `test` |
 | S13 | subagent include/exclude path filter | `autonomous` | `test` |
-| S14 | four report sections present | `autonomous` | `test` (report string) |
+| S14 | five report sections present (incl. per-model breakdown) | `autonomous` | `test` (report string) |
 | S15 | report provenance fields present | `autonomous` | `test` (report string) |
 | S16 | exact 5 corpus paths listed | `operator-assisted` | inspect `active-probes.md` vs real dir |
 | S17 | sentinel + tool-name verification | `autonomous` | `test` (probe fixture) |
