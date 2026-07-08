@@ -51,6 +51,7 @@ class ToolCallTests(unittest.TestCase):
             "usage": None,
             "duration_ms": 12.5,
             "error": None,
+            "model": "claude-opus-4-8",
         }
         fields.update(overrides)
         return ToolCall(**fields)  # type: ignore[arg-type]
@@ -68,6 +69,7 @@ class ToolCallTests(unittest.TestCase):
         self.assertIsNone(call.usage)
         self.assertEqual(call.duration_ms, 12.5)
         self.assertIsNone(call.error)
+        self.assertEqual(call.model, "claude-opus-4-8")
 
     def test_derived_tokens_floor_division(self) -> None:
         call = self._make(input_chars=41, output_chars=101)
@@ -157,6 +159,12 @@ class ParseSessionTests(unittest.TestCase):
         self.assertEqual(call.source, "raw")
         self.assertEqual(call.session_id, "sess-001")
         self.assertEqual(call.ts, "2026-07-08T10:00:00Z")
+
+    def test_model_captured_from_message(self) -> None:
+        self.assertEqual(self.by_name["Bash"].model, "claude-opus-4-8")
+
+    def test_model_none_when_message_omits_it(self) -> None:
+        self.assertIsNone(self.by_name["Read"].model)
 
 
 if __name__ == "__main__":
