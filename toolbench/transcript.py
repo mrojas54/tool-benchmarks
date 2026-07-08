@@ -117,7 +117,9 @@ def parse_session(
 
     Malformed/partial JSON lines are counted and skipped, never fatal (S5). A
     `tool_use` with no matching result by end-of-file is kept with
-    `output_chars=0, no_result=True` rather than dropped (S6).
+    `output_chars=0, no_result=True` rather than dropped (S6). `duration_ms`
+    is always `None`: raw Claude Code JSONL carries no per-tool-call
+    duration field to derive it from.
     """
     session_path = Path(path)
     resolved_project = project if project is not None else session_path.parent.name
