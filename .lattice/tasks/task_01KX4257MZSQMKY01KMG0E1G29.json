@@ -10,8 +10,8 @@
   "done_at": null,
   "evidence_refs": [],
   "id": "task_01KX4257MZSQMKY01KMG0E1G29",
-  "last_event_id": "ev_01KX429JVYNKCFJWYKAMZ43PYF",
-  "last_status_changed_at": "2026-07-09T18:27:36Z",
+  "last_event_id": "ev_01KX4E1H5XNPEBXC4X49NH8GBN",
+  "last_status_changed_at": "2026-07-09T21:55:17Z",
   "priority": "medium",
   "relationships_out": [
     {
@@ -32,7 +32,7 @@
   "reopened_count": 0,
   "schema_version": 1,
   "short_id": "TB-18",
-  "status": "backlog",
+  "status": "in_planning",
   "tags": [
     "hermes",
     "integrity",
@@ -40,6 +40,6 @@
   ],
   "title": "hermes --format trace parses as claude but carries no usage or requestId; cache-hit signal silently fabricated",
   "type": "bug",
-  "updated_at": "2026-07-09T18:29:58Z",
+  "updated_at": "2026-07-09T21:55:17Z",
   "urgency": null
 }
