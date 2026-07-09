@@ -1,0 +1,1 @@
+PR #4 (tb-6-probe) merged to main as 1aaa206 at 2026-07-09T01:01:23Z. probe.py + active-probes.md landed. Verified on origin/main @4461c0e: ruff clean, mypy --strict clean (10 source files), 99 tests pass. Remote branch pruned post-merge.

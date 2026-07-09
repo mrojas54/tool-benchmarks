@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-08T20:59:21Z",
+  "created_by": "agent:tb-6-delegator",
+  "custom_fields": {},
+  "id": "art_01KX1RECF6W6N264QM8418350V",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KX1RECF6W6N264QM8418350V.md",
+    "size_bytes": 269
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": null,
+  "tags": [],
+  "title": "Validation gate (S22)",
+  "token_usage": null,
+  "type": "note"
+}

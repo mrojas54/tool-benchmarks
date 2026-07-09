@@ -1,0 +1,1 @@
+PR #1 merged to main as 93395da (2026-07-09T00:56:48Z). Scaffold, ToolCall (incl. new model field, S4), and result_len landed. Verified on origin/main @4461c0e: ruff clean, mypy --strict clean (10 source files), 99 tests pass. Remote branch tb-2-scaffold deleted on merge.

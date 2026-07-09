@@ -1,0 +1,1 @@
+PR #2 (tb-4-sources) merged to main as 7aada7e at 2026-07-09T01:00:47Z. sources.py multi-agent discovery landed. Verified on origin/main @4461c0e: ruff clean, mypy --strict clean (10 source files), 99 tests pass. Remote branch pruned post-merge.

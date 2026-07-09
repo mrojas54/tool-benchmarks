@@ -1,0 +1,60 @@
+{
+  "assigned_to": null,
+  "branch_links": [],
+  "comment_count": 2,
+  "complexity": "medium",
+  "created_at": "2026-07-08T17:25:46Z",
+  "created_by": "agent:orchestrator",
+  "custom_fields": {},
+  "description": "_V2 sentinels + tool-name verify (find_probe_calls), comparison table + #8376 seeds -> reports/. 5-file corpus already vendored under tools/. protocols/active-probes.md lists the five relative paths.\n\nSPEC: S16, S17, S18\nBUILDPLAN anchor: T5\nDepends on: T2\nPlan: filled in by delegator plan phase.",
+  "done_at": "2026-07-09T01:20:56Z",
+  "evidence_refs": [
+    {
+      "id": "art_01KX1RDM2ZT3WXXQ71N70V9S3R",
+      "role": "review",
+      "source_type": "artifact"
+    },
+    {
+      "id": "art_01KX1RECF6W6N264QM8418350V",
+      "role": null,
+      "source_type": "artifact"
+    },
+    {
+      "id": "art_01KX1RF91N6HNPYPQ1V1D7CBDT",
+      "role": null,
+      "source_type": "artifact"
+    },
+    {
+      "id": "ev_01KX27DBF7X2RZG0AEWGHCFKBJ",
+      "role": "review",
+      "source_type": "comment"
+    },
+    {
+      "id": "art_01KX27DBF7X2RZG0AEWGHCFKBH",
+      "role": "review",
+      "source_type": "artifact"
+    }
+  ],
+  "id": "task_01KX1C7AB6R7RR7Q6H7BE0FHB9",
+  "last_event_id": "ev_01KX27DBF7X2RZG0AEWGHCFKBM",
+  "last_status_changed_at": "2026-07-09T01:20:56Z",
+  "priority": "medium",
+  "relationships_out": [
+    {
+      "created_at": "2026-07-08T17:25:57Z",
+      "created_by": "agent:orchestrator",
+      "note": null,
+      "target_task_id": "task_01KX1C79ZSFFWY22NFNBQ46JP2",
+      "type": "depends_on"
+    }
+  ],
+  "reopened_count": 0,
+  "schema_version": 1,
+  "short_id": "TB-6",
+  "status": "done",
+  "tags": null,
+  "title": "probe.py + active-probes.md",
+  "type": "task",
+  "updated_at": "2026-07-09T01:20:56Z",
+  "urgency": null
+}

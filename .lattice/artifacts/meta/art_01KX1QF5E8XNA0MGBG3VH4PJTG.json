@@ -1,0 +1,21 @@
+{
+  "created_at": "2026-07-08T20:42:18Z",
+  "created_by": "agent:tb-4-delegator",
+  "custom_fields": {
+    "url": "https://github.com/mrojas54/tool-benchmarks/pull/2"
+  },
+  "id": "art_01KX1QF5E8XNA0MGBG3VH4PJTG",
+  "model": null,
+  "payload": {
+    "content_type": null,
+    "file": null,
+    "size_bytes": null
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": null,
+  "tags": [],
+  "title": "https://github.com/mrojas54/tool-benchmarks/pull/2",
+  "token_usage": null,
+  "type": "reference"
+}

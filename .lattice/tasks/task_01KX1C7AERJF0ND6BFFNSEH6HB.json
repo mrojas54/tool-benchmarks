@@ -1,0 +1,67 @@
+{
+  "assigned_to": null,
+  "branch_links": [],
+  "comment_count": 2,
+  "complexity": "low",
+  "created_at": "2026-07-08T17:25:47Z",
+  "created_by": "agent:orchestrator",
+  "custom_fields": {},
+  "description": "README (agents/targets/run/index/metrics) then strict gate green: ruff check, mypy --strict toolbench tests, full unittest suite. PR.\n\nSPEC: S22\nBUILDPLAN anchor: T6\nDepends on: T4, T5\nPlan: filled in by delegator plan phase.",
+  "done_at": "2026-07-09T01:20:56Z",
+  "evidence_refs": [
+    {
+      "id": "art_01KX1RTQM2QMQKHKEXV38VDC8T",
+      "role": "review",
+      "source_type": "artifact"
+    },
+    {
+      "id": "art_01KX1RVBFCGPWQA7AH3V63FG9R",
+      "role": null,
+      "source_type": "artifact"
+    },
+    {
+      "id": "art_01KX1RW5H6TG9NVQQ4TNTCC1X8",
+      "role": null,
+      "source_type": "artifact"
+    },
+    {
+      "id": "ev_01KX27DBJNTWGW1A5ZNXSBAQW9",
+      "role": "review",
+      "source_type": "comment"
+    },
+    {
+      "id": "art_01KX27DBJNTWGW1A5ZNXSBAQW8",
+      "role": "review",
+      "source_type": "artifact"
+    }
+  ],
+  "id": "task_01KX1C7AERJF0ND6BFFNSEH6HB",
+  "last_event_id": "ev_01KX27DBJNTWGW1A5ZNXSBAQWB",
+  "last_status_changed_at": "2026-07-09T01:20:56Z",
+  "priority": "medium",
+  "relationships_out": [
+    {
+      "created_at": "2026-07-08T17:25:57Z",
+      "created_by": "agent:orchestrator",
+      "note": null,
+      "target_task_id": "task_01KX1C7A7EZHM1S9C6NHAH2C50",
+      "type": "depends_on"
+    },
+    {
+      "created_at": "2026-07-08T17:25:58Z",
+      "created_by": "agent:orchestrator",
+      "note": null,
+      "target_task_id": "task_01KX1C7AB6R7RR7Q6H7BE0FHB9",
+      "type": "depends_on"
+    }
+  ],
+  "reopened_count": 0,
+  "schema_version": 1,
+  "short_id": "TB-7",
+  "status": "done",
+  "tags": null,
+  "title": "README + strict gate",
+  "type": "task",
+  "updated_at": "2026-07-09T01:20:56Z",
+  "urgency": null
+}

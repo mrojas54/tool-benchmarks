@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-09T01:20:56Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "id": "art_01KX27DB8BBVN7X2A645HRY3GA",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KX27DB8BBVN7X2A645HRY3GA.md",
+    "size_bytes": 245
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": "PR #2 (tb-4-sources) merged to main as 7aada7e at 2026-07-09T01:00:47Z. sources.py multi-agent discovery landed. Verified on origin/main @4461c0e: ruff clean, mypy --strict clean (10 source files), 99",
+  "tags": [],
+  "title": "Review findings",
+  "token_usage": null,
+  "type": "note"
+}

@@ -1,0 +1,67 @@
+{
+  "assigned_to": null,
+  "branch_links": [],
+  "comment_count": 2,
+  "complexity": "high",
+  "created_at": "2026-07-08T17:25:46Z",
+  "created_by": "agent:orchestrator",
+  "custom_fields": {},
+  "description": "Incremental per-agent/per-tool reducer (no whole-corpus list), four report sections + provenance, full CLI flags, error/exit contract.\n\nSPEC: S11, S12, S13, S14, S15, S19, S23\nBUILDPLAN anchor: T4\nDepends on: T2, T3\nPlan: filled in by delegator plan phase.",
+  "done_at": "2026-07-09T01:20:56Z",
+  "evidence_refs": [
+    {
+      "id": "art_01KX1REG63D29ZAMXJDZ168F0C",
+      "role": "review",
+      "source_type": "artifact"
+    },
+    {
+      "id": "art_01KX1RFF3FTZM8E66385FYBSAE",
+      "role": null,
+      "source_type": "artifact"
+    },
+    {
+      "id": "art_01KX1RGPG2NKT298T263HPJ1Y4",
+      "role": null,
+      "source_type": "artifact"
+    },
+    {
+      "id": "ev_01KX27DBBRMRYATQEWW6K17GJA",
+      "role": "review",
+      "source_type": "comment"
+    },
+    {
+      "id": "art_01KX27DBBRMRYATQEWW6K17GJ9",
+      "role": "review",
+      "source_type": "artifact"
+    }
+  ],
+  "id": "task_01KX1C7A7EZHM1S9C6NHAH2C50",
+  "last_event_id": "ev_01KX27DBBRMRYATQEWW6K17GJC",
+  "last_status_changed_at": "2026-07-09T01:20:56Z",
+  "priority": "medium",
+  "relationships_out": [
+    {
+      "created_at": "2026-07-08T17:25:57Z",
+      "created_by": "agent:orchestrator",
+      "note": null,
+      "target_task_id": "task_01KX1C79ZSFFWY22NFNBQ46JP2",
+      "type": "depends_on"
+    },
+    {
+      "created_at": "2026-07-08T17:25:57Z",
+      "created_by": "agent:orchestrator",
+      "note": null,
+      "target_task_id": "task_01KX1C7A3M238RZVABSTE5BSZS",
+      "type": "depends_on"
+    }
+  ],
+  "reopened_count": 0,
+  "schema_version": 1,
+  "short_id": "TB-5",
+  "status": "done",
+  "tags": null,
+  "title": "passive.py reducer + report + CLI",
+  "type": "task",
+  "updated_at": "2026-07-09T01:20:56Z",
+  "urgency": null
+}

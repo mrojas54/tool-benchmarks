@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-09T01:20:56Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "id": "art_01KX27DBJNTWGW1A5ZNXSBAQW8",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KX27DBJNTWGW1A5ZNXSBAQW8.md",
+    "size_bytes": 301
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": "PR #6 (tb-7-readme) merged to main as 4461c0e at 2026-07-09T01:01:39Z. README + strict gate landed. NOTE: README:89 still claims '93 tests passing'; actual count is 99. Verified on origin/main @4461c0",
+  "tags": [],
+  "title": "Review findings",
+  "token_usage": null,
+  "type": "note"
+}

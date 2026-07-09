@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-09T01:18:41Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "id": "art_01KX2797FR548VBVPTCYTK0JDN",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KX2797FR548VBVPTCYTK0JDN.md",
+    "size_bytes": 272
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": "PR #1 merged to main as 93395da (2026-07-09T00:56:48Z). Scaffold, ToolCall (incl. new model field, S4), and result_len landed. Verified on origin/main @4461c0e: ruff clean, mypy --strict clean (10 sou",
+  "tags": [],
+  "title": "Review findings",
+  "token_usage": null,
+  "type": "note"
+}

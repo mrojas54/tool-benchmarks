@@ -1,0 +1,60 @@
+{
+  "assigned_to": null,
+  "branch_links": [],
+  "comment_count": 2,
+  "complexity": "high",
+  "created_at": "2026-07-08T17:25:46Z",
+  "created_by": "agent:orchestrator",
+  "custom_fields": {},
+  "description": "SessionRef, iter_session_files, iter_agentsview_sessions (cursor pagination), open_session_jsonl, index-source policy (auto/agentsview/raw). Fake-runner tests, no live daemon.\n\nSPEC: S7, S8, S9, S10, S24\nBUILDPLAN anchor: T3\nDepends on: T1\nPlan: filled in by delegator plan phase.",
+  "done_at": "2026-07-09T01:20:56Z",
+  "evidence_refs": [
+    {
+      "id": "art_01KX1QDA0E35HSFRYS5Q54K4A8",
+      "role": "review",
+      "source_type": "artifact"
+    },
+    {
+      "id": "art_01KX1QE049M4VJVGN0GPN4VFFX",
+      "role": null,
+      "source_type": "artifact"
+    },
+    {
+      "id": "art_01KX1QF5E8XNA0MGBG3VH4PJTG",
+      "role": null,
+      "source_type": "artifact"
+    },
+    {
+      "id": "ev_01KX27DB8BBVN7X2A645HRY3GB",
+      "role": "review",
+      "source_type": "comment"
+    },
+    {
+      "id": "art_01KX27DB8BBVN7X2A645HRY3GA",
+      "role": "review",
+      "source_type": "artifact"
+    }
+  ],
+  "id": "task_01KX1C7A3M238RZVABSTE5BSZS",
+  "last_event_id": "ev_01KX27DB8BBVN7X2A645HRY3GD",
+  "last_status_changed_at": "2026-07-09T01:20:56Z",
+  "priority": "medium",
+  "relationships_out": [
+    {
+      "created_at": "2026-07-08T17:25:57Z",
+      "created_by": "agent:orchestrator",
+      "note": null,
+      "target_task_id": "task_01KX1C79VY26XAHQ37ZT5E3H78",
+      "type": "depends_on"
+    }
+  ],
+  "reopened_count": 0,
+  "schema_version": 1,
+  "short_id": "TB-4",
+  "status": "done",
+  "tags": null,
+  "title": "sources.py multi-agent discovery",
+  "type": "task",
+  "updated_at": "2026-07-09T01:20:56Z",
+  "urgency": null
+}
