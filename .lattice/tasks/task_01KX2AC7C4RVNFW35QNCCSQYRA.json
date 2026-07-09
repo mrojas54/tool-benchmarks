@@ -1,0 +1,38 @@
+{
+  "assigned_to": null,
+  "branch_links": [
+    {
+      "branch": "tb-8-subagent-project-filter",
+      "linked_at": "2026-07-09T02:15:28Z",
+      "linked_by": "agent:claude",
+      "repo": null
+    }
+  ],
+  "comment_count": 1,
+  "complexity": "low",
+  "created_at": "2026-07-09T02:12:45Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "description": "Found by post-merge operator smoke checklist (2026-07-08).\n\nsources.py:42-44 globs recursively via rglob('*.jsonl') but filters on path.parent.name:\n\n    if project is not None and project not in path.parent.name:\n        continue\n\nSubagent transcripts live at <project>/subagents/*.jsonl, so parent.name == 'subagents',\nwhich never contains the project substring. Every subagent session is silently dropped\nwhenever --project is passed. --all is unaffected (project is None short-circuits).\n\nEvidence (project = -Users-michellerojas-wids-nyc-reading-group-assistant):\n  iter_session_files(project=P)       -> 197 files,   0 subagent files\n  iter_session_files() filtered to P  -> 249 files,  52 subagent files\n\nSpec violations:\n  S13 - subagents included by default, excluded only on --exclude-subagents.\n        Under --project always excluded; the flag is a no-op.\n  S15 - report prints 'Subagents included: yes' after scanning zero (false provenance).\n\nWhy the static audit missed it: validation-plan rows 15 (S13) and 17 (S15) were verified\nagainst unit tests constructing SessionRef objects directly, never exercising\niter_session_files. Filter and discovery each correct alone, wrong composed.\n\nFix: match project against the top-level project dir under root, not parent.name.\nRegression test over tmp tree with nested subagents/ dir.",
+  "done_at": null,
+  "evidence_refs": [],
+  "id": "task_01KX2AC7C4RVNFW35QNCCSQYRA",
+  "last_event_id": "ev_01KX2AH7BJTRX1BTTP2PJ7A77J",
+  "last_status_changed_at": "2026-07-09T02:12:45Z",
+  "priority": "high",
+  "relationships_out": [],
+  "reopened_count": 0,
+  "schema_version": 1,
+  "short_id": "TB-8",
+  "status": "in_progress",
+  "tags": [
+    "smoke",
+    "S7",
+    "S13",
+    "S15"
+  ],
+  "title": "iter_session_files drops subagent sessions under --project",
+  "type": "bug",
+  "updated_at": "2026-07-09T02:15:28Z",
+  "urgency": "high"
+}
