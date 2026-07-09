@@ -25,6 +25,7 @@ from toolbench.sources import (
     iter_sessions,
     open_session_jsonl,
 )
+from toolbench.hermes import parse_hermes_session
 from toolbench.transcript import ParseResult, parse_session
 
 OVERSIZED_OUTPUT_TOKENS = 5000
@@ -307,6 +308,13 @@ def _discover_refs(
 
 def _parse_ref(ref: SessionRef, runner: Runner | None) -> ParseResult:
     """Uniformly parse a raw or AgentsView-sourced session (S11 wiring)."""
+    if ref.agent == "hermes" and ref.path is None:
+        # `agentsview session export` returns rc=0 and the whole default-profile
+        # database for these, so read the archive directly instead (TB-11).
+        return parse_hermes_session(
+            ref.session_id, agent=ref.agent, source=ref.source, project=ref.project
+        )
+
     if ref.path is not None:
         if path_looks_binary(ref.path):
             raise NonTranscriptExport(f"non-transcript payload (binary content): {ref.path}")

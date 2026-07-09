@@ -670,14 +670,19 @@ class NonUtf8SessionTests(unittest.TestCase):
 
 
 class NonTranscriptExportTests(unittest.TestCase):
-    """Binary payloads demote to skipped_roots, keeping `Malformed lines` honest (TB-10)."""
+    """Binary payloads demote to skipped_roots, keeping `Malformed lines` honest (TB-10).
+
+    The guard is agent-agnostic and stays that way. Hermes was the agent that first
+    exposed it, but hermes now bypasses `session export` entirely (TB-11), so the
+    example here uses an agent that still takes the export path.
+    """
 
     def test_binary_session_is_skipped_not_absorbed_as_malformed(self) -> None:
         raw_text = (FIXTURES / "sample.jsonl").read_text()
         sqlite_payload = "SQLite format 3\x00\x10\x00\x02tablemessages\x00" * 50
         payload = {
             "sessions": [
-                {"id": "hermes-cron-1", "project": "hermes-cron", "agent": "hermes"},
+                {"id": "cowork-1", "project": "cowork", "agent": "cowork"},
                 {"id": "good-session", "project": "p", "agent": "claude"},
             ],
             "next_cursor": "",
@@ -695,7 +700,7 @@ class NonTranscriptExportTests(unittest.TestCase):
             code = main(["--index-source", "agentsview"], runner=runner)
         self.assertEqual(code, 0)
         report = out.getvalue()
-        self.assertIn("hermes-cron-1", report)
+        self.assertIn("cowork-1", report)
         self.assertIn("Sessions scanned: 1", report)
         # The 1 malformed line is the fixture's own; none of the binary leaks in.
         self.assertIn("Malformed lines: 1", report)
@@ -703,10 +708,12 @@ class NonTranscriptExportTests(unittest.TestCase):
     def test_rejected_export_leaves_no_temp_file_behind(self) -> None:
         # _parse_ref binds tmp_path only after the write loop, so a raise from the
         # line generator strands a delete=False NamedTemporaryFile.
+        # Not a hermes session: hermes never reaches the temp-file path now (TB-11),
+        # so this would pass vacuously and stop guarding the leak it was written for.
         tmp_root = Path(tempfile.gettempdir())
         before = set(tmp_root.glob("*.jsonl"))
         payload = {
-            "sessions": [{"id": "hermes-cron-1", "project": "hermes-cron", "agent": "hermes"}],
+            "sessions": [{"id": "cowork-1", "project": "cowork", "agent": "cowork"}],
             "next_cursor": "",
             "total": 1,
         }
