@@ -83,10 +83,10 @@ inputs.
 
 ## Status
 
-**Contract complete; implementation pending.** The design, acceptance
-criteria, and build plan are finalized and the probe corpus is in place. The
-`toolbench/` package is built via tickets **T1–T6** in
-[`BUILDPLAN.md`](BUILDPLAN.md).
+**Implemented.** `toolbench/` ships all of tickets **T1–T6** in
+[`BUILDPLAN.md`](BUILDPLAN.md): the scaffold, the transcript parser, the
+multi-agent source layer, the passive analyzer, and the active probes. The
+strict gate (`ruff`, `mypy --strict`, `unittest`) is green — 93 tests passing.
 
 Source-of-truth documents:
 
@@ -95,12 +95,23 @@ Source-of-truth documents:
 - [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the T1–T6 tickets.
 - [`docs/2026-07-07-tool-benchmarks-design.md`](docs/2026-07-07-tool-benchmarks-design.md)
   — full v2 design spec.
+- [`protocols/active-probes.md`](protocols/active-probes.md) — probe corpus,
+  sentinels, and the seeded `#8376` baseline table.
 
-## Usage (planned)
+## Agents / targets
+
+Two source adapters, selected per-session by `--index-source`:
+
+- **Claude Code raw transcripts** — scans on-disk JSONL session files
+  directly under a root (default `~/.claude/projects`).
+- **AgentsView** — pages the `agentsview` CLI for any AgentsView-registered
+  runtime (Claude Code, Codex, Hermes, …), yielding one `SessionRef` per
+  session with cursor-based pagination.
+
+## Usage
 
 The project is [uv](https://docs.astral.sh/uv/)-managed (`pyproject.toml` +
-`uv.lock`, empty runtime deps, `dev` group `ruff`/`mypy`/`pytest`). Once
-`toolbench/` is built:
+`uv.lock`, empty runtime deps, `dev` group `ruff`/`mypy`/`pytest`).
 
 ```sh
 # Passive analyzer — default scope is every agent, every project
@@ -109,13 +120,24 @@ uv run python -m toolbench.passive --agent all --all
 # Scope by project / time / index source
 uv run python -m toolbench.passive --project my-repo --since 2026-06-01
 uv run python -m toolbench.passive --all --index-source agentsview
+uv run python -m toolbench.passive --all --date-from 2026-06-01 --date-to 2026-06-30
+uv run python -m toolbench.passive --all --exclude-subagents --out reports/2026-07-08-tool-usage.md
 
-# Active tool-vs-Bash probes
+# Active tool-vs-Bash probes — omit --session for an all-seeded table
 uv run python -m toolbench.probe
+uv run python -m toolbench.probe --session /path/to/probe-session.jsonl --out reports/active-probe-comparison.md
 
 # Tests
 uv run python -m unittest discover tests
 ```
+
+### `--index-source` policy
+
+- `auto` (default) — tries AgentsView first; on failure, falls back to
+  scanning the raw root directly and records the fallback reason in the
+  report's Summary section.
+- `agentsview` — AgentsView only; a source error is fatal.
+- `raw` — raw local transcript roots only; a source error is fatal.
 
 The fast test suite is hermetic — it fakes the `agentsview` CLI and never
 touches `~/.claude`, so the inner loop never depends on a live daemon.
