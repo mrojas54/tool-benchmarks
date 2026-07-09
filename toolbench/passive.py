@@ -50,7 +50,11 @@ class AgentStats:
 
 @dataclass
 class InefficiencyCounters:
-    """S14 inefficiency-callout counters."""
+    """S14 inefficiency-callout counters.
+
+    Each scalar count carries a `*_by_tool` breakdown so a callout can name
+    its top offender; a bare total tells an operator nothing to act on.
+    """
 
     tool_search_calls: int = 0
     tool_search_tokens: int = 0
@@ -58,6 +62,10 @@ class InefficiencyCounters:
     oversized_outputs: int = 0
     subagent_fanout: int = 0
     churn_retries: int = 0
+    failures_by_tool: dict[str, int] = field(default_factory=dict)
+    oversized_by_tool: dict[str, int] = field(default_factory=dict)
+    churn_by_tool: dict[str, int] = field(default_factory=dict)
+    subagent_by_tool: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -108,6 +116,7 @@ class Reducer:
                 model_stats.errors += 1
                 agent_stats.errors += 1
                 self.inefficiency.failures += 1
+                _bump(self.inefficiency.failures_by_tool, call.name)
             if call.no_result:
                 tool_stats.no_result += 1
                 model_stats.no_result += 1
@@ -123,15 +132,39 @@ class Reducer:
 
             if call.tokens >= OVERSIZED_OUTPUT_TOKENS:
                 self.inefficiency.oversized_outputs += 1
+                _bump(self.inefficiency.oversized_by_tool, call.name)
 
             if call.name in SUBAGENT_TOOL_NAMES:
                 self.inefficiency.subagent_fanout += 1
+                _bump(self.inefficiency.subagent_by_tool, call.name)
 
             if is_bad and prev_bad and call.name == prev_name:
                 self.inefficiency.churn_retries += 1
+                _bump(self.inefficiency.churn_by_tool, call.name)
 
             prev_name = call.name
             prev_bad = is_bad
+
+
+def _bump(counter: dict[str, int], tool: str) -> None:
+    counter[tool] = counter.get(tool, 0) + 1
+
+
+def _top_offender(by_tool: dict[str, int]) -> tuple[str, int] | None:
+    """Highest count, ties broken alphabetically so the report is deterministic."""
+    if not by_tool:
+        return None
+    return min(by_tool.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
+def _callout(label: str, count: int, total_calls: int, by_tool: dict[str, int]) -> str:
+    """Render one callout as `N of M calls (P%)`, naming the worst tool."""
+    share = (count / total_calls * 100) if total_calls else 0.0
+    line = f"- {label}: {count} of {total_calls} calls ({share:.1f}%)"
+    top = _top_offender(by_tool)
+    if count and top is not None:
+        line += f"; top: {top[0]} ({top[1]})"
+    return line
 
 
 def _is_cache_hit(usage: dict[str, object] | None) -> bool:
@@ -335,14 +368,29 @@ def render_report(
     lines.append("## Inefficiency Callouts")
     lines.append("")
     ineff = reducer.inefficiency
+    total = reducer.calls_joined
+    share = (ineff.tool_search_calls / total * 100) if total else 0.0
     lines.append(
-        f"- ToolSearch/deferral tax: {ineff.tool_search_calls} calls, "
-        f"{ineff.tool_search_tokens} tokens"
+        f"- ToolSearch/deferral tax: {ineff.tool_search_calls} of {total} calls "
+        f"({share:.1f}%), {ineff.tool_search_tokens} tokens"
     )
-    lines.append(f"- Failures: {ineff.failures}")
-    lines.append(f"- Oversized outputs (>= {OVERSIZED_OUTPUT_TOKENS} tokens): {ineff.oversized_outputs}")
-    lines.append(f"- Subagent fan-out calls: {ineff.subagent_fanout}")
-    lines.append(f"- Churn (consecutive-repeat retries): {ineff.churn_retries}")
+    lines.append(_callout("Failures", ineff.failures, total, ineff.failures_by_tool))
+    lines.append(
+        _callout(
+            f"Oversized outputs (>= {OVERSIZED_OUTPUT_TOKENS} tokens)",
+            ineff.oversized_outputs,
+            total,
+            ineff.oversized_by_tool,
+        )
+    )
+    lines.append(
+        _callout("Subagent fan-out calls", ineff.subagent_fanout, total, ineff.subagent_by_tool)
+    )
+    lines.append(
+        _callout(
+            "Churn (consecutive-repeat retries)", ineff.churn_retries, total, ineff.churn_by_tool
+        )
+    )
     lines.append("")
 
     lines.append("## Summary")

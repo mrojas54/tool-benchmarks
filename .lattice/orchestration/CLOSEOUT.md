@@ -6,8 +6,9 @@
   (10 files), 93 unittest OK.
 - Phase-2 audit: **24/24 pre-merge-static rows PASS** (see validation-report.md),
   run in degraded mode (Orchestrator-as-validator; see caveat in that report).
-- Merged (PRs #1–#7). **Operator smoke checklist run 2026-07-08: 3 PASS, 1 PARTIAL,
-  1 bug found (TB-8, fixed).** See "Operator smoke results" below.
+- Merged (PRs #1–#7). **Operator smoke checklist run 2026-07-08: 4 PASS,
+  1 bug found (TB-8, fixed).** Row 4 opened as TB-9 and closed the same day.
+  See "Operator smoke results" below.
 
 ## Operator smoke results (2026-07-08)
 
@@ -19,7 +20,24 @@ Gate re-verified on merged `main` first: ruff clean, mypy --strict clean (10 fil
 | 1 | Join-key on real data (S1/S2) | **PASS** | 301 calls joined, 470k output tokens, 0 malformed. Real transcripts hold 302 block-local `tool_use_id` results and **zero** top-level `toolUseID` — the block-local branch is the only path that ever fires. Reversed precedence would have zeroed every join. |
 | 2 | AgentsView live path (S10/S25) | **PASS** | Healthy daemon → `auto` uses AgentsView (`fallback reason: none`). Binary hidden from `PATH` → falls back to raw, names the reason. `--index-source agentsview` → fatal, exit 1. |
 | 3 | Scale / flat memory (S11) | **PASS** | Pushed past the 200-session bar to the full corpus: 3,705 sessions / 417 MB / 5.2 s, peak RSS **44.8 MB** vs 35.9 MB at 20 sessions (+25% for 185× sessions). Joined 6,683 of 6,684 ground-truth `tool_use` blocks; the 1 gap is a call appended to the live transcript mid-read. |
-| 4 | Report reads well (`felt`) | **PARTIAL** | Four sections in spec order, scannable. Callouts are bare counts with no denominators or attribution — `Failures: 865` names no tool, `Churn: 222` names no site. Signal, not action. Operator judgment; left open. |
+| 4 | Report reads well (`felt`) | **PASS** (was PARTIAL) | Four sections in spec order, scannable. Callouts were bare counts with no denominators or attribution — `Failures: 865` named no tool. Ticketed as TB-9 and fixed: each callout now reads `N of M calls (P%); top: <tool> (n)`. Live corpus: `Failures: 147 of 997 calls (14.7%); top: Bash (109)`. |
+
+### Follow-up: TB-9 — inefficiency callouts were signal, not action
+
+Smoke row 4 was left open on operator judgment, then ticketed and fixed rather than
+accepted. `render_report` printed each S14 callout as a bare integer, so an operator
+could not tell whether `Failures: 865` was alarming (no denominator) or where to look
+(no attribution).
+
+`InefficiencyCounters` now carries a `*_by_tool` breakdown beside each scalar, and
+`_callout()` renders `N of M calls (P%)` naming the worst tool. Ties break
+alphabetically so the report stays deterministic; a zero count omits the top-offender
+clause instead of naming an arbitrary tool. ToolSearch keeps its token figure and
+gains a denominator.
+
+S14 fixes *which* callouts appear, not their formatting, so no spec change was needed.
+Verified by driving the real CLI (`--index-source raw --limit 80`), not fixtures alone
+— per the retrospective finding below. RED → GREEN → DOCS, 109 tests.
 
 ### Bug found: TB-8 — `--project` silently dropped every subagent session
 

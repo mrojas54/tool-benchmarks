@@ -1,0 +1,1 @@
+Fixed on branch tb-9-callout-denominators. RED (8 tests) -> GREEN -> DOCS. 109 tests pass, ruff check clean, mypy --strict clean (10 files). Verified against the live corpus via the real CLI, not fixtures: 'Failures: 147 of 997 calls (14.7%); top: Bash (109)'. CLOSEOUT smoke row 4 promoted PARTIAL -> PASS. No SPEC change: S14 fixes which callouts appear, not their formatting.

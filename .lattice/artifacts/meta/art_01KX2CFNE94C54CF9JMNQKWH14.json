@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-09T02:49:34Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "id": "art_01KX2CFNE94C54CF9JMNQKWH14",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KX2CFNE94C54CF9JMNQKWH14.md",
+    "size_bytes": 378
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": "Fixed on branch tb-9-callout-denominators. RED (8 tests) -> GREEN -> DOCS. 109 tests pass, ruff check clean, mypy --strict clean (10 files). Verified against the live corpus via the real CLI, not fixt",
+  "tags": [],
+  "title": "Review findings",
+  "token_usage": null,
+  "type": "note"
+}
