@@ -81,6 +81,7 @@ MENTION_MARKERS: tuple[str, ...] = (
     ".claude/projects",
     "toolbench/probe.py",
     "protocols/active-probes.md",
+    "protocols/probe-run-sheet.md",
 )
 
 # Seeded #8376 baselines (S18): used per (task, arm) only when that arm has

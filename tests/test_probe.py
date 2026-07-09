@@ -201,6 +201,11 @@ class ContaminationGuardTests(unittest.TestCase):
     def test_read_of_probe_source_is_not_an_arm(self) -> None:
         self.assertIsNone(self.matches["04"].tool)
 
+    def test_single_sentinel_grep_of_the_run_sheet_is_not_an_arm(self) -> None:
+        # The run sheet prints every bash arm verbatim. Grepping it for one
+        # sentinel is otherwise indistinguishable from performing that arm.
+        self.assertIsNone(self.matches["05"].bash, "grep over the run sheet scored as an arm")
+
     def test_contaminated_session_produces_a_fully_seeded_table(self) -> None:
         rows = build_comparison_table(self.matches)
         self.assertTrue(all(r.tool_seeded and r.bash_seeded for r in rows))
