@@ -1,5 +1,7 @@
 """Schema detection over a bounded window (TB-13, Task 2)."""
 
+from pathlib import Path
+
 import pytest
 
 from toolbench.adapters import (
@@ -8,6 +10,12 @@ from toolbench.adapters import (
     detect_parser,
 )
 from toolbench.parsers import ClaudeParser
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _lines(name: str):
+    return iter((FIXTURES / name).read_text(encoding="utf-8").splitlines(keepends=True))
 
 
 def test_detect_returns_claude_parser_and_replays_every_line():
@@ -60,3 +68,43 @@ def test_unknown_and_ambiguous_are_runtime_errors():
     # passive.main's guard catches RuntimeError; this is why no guard edit is needed.
     assert issubclass(UnknownSchema, RuntimeError)
     assert issubclass(AmbiguousSchema, RuntimeError)
+
+
+# --- TB-13 Task 6: golden fixtures pinning the four observed line-0 shapes -----
+
+
+def test_claude_fixture_detects_as_claude_despite_control_preamble():
+    parser, _ = detect_parser(_lines("schema_claude.jsonl"))
+    assert isinstance(parser, ClaudeParser)
+
+
+def test_cowork_fixture_detects_as_claude_with_no_registry_entry_of_its_own():
+    parser, _ = detect_parser(_lines("schema_cowork.jsonl"))
+    assert isinstance(parser, ClaudeParser)
+
+
+def test_codex_fixture_raises_unknown_schema_until_tb_12():
+    with pytest.raises(UnknownSchema):
+        detect_parser(_lines("schema_codex.jsonl"))
+
+
+def test_cursor_fixture_raises_unknown_schema():
+    with pytest.raises(UnknownSchema):
+        detect_parser(_lines("schema_cursor.jsonl"))
+
+
+def test_golden_claude_fixture_parses_to_exactly_one_joined_call():
+    parser, replayed = detect_parser(_lines("schema_claude.jsonl"))
+    result = parser.parse(replayed, agent="claude", source="raw", project="p")
+    assert result.malformed == 0
+    assert len(result.calls) == 1
+    call = result.calls[0]
+    assert (call.name, call.output_chars, call.no_result) == ("Bash", 5, False)
+    assert call.result_source == "block_local"
+
+
+def test_golden_cowork_fixture_drains_its_unmatched_call():
+    parser, replayed = detect_parser(_lines("schema_cowork.jsonl"))
+    result = parser.parse(replayed, agent="cowork", source="agentsview", project="p")
+    assert len(result.calls) == 1
+    assert result.calls[0].no_result is True  # S6

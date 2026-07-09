@@ -1,0 +1,3 @@
+{"type":"mode","sessionId":"s2","mode":"default"}
+{"type":"queue-operation","sessionId":"s2","timestamp":"t0","operation":"enqueue","content":"x"}
+{"sessionId":"s2","timestamp":"t1","message":{"content":[{"type":"tool_use","id":"u9","name":"Read","input":{}}]}}
