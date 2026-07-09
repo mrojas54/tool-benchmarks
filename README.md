@@ -143,9 +143,10 @@ uv run python -m toolbench.passive --all --index-source agentsview
 uv run python -m toolbench.passive --all --date-from 2026-06-01 --date-to 2026-06-30
 uv run python -m toolbench.passive --all --exclude-subagents --out reports/2026-07-08-tool-usage.md
 
-# Active tool-vs-Bash probes — omit --session for an all-seeded table
-uv run python -m toolbench.probe
+# Active tool-vs-Bash probes. Score a dedicated probe session; without
+# --session every arm is seeded and the report is refused (SeededReportError).
 uv run python -m toolbench.probe --session /path/to/probe-session.jsonl --out reports/active-probe-comparison.md
+uv run python -m toolbench.probe --allow-seeded   # baseline table only; measures nothing
 
 # Tests
 uv run python -m unittest discover tests
