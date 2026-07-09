@@ -1,6 +1,15 @@
 import unittest
+from pathlib import Path
 
-from toolbench.transcript import ToolCall, result_len
+from toolbench.transcript import (
+    ToolCall,
+    _result_id,
+    _result_payload,
+    parse_session,
+    result_len,
+)
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class ResultLenTests(unittest.TestCase):
@@ -71,6 +80,91 @@ class ToolCallTests(unittest.TestCase):
         call = self._make(input_chars=0, output_chars=0)
         self.assertEqual(call.tokens, 0)
         self.assertEqual(call.input_tokens, 0)
+
+
+class ResultIdPayloadTests(unittest.TestCase):
+    def test_id_top_level_only(self) -> None:
+        entry: dict[str, object] = {"toolUseID": "toolu_1"}
+        self.assertEqual(_result_id(entry, None), "toolu_1")
+
+    def test_id_block_local_only(self) -> None:
+        entry: dict[str, object] = {}
+        block: dict[str, object] = {"tool_use_id": "toolu_2"}
+        self.assertEqual(_result_id(entry, block), "toolu_2")
+
+    def test_id_block_local_preferred_when_both_present(self) -> None:
+        entry: dict[str, object] = {"toolUseID": "toolu_top"}
+        block: dict[str, object] = {"tool_use_id": "toolu_block"}
+        self.assertEqual(_result_id(entry, block), "toolu_block")
+
+    def test_id_missing(self) -> None:
+        self.assertIsNone(_result_id({}, None))
+
+    def test_payload_top_level_only(self) -> None:
+        entry: dict[str, object] = {"toolUseResult": "abc"}
+        self.assertEqual(_result_payload(entry, None), ("abc", "top_level"))
+
+    def test_payload_block_local_wins_over_top_level(self) -> None:
+        entry: dict[str, object] = {"toolUseResult": {"stale": "decoy"}}
+        block: dict[str, object] = {"content": "the real payload"}
+        self.assertEqual(
+            _result_payload(entry, block), ("the real payload", "block_local")
+        )
+
+    def test_payload_missing(self) -> None:
+        self.assertEqual(_result_payload({}, None), (None, None))
+
+
+class ParseSessionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        result = parse_session(FIXTURES / "sample.jsonl")
+        self.result = result
+        self.by_name = {call.name: call for call in result.calls}
+
+    def test_malformed_line_counted_and_skipped(self) -> None:
+        self.assertEqual(self.result.malformed, 1)
+
+    def test_call_count(self) -> None:
+        self.assertEqual(len(self.result.calls), 4)
+
+    def test_string_result_top_level_join(self) -> None:
+        call = self.by_name["Bash"]
+        expected = "total 0\ndrwxr-xr-x 2 user staff 64 Jul 8 10:00 ."
+        self.assertEqual(call.output_chars, len(expected))
+        self.assertEqual(call.result_source, "top_level")
+        self.assertFalse(call.no_result)
+
+    def test_mcp_block_list_block_local_join(self) -> None:
+        call = self.by_name["mcp__search__query"]
+        expected = len("result chunk one") + len("result chunk two")
+        self.assertEqual(call.output_chars, expected)
+        self.assertEqual(call.result_source, "block_local")
+        self.assertFalse(call.no_result)
+
+    def test_block_local_content_wins_over_top_level(self) -> None:
+        call = self.by_name["Read"]
+        self.assertEqual(call.output_chars, len("the real block-local file contents"))
+        self.assertEqual(call.result_source, "block_local")
+        self.assertFalse(call.no_result)
+
+    def test_interrupted_call_kept_with_no_result(self) -> None:
+        call = self.by_name["Write"]
+        self.assertEqual(call.output_chars, 0)
+        self.assertTrue(call.no_result)
+        self.assertIsNone(call.result_source)
+
+    def test_common_fields_stamped(self) -> None:
+        call = self.by_name["Bash"]
+        self.assertEqual(call.agent, "claude-code")
+        self.assertEqual(call.source, "raw")
+        self.assertEqual(call.session_id, "sess-001")
+        self.assertEqual(call.ts, "2026-07-08T10:00:00Z")
+
+    def test_model_captured_from_message(self) -> None:
+        self.assertEqual(self.by_name["Bash"].model, "claude-opus-4-8")
+
+    def test_model_none_when_message_omits_it(self) -> None:
+        self.assertIsNone(self.by_name["Read"].model)
 
 
 if __name__ == "__main__":
