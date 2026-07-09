@@ -15,14 +15,14 @@
     ".lattice/orchestration/CLOSEOUT.md"
   ],
   "id": "task_01KX2Q24BZQNK03FGQN03DR6GH",
-  "last_event_id": null,
-  "last_status_changed_at": "2026-07-09T06:00:57Z",
+  "last_event_id": "ev_01KX2R51DBJBY8X8GF17CV5PK8",
+  "last_status_changed_at": "2026-07-09T06:13:29Z",
   "priority": "high",
   "relationships_out": [],
   "reopened_count": 0,
   "schema_version": 2,
   "short_id": "TB-15",
-  "status": "in_review",
+  "status": "in_progress",
   "tags": [
     "probe",
     "integrity",
@@ -30,6 +30,6 @@
   ],
   "title": "probe tool arm has no sentinel channel: find_file cannot carry TB_PROBE_*, so 3 of 5 serena arms are unmatchable",
   "type": "bug",
-  "updated_at": "2026-07-09T06:00:57Z",
+  "updated_at": "2026-07-09T06:13:29Z",
   "urgency": "high"
 }
