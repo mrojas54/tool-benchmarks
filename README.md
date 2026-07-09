@@ -52,14 +52,17 @@ raw roots + AgentsView exports
 - **`transcript.py`** — parses a session's JSONL, joining each assistant
   `tool_use` block to its result by id, and normalizes payloads to a
   character length. Malformed lines are counted and skipped, never fatal.
+  Stray non-UTF-8 bytes decode with `errors="replace"` so one bad byte never
+  aborts the session.
 - **`sources.py`** — multi-agent discovery. Either scans raw local transcript
   roots or pages the AgentsView CLI (`--index-source auto | agentsview |
   raw`). `auto` tries AgentsView first and falls back to raw scanning,
-  recording the reason.
+  recording the reason. Exports that are not JSONL (e.g. a SQLite dump with
+  a NUL in the header) raise `NonTranscriptExport` and are skipped by name.
 - **`passive.py`** — streams and aggregates **incrementally** (per-agent /
   per-tool reducers only, never a whole-corpus `list[ToolCall]`), then emits
-  a four-section report: agent breakdown, tool leaderboard, inefficiency
-  callouts, summary.
+  a five-section report: agent breakdown, tool leaderboard, model breakdown,
+  inefficiency callouts, summary.
 - **`probe.py`** — runs matched tool-vs-Bash probe pairs over the vendored
   corpus and emits a context-token comparison table under `reports/`.
 
@@ -85,8 +88,12 @@ inputs.
 
 **Implemented.** `toolbench/` ships all of tickets **T1–T6** in
 [`BUILDPLAN.md`](BUILDPLAN.md): the scaffold, the transcript parser, the
-multi-agent source layer, the passive analyzer, and the active probes. The
-strict gate (`ruff`, `mypy --strict`, `unittest`) is green — 93 tests passing.
+multi-agent source layer, the passive analyzer, and the active probes.
+Post-merge hardening covers **TB-8** (subagent `--project` filter), **TB-9**
+(callout denominators), and **TB-10** (non-UTF-8 / non-transcript exports).
+The strict gate (`ruff`, `mypy --strict`, `unittest`) is green — **121**
+tests passing. **TB-11** (Hermes AgentsView export returns SQLite) remains
+open upstream; toolbench skips those sessions rather than crashing.
 
 Source-of-truth documents:
 
@@ -139,8 +146,41 @@ uv run python -m unittest discover tests
 - `agentsview` — AgentsView only; a source error is fatal.
 - `raw` — raw local transcript roots only; a source error is fatal.
 
+`--agent` filters AgentsView listing only. Under `--index-source raw` the
+discovery root is Claude Code sessions, so `--agent` is a no-op there.
+
+`--project` matches the **owning project directory** under the raw root
+(first path segment after the root), not `path.parent.name`. Nested
+subagent transcripts at `<project>/subagents/*.jsonl` therefore survive
+`--project` and are only dropped when you pass `--exclude-subagents`.
+
 The fast test suite is hermetic — it fakes the `agentsview` CLI and never
 touches `~/.claude`, so the inner loop never depends on a live daemon.
+
+### Reading the report
+
+Inefficiency callouts are written as `N of M calls (P%)` and name the
+worst tool when the count is non-zero, for example:
+
+```text
+- Failures: 147 of 997 calls (14.7%); top: Bash (109)
+- ToolSearch/deferral tax: 12 of 997 calls (1.2%), 3400 tokens
+```
+
+Ties for "top" break alphabetically so the report stays deterministic. A
+zero count omits the top-offender clause.
+
+### Troubleshooting / common pitfalls
+
+| Symptom | Likely cause | What to do |
+|---|---|---|
+| Run dies with `UnicodeDecodeError` | Pre-TB-10 behavior, or a custom strict-decode runner | In-tree readers use `errors="replace"`. One bad session should land in **Skipped roots**, not abort the corpus. |
+| Summary shows `Skipped roots: … non-transcript payload` | AgentsView `session export` returned binary (often a Hermes SQLite archive) with returncode 0 | Expected under **TB-11**. Those sessions contribute zero calls until AgentsView exports JSONL (or toolbench gains a direct Hermes reader). |
+| `--project X` silently omits every subagent | Pre-TB-8 filter matched `path.parent.name` (`subagents`) | Current code matches the owning project dir. Re-run on current `main`. |
+| Callouts are bare integers (`Failures: 865`) | Pre-TB-9 report formatting | Current callouts include denominators and a top offender. |
+| `--agent hermes` yields an empty agent breakdown | Every Hermes export is currently skipped as non-transcript (TB-11) | Confirm skipped roots name the Hermes session ids; track upstream AgentsView. |
+| `Malformed lines` explodes into the hundreds of thousands | Binary export absorbed as text (would happen without the NUL sniff) | Should not occur on current code — binary payloads are rejected before parse. |
+| Empty selection message | No sessions matched filters, or all matched sessions were skipped | Check `--project` / `--since` / `--date-*`, and the skipped-roots suffix on the message. |
 
 ## Quality gate
 
