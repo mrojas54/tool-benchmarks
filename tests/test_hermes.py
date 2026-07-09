@@ -12,6 +12,7 @@ from toolbench.hermes import (
     resolve_session,
 )
 from toolbench.sources import NonTranscriptExport
+from toolbench.transcript import ParseResult
 
 # The seven columns the adapter reads. Present in schema_version 16 and 19 alike;
 # `test_live_archive_schema_envelope` asserts that against the real DBs.
@@ -147,7 +148,7 @@ class ResolveSession(unittest.TestCase):
 
 
 class ParseHermesSession(unittest.TestCase):
-    def _parse(self, home: Path, session_id: str = "s1"):
+    def _parse(self, home: Path, session_id: str = "s1") -> ParseResult:
         return parse_hermes_session(
             session_id, agent="hermes", source="agentsview", project="hermes-cron", home=home
         )
@@ -281,6 +282,108 @@ class ParseHermesSession(unittest.TestCase):
             _add_call(home / "state.db", "s1", "c1", "first", "{}", "ok", ts=100.0)
             names = [c.name for c in self._parse(home).calls]
             self.assertEqual(names, ["first", "second"])
+
+
+class ParseRefDispatch(unittest.TestCase):
+    """`_parse_ref` must route hermes to the adapter and leave every other agent alone."""
+
+    def test_hermes_ref_reads_sqlite_and_never_shells_out(self) -> None:
+        import subprocess
+
+        from toolbench.passive import _parse_ref
+        from toolbench.sources import SessionRef
+
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            _build_db(home / "state.db", "cron_abc")
+            _add_call(home / "state.db", "cron_abc", "c1", "terminal", "{}", "ok")
+            os.environ["HERMES_HOME"] = tmp
+            try:
+                ref = SessionRef(
+                    agent="hermes",
+                    source="agentsview",
+                    project="hermes-cron",
+                    session_id="hermes:cron_abc",
+                    path=None,
+                )
+
+                def explode(argv: list[str]) -> subprocess.CompletedProcess[str]:
+                    raise AssertionError(f"hermes must not shell out to agentsview: {argv}")
+
+                result = _parse_ref(ref, explode)
+            finally:
+                del os.environ["HERMES_HOME"]
+            self.assertEqual([c.name for c in result.calls], ["terminal"])
+            self.assertEqual(result.calls[0].agent, "hermes")
+
+    def test_non_hermes_agentsview_ref_still_uses_the_runner(self) -> None:
+        import subprocess
+
+        from toolbench.passive import _parse_ref
+        from toolbench.sources import SessionRef
+
+        line = json.dumps(
+            {
+                "sessionId": "s",
+                "timestamp": "2026-07-08T00:00:00Z",
+                "message": {
+                    "content": [
+                        {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"cmd": "ls"}}
+                    ]
+                },
+            }
+        )
+        calls: list[list[str]] = []
+
+        def runner(argv: list[str]) -> subprocess.CompletedProcess[str]:
+            calls.append(argv)
+            return subprocess.CompletedProcess(args=argv, returncode=0, stdout=line + "\n", stderr="")
+
+        ref = SessionRef(
+            agent="claude", source="agentsview", project="p", session_id="claude:x", path=None
+        )
+        result = _parse_ref(ref, runner)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual([c.name for c in result.calls], ["Bash"])
+
+
+class PassiveIntegration(unittest.TestCase):
+    def test_missing_archive_degrades_to_skipped_not_fatal(self) -> None:
+        import io
+        import subprocess
+        from contextlib import redirect_stdout
+
+        from toolbench.passive import main
+
+        payload = {
+            "sessions": [{"id": "hermes:cron_1", "project": "hermes-cron", "agent": "hermes"}],
+            "next_cursor": "",
+            "total": 1,
+        }
+        replies = [
+            subprocess.CompletedProcess(args=[], returncode=0, stdout=json.dumps(payload), stderr="")
+        ]
+
+        def runner(argv: list[str]) -> subprocess.CompletedProcess[str]:
+            return replies.pop(0)
+
+        with TemporaryDirectory() as tmp:
+            # Point at an empty dir: no state.db, so the archive is unresolvable.
+            os.environ["HERMES_HOME"] = tmp
+            try:
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    code = main(["--index-source", "agentsview"], runner=runner)
+            finally:
+                del os.environ["HERMES_HOME"]
+
+        # Exit 0 and name the skipped session: a hermes archive we cannot read
+        # degrades the run, never aborts it.
+        self.assertEqual(code, 0)
+        report = out.getvalue()
+        self.assertIn("cron_1", report)
+        self.assertIn("skipped roots", report)
+        self.assertIn("not in local archive", report)
 
 
 class LiveArchive(unittest.TestCase):
