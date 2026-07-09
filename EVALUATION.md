@@ -34,6 +34,8 @@ One row per SPEC criterion, each tagged by how it is verified:
 | S7 | raw discovery filters (owning project dir, nested subagents) + FileNotFoundError | `autonomous` | `test` (tmp tree) |
 | S8 | AgentsView cursor pagination + `SessionRef` | `autonomous` | `test` (fake runner) |
 | S9 | uniform open; lenient decode; reject binary / non-transcript exports | `autonomous` | `test` (fake runner + real bytes) |
+| S9a | hermes direct SQLite read (`parse_hermes_session`, mode=ro) | `autonomous` / `operator-assisted` (live archive) | `test` (`test_hermes.py`) |
+| S9b | hermes discovery stays on AgentsView `session list` | `autonomous` (routing) / `external-oracle` (list vs stats) | `test` + live AgentsView |
 | S10 | auto/strict/raw index-source behavior + fallback reason | `autonomous` (logic) / `external-oracle` (live) | `test` + `test:full` |
 | S11 | incremental — no whole-corpus list | `autonomous` (reducer unit) / `operator-assisted` (mem at scale) | `test` + `--all --limit 200 --verbose` |
 | S12 | CLI arg parsing / defaults | `autonomous` | `test` |

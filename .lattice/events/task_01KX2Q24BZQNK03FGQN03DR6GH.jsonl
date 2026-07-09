@@ -1,0 +1,1 @@
+{"actor":"agent:claude","data":{"force":true,"from":"in_review","reason":"operator request: reopen for further work","to":"in_progress"},"id":"ev_01KX2R51DBJBY8X8GF17CV5PK8","provenance":{"reason":"operator request: reopen for further work"},"schema_version":1,"task_id":"task_01KX2Q24BZQNK03FGQN03DR6GH","ts":"2026-07-09T06:13:29Z","type":"status_changed"}

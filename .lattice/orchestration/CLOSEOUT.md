@@ -175,6 +175,120 @@ Violated **S13** and **S15**. Fixed in `tb-8-subagent-project-filter` (RED → G
    → Reproduce before you fix, and re-derive the root cause from the failing run
    rather than inheriting it from the ticket — even a ticket you wrote yourself.
 
+7. **A spike's job is to falsify the plan's premises, not to confirm them.** TB-11 was
+   approved as "enumerate hermes from its `sessions` table, bounded by the corpus time
+   window." Both premises died on contact with the data. The window reaches back to
+   2026-05-23 while hermes' archive begins 2026-06-07, so the bound filters *nothing*.
+   And AgentsView's 89-of-814 session selection is derivable from no column in the
+   archive (`archived` is 0 on every row; `parent_session_id` is set only on *indexed*
+   rows; `session_key` is NULL on all 728 cron rows). Implementing as approved would
+   have shipped a `WHERE started_at >= ?` clause that filters zero rows and a hermes
+   corpus 9× larger than every other agent's, with no principled account of its
+   contents.
+   → Before building on a premise, **run the query that would disprove it.** Report the
+   result even when — especially when — it invalidates an approved plan.
+
+8. **"Recover unreachable data" and "recover data that belongs in this corpus" are
+   different questions.** The first is about access, the second about sampling, and
+   they look identical until you notice hermes would jump from 0% to 29% of corpus
+   tool calls purely because we handed one agent a private data source.
+   → When a benchmark compares populations, changing *where* one population's data
+   comes from changes *what* is being compared. The corpus is defined as what
+   `agentsview session list` returns; a single agent does not get to opt out of that
+   definition, even to fix its own under-sampling.
+
+8b. **CORRECTED 2026-07-09 — and this document made the very error it warns about in
+   finding 6.** The original finding 8 explained AgentsView's 89-of-814 sessions as a
+   deliberate "curated view of what counts as a session," contrasted against `state.db`
+   as a raw write-ahead record. That was a hypothesis promoted to a rationale because
+   it made an already-correct decision *feel* principled.
+
+   It is wrong. AgentsView's own stats subsystem sees the archive nearly in full:
+
+   ```
+   agentsview stats --agent hermes  -> totals.sessions_all = 789
+   agentsview session list --agent hermes -> total = 89, next_cursor = null
+   ```
+
+   One binary (v0.36.1), one archive, an 8.9× disagreement between two of its own
+   subsystems. The dropped sessions follow no source rule (701 cron, 18 tui, 5 cli).
+   `session list` is losing sessions, not curating them. Filed upstream as
+   kenn-io/agentsview#1048; the export bug is #1047.
+
+   The decision survived the correction; only its justification changed. That is the
+   tell — a rationale you would not have discovered to be false by re-reading your own
+   reasoning, only by running one more command against the real system.
+   → **Finding 6 applies to your own conclusions, not just to inherited tickets.** Ask
+   what observation would falsify the story, then go make it. `stats` was one command
+   away the entire time.
+
+9. **A key that is always present is not a signal; its value is.** Hermes tool results
+   carry an `error` key on nearly every row, `null` on success. `content LIKE '%"error"%'`
+   matches 1,527 of 2,368 rows and would have reported nearly every successful call as
+   a failure, roughly doubling the reported failure rate with a green test suite.
+   → Read the distribution of a field's *values* before treating its presence as
+   meaning anything.
+
+10. **Changing a code path can silently retire the test that guarded it.** Two TB-10
+    tests used hermes as their binary-export example. Once hermes stopped shelling out,
+    one failed for an unrelated reason (its scripted runner response fell through to the
+    *next* session) and the other would have passed **vacuously** — hermes never reaches
+    the temp-file path it asserts about. A vacuous pass is worse than a failure: it is a
+    guard that reports success while guarding nothing.
+    → When you divert a code path, audit every test that used it as an example, and ask
+    whether each still *can* fail.
+
+## Bug closed: TB-11 — hermes contributed zero tool calls
+
+`agentsview session export hermes:<id>` returns `rc=0` and streams
+`~/.hermes/state.db` verbatim (37,175,296 bytes, identical sha256 for every id).
+TB-10's NUL sniff correctly demoted these to `skipped_roots`, so runs completed — and
+hermes silently contributed **0 calls to every report**, never appearing in the agent
+breakdown.
+
+Sharper than the ticket's diagnosis: the export streams the **default profile's**
+database. Two of the 29 in-corpus sessions live in `profiles/aphrodite-mood/state.db`,
+so for those, AgentsView returns success plus a database containing **zero rows for the
+requested session**. A *fixed* export would still not reach them. Reading the archive
+directly recovers strictly more than repairing the tool upstream would.
+
+Fix: `passive._parse_ref` routes `agent == "hermes"` to `toolbench/hermes.py`, which
+resolves the session across every profile database (read-only, `mode=ro`) and joins
+`tool_calls[].id → messages.tool_call_id`. Discovery stays with AgentsView (finding 8).
+
+Verified on the live archive: **29 sessions, 176 tool calls, 0 dangling, 0 malformed** —
+independently corroborated by hermes' own `sessions.tool_call_count` column, which
+agrees on all 29. Recovers the corpus's only MCP-tool data (16 `mcp_dash0_*` calls).
+145 tests, ruff clean, mypy --strict clean.
+
+## Finding: the probe's tool arm had no sentinel channel (TB-15)
+
+The sentinel scheme assumed every tool has an **inert free-text field** — somewhere
+to write a correlation id the tool ignores. `Bash` has one (a `#` comment). Serena's
+`find_file` does not: its schema is exactly `{file_mask, relative_path}`, and both
+are load-bearing. So the tool arm could not carry `TB_PROBE_<id>_TOOL_V2`, and
+probes 01/03/05 — every `find` arm — were unperformable as written.
+
+This is the tool-naming bug one layer in. That one named a tool that occurs zero
+times; this one demanded evidence the tool cannot emit. Both made the serena arm
+unmatchable *by construction*, and both were invisible because the fixtures agreed
+with the wrong assumption: `probe_session.jsonl` passed `name_path` and
+`probe_session_plugin_names.jsonl` passed `comment` — neither is a `find_file`
+parameter. **A fixture that shares the code's false assumption cannot catch it.**
+This is now the second time that exact sentence has been the retro finding.
+
+Fix: match each arm by the evidence it can actually leave. The tool arm is
+identified structurally by (accepted tool name + corpus target in input); the bash
+arm keeps its sentinel, since a shell command has no other distinctive structure.
+`_performing_sentinel` split into `_mentions_probe_machinery` + `_sentinels_in`,
+because the tool arm must distinguish "no sentinel" (legal) from "mentions probe
+machinery" (rejected) — the old helper collapsed both to `None`.
+`ToolArmSchemaTests` now fails if a fixture ever invents a serena parameter again.
+
+166 tests, ruff clean, mypy --strict clean. **The probes remain unrun**: scoring
+requires a dedicated session, and any session that discussed or edited the probes —
+including the one that produced this fix — is disqualified by the S19 rule.
+
 ## Config decisions (see run-state.md decision log)
 - Delegators Sonnet; Result Validator downgraded Opus→Sonnet at 76% weekly usage.
 - Leave-at-review (no auto-merge). One delegate pane (well under surface cap).

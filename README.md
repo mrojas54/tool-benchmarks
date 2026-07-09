@@ -59,6 +59,9 @@ raw roots + AgentsView exports
   raw`). `auto` tries AgentsView first and falls back to raw scanning,
   recording the reason. Exports that are not JSONL (e.g. a SQLite dump with
   a NUL in the header) raise `NonTranscriptExport` and are skipped by name.
+- **`hermes.py`** — direct read-only SQLite adapter for Hermes sessions
+  (TB-11). Discovery still comes from AgentsView; only the read is redirected
+  because `session export` returns the whole default-profile database.
 - **`passive.py`** — streams and aggregates **incrementally** (per-agent /
   per-tool reducers only, never a whole-corpus `list[ToolCall]`), then emits
   a five-section report: agent breakdown, tool leaderboard, model breakdown,
@@ -90,10 +93,10 @@ inputs.
 [`BUILDPLAN.md`](BUILDPLAN.md): the scaffold, the transcript parser, the
 multi-agent source layer, the passive analyzer, and the active probes.
 Post-merge hardening covers **TB-8** (subagent `--project` filter), **TB-9**
-(callout denominators), and **TB-10** (non-UTF-8 / non-transcript exports).
-The strict gate (`ruff`, `mypy --strict`, `unittest`) is green — **121**
-tests passing. **TB-11** (Hermes AgentsView export returns SQLite) remains
-open upstream; toolbench skips those sessions rather than crashing.
+(callout denominators), **TB-10** (non-UTF-8 / non-transcript exports), and
+**TB-11** (Hermes SQLite direct read — discovery still via AgentsView).
+The strict gate (`ruff`, `mypy --strict`, `unittest`) is green — **167**
+tests passing (1 skipped when `~/.hermes` is absent).
 
 Source-of-truth documents:
 
@@ -107,13 +110,33 @@ Source-of-truth documents:
 
 ## Agents / targets
 
-Two source adapters, selected per-session by `--index-source`:
+Three source adapters. The first two are selected per-session by
+`--index-source`; the third is selected by agent.
 
 - **Claude Code raw transcripts** — scans on-disk JSONL session files
   directly under a root (default `~/.claude/projects`).
 - **AgentsView** — pages the `agentsview` CLI for any AgentsView-registered
   runtime (Claude Code, Codex, Hermes, …), yielding one `SessionRef` per
   session with cursor-based pagination.
+- **Hermes SQLite** — reads hermes sessions straight from `~/.hermes`
+  (`$HERMES_HOME` overrides). `agentsview session export` returns `rc=0` and
+  streams the whole 37 MB default-profile database for every hermes session
+  instead of that session's transcript, so hermes contributed zero tool calls
+  until this adapter landed (TB-11).
+
+Hermes **discovery** still comes from AgentsView; only the read is redirected.
+The corpus is *defined* as what `agentsview session list` returns, and every
+agent is sampled through that one path. Enumerating the hermes archive here
+would redefine the corpus for a single agent and skew every cross-agent rate.
+
+**Known limitation.** Hermes is under-sampled. `agentsview session list --agent
+hermes` reports 89 sessions while `agentsview stats --agent hermes` reports 789
+from the same archive — one binary, two subsystems, an 8.9× disagreement. That
+is an upstream defect
+([kenn-io/agentsview#1048](https://github.com/kenn-io/agentsview/issues/1048)),
+not a curation to work around by forking discovery into one adapter. The export
+bug this adapter exists for is
+[#1047](https://github.com/kenn-io/agentsview/issues/1047).
 
 ## Usage
 
@@ -130,9 +153,10 @@ uv run python -m toolbench.passive --all --index-source agentsview
 uv run python -m toolbench.passive --all --date-from 2026-06-01 --date-to 2026-06-30
 uv run python -m toolbench.passive --all --exclude-subagents --out reports/2026-07-08-tool-usage.md
 
-# Active tool-vs-Bash probes — omit --session for an all-seeded table
-uv run python -m toolbench.probe
+# Active tool-vs-Bash probes. Score a dedicated probe session; without
+# --session every arm is seeded and the report is refused (SeededReportError).
 uv run python -m toolbench.probe --session /path/to/probe-session.jsonl --out reports/active-probe-comparison.md
+uv run python -m toolbench.probe --allow-seeded   # baseline table only; measures nothing
 
 # Tests
 uv run python -m unittest discover tests
@@ -154,8 +178,14 @@ discovery root is Claude Code sessions, so `--agent` is a no-op there.
 subagent transcripts at `<project>/subagents/*.jsonl` therefore survive
 `--project` and are only dropped when you pass `--exclude-subagents`.
 
-The fast test suite is hermetic — it fakes the `agentsview` CLI and never
-touches `~/.claude`, so the inner loop never depends on a live daemon.
+The fast test suite is hermetic — it fakes the `agentsview` CLI, points
+`$HERMES_HOME` at a fixture database, and never touches `~/.claude` or
+`~/.hermes`, so the inner loop never depends on a live daemon. One test in
+`tests/test_hermes.py` reads the real hermes archive to pin the schema
+compatibility envelope, and skips when that archive is absent.
+
+Hermes databases are always opened `file:…?mode=ro`. A running hermes owns
+those files; the adapter never writes to them.
 
 ### Reading the report
 
@@ -175,12 +205,14 @@ zero count omits the top-offender clause.
 | Symptom | Likely cause | What to do |
 |---|---|---|
 | Run dies with `UnicodeDecodeError` | Pre-TB-10 behavior, or a custom strict-decode runner | In-tree readers use `errors="replace"`. One bad session should land in **Skipped roots**, not abort the corpus. |
-| Summary shows `Skipped roots: … non-transcript payload` | AgentsView `session export` returned binary (often a Hermes SQLite archive) with returncode 0 | Expected under **TB-11**. Those sessions contribute zero calls until AgentsView exports JSONL (or toolbench gains a direct Hermes reader). |
+| Summary shows `Skipped roots: … non-transcript payload` for a non-Hermes session | AgentsView `session export` returned binary with returncode 0 | Expected for off-contract exports; the NUL sniff rejects them before parse (TB-10). Hermes sessions should not hit this path — they route through `hermes.py`. |
 | `--project X` silently omits every subagent | Pre-TB-8 filter matched `path.parent.name` (`subagents`) | Current code matches the owning project dir. Re-run on current `main`. |
 | Callouts are bare integers (`Failures: 865`) | Pre-TB-9 report formatting | Current callouts include denominators and a top offender. |
-| `--agent hermes` yields an empty agent breakdown | Every Hermes export is currently skipped as non-transcript (TB-11) | Confirm skipped roots name the Hermes session ids; track upstream AgentsView. |
+| `--agent hermes` yields far fewer sessions than expected | AgentsView `session list` under-counts Hermes vs `stats` (~89 vs ~789) | Known upstream limit ([#1048](https://github.com/kenn-io/agentsview/issues/1048)); discovery is intentionally not forked into the Hermes adapter (S9b). |
+| Hermes session skipped / archive not found | `$HERMES_HOME` / `~/.hermes` missing, or session only in an unread profile DB | Confirm `HERMES_HOME`; skipped roots name the session. Profile DBs under `profiles/*/state.db` are searched. |
 | `Malformed lines` explodes into the hundreds of thousands | Binary export absorbed as text (would happen without the NUL sniff) | Should not occur on current code — binary payloads are rejected before parse. |
 | Empty selection message | No sessions matched filters, or all matched sessions were skipped | Check `--project` / `--since` / `--date-*`, and the skipped-roots suffix on the message. |
+| `toolbench.probe` without `--session` refuses to write | Seeded-only report is blocked (`SeededReportError`) | Pass `--session PATH`, or `--allow-seeded` for the baseline table only. |
 
 ## Quality gate
 

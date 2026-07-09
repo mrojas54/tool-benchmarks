@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-09T04:19:48Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "id": "art_01KX2HMVX9DG9BGV1EMSV9XB3H",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KX2HMVX9DG9BGV1EMSV9XB3H.md",
+    "size_bytes": 1823
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": "Both in-scope items done.\n\n1) Read path: toolbench/hermes.py reads hermes sessions directly from ~/.hermes (read-only, mode=ro), resolving each session across all three profile DBs and joining tool_ca",
+  "tags": [],
+  "title": "Review findings",
+  "token_usage": null,
+  "type": "note"
+}

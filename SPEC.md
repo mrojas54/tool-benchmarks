@@ -42,9 +42,26 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 - **S9 — uniform open.** `open_session_jsonl(ref)` streams JSONL lines from
   either a filesystem path or `agentsview session export <id>`. Text is
   decoded with `errors="replace"` so a stray non-UTF-8 byte never aborts
-  the open. Payloads that look binary (NUL in the first 8192 bytes — e.g. a
-  SQLite dump returned with returncode 0) raise `NonTranscriptExport`
-  (`RuntimeError`) instead of being absorbed as malformed lines.
+  the open. A payload containing a NUL in its first 8 KiB is **not** a
+  transcript: raise `NonTranscriptExport` rather than absorb megabytes of
+  binary as malformed lines. The guard is agent-agnostic and stays so
+  regardless of any upstream fix (TB-10).
+- **S9a — hermes direct read.** `agent == "hermes"` sessions are read from the
+  hermes archive (`$HERMES_HOME`, default `~/.hermes`) via
+  `parse_hermes_session`, never via `agentsview session export`, which returns
+  `rc=0` and streams the whole default-profile database. Databases are opened
+  read-only. A session is resolved against every profile database
+  (`state.db`, then `profiles/*/state.db`); two of the 29 in-corpus sessions
+  exist only in a non-default profile and are unreachable even by a *fixed*
+  export. An unreadable archive raises `NonTranscriptExport` and degrades the
+  session to `skipped_roots` (TB-11).
+- **S9b — hermes discovery is not ours.** Hermes sessions are enumerated by
+  `agentsview session list`, never from the archive. The corpus is *defined* as
+  what that call returns, for every agent; enumerating the archive for one agent
+  would redefine the corpus and skew every cross-agent rate. Hermes is
+  consequently under-sampled — `session list` returns 89 sessions where
+  `agentsview stats` counts 789 from the same archive — which is an upstream
+  defect to fix, not one to route around here (TB-11).
 - **S10 — index-source policy.** `--index-source auto` tries AgentsView
   first and falls back to raw scanning (recording the reason) if the CLI is
   missing or exits nonzero; `agentsview` is strict and errors clearly;
