@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-09T05:53:35Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "id": "art_01KX2Q0KMNKYZBQWGMYEVCEEGE",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KX2Q0KMNKYZBQWGMYEVCEEGE.md",
+    "size_bytes": 51477
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": "7 TDD tasks: parsers, detect_parser, loaders, adapter seam, passive rewire, golden fixtures, docs",
+  "tags": [],
+  "title": "TB-13 implementation plan",
+  "token_usage": null,
+  "type": "file"
+}

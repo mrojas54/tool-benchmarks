@@ -13,11 +13,16 @@
       "id": "art_01KX2NYK35NT4SHW8W61JETH1R",
       "role": null,
       "source_type": "artifact"
+    },
+    {
+      "id": "art_01KX2Q0KMNKYZBQWGMYEVCEEGE",
+      "role": null,
+      "source_type": "artifact"
     }
   ],
   "id": "task_01KX2JEP7PZRAK8CXY3ZN8YT6M",
-  "last_event_id": "ev_01KX2NYK38TAETASD5PVJ4MXVG",
-  "last_status_changed_at": "2026-07-09T05:12:55Z",
+  "last_event_id": "ev_01KX2Q0KMR5FFFZJY0F1T9DPQ5",
+  "last_status_changed_at": "2026-07-09T05:53:35Z",
   "priority": "high",
   "relationships_out": [
     {
@@ -38,7 +43,7 @@
   "reopened_count": 0,
   "schema_version": 1,
   "short_id": "TB-13",
-  "status": "in_planning",
+  "status": "planned",
   "tags": [
     "refactor",
     "parser",
@@ -50,6 +55,6 @@
   ],
   "title": "transcript.py grows a schema-dispatch seam; unknown schemas raise instead of returning zero calls",
   "type": "chore",
-  "updated_at": "2026-07-09T05:35:01Z",
+  "updated_at": "2026-07-09T05:53:35Z",
   "urgency": "normal"
 }
