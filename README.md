@@ -115,11 +115,15 @@ Three source adapters. The first two are selected per-session by
   until this adapter landed (TB-11).
 
 Hermes **discovery** still comes from AgentsView; only the read is redirected.
-The archive holds 814 sessions while AgentsView indexes 89, and nothing in the
-archive explains that selection — it is a write-ahead record of everything
-hermes ever did, not a curated view of what counts as a session. Enumerating it
-here would silently redefine the corpus and skew every cross-agent rate, so
-hermes keeps exactly the sampling every other agent gets.
+The corpus is *defined* as what `agentsview session list` returns, and every
+agent is sampled through that one path. Enumerating the hermes archive here
+would redefine the corpus for a single agent and skew every cross-agent rate.
+
+**Known limitation.** Hermes is under-sampled. `agentsview session list --agent
+hermes` reports 89 sessions while `agentsview stats --agent hermes` reports 789
+from the same archive — one binary, two subsystems, an 8.9× disagreement.
+That is an upstream defect ([TB-11](.lattice/plans/), filed against AgentsView),
+not a curation we should work around by forking discovery into one adapter.
 
 ## Usage
 

@@ -5,12 +5,15 @@ profile database instead of that session's JSONL transcript, so every hermes ses
 is demoted to `skipped_roots` and contributes zero tool calls. This module reads the
 sessions straight from hermes' own archive instead.
 
-Discovery deliberately stays with AgentsView. The archive holds 814 sessions across
-three profiles while AgentsView indexes 89, and no column in the archive explains that
-selection -- it is a write-ahead record of everything hermes ever did, not a curated
-view of what counts as a session. Enumerating it here would silently redefine the
-corpus, so `passive` still asks AgentsView which sessions exist and only routes the
-*read* through this module.
+Discovery deliberately stays with AgentsView. The corpus is *defined* as what
+`agentsview session list` returns, and every agent is sampled through that one path;
+enumerating the hermes archive here would redefine the corpus for a single agent and
+skew every cross-agent rate. So `passive` still asks AgentsView which sessions exist
+and only routes the *read* through this module.
+
+Hermes is consequently under-sampled: `session list --agent hermes` returns 89 sessions
+where `agentsview stats --agent hermes` counts 789 from the same archive. That is an
+upstream defect, filed, and not one to route around here.
 """
 
 from __future__ import annotations

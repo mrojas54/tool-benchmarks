@@ -52,9 +52,12 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   export. An unreadable archive raises `NonTranscriptExport` and degrades the
   session to `skipped_roots` (TB-11).
 - **S9b — hermes discovery is not ours.** Hermes sessions are enumerated by
-  AgentsView, never from the archive. The archive holds 814 sessions to
-  AgentsView's 89 and no column explains the selection; enumerating it would
-  redefine the corpus and skew every cross-agent rate (TB-11).
+  `agentsview session list`, never from the archive. The corpus is *defined* as
+  what that call returns, for every agent; enumerating the archive for one agent
+  would redefine the corpus and skew every cross-agent rate. Hermes is
+  consequently under-sampled — `session list` returns 89 sessions where
+  `agentsview stats` counts 789 from the same archive — which is an upstream
+  defect to fix, not one to route around here (TB-11).
 - **S10 — index-source policy.** `--index-source auto` tries AgentsView
   first and falls back to raw scanning (recording the reason) if the CLI is
   missing or exits nonzero; `agentsview` is strict and errors clearly;

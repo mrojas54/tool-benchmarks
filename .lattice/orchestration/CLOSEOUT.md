@@ -188,14 +188,38 @@ Violated **S13** and **S15**. Fixed in `tb-8-subagent-project-filter` (RED → G
    → Before building on a premise, **run the query that would disprove it.** Report the
    result even when — especially when — it invalidates an approved plan.
 
-8. **Distinguish the write-ahead record from the curated view.** `state.db` holds
-   everything hermes ever did, including 699 automated cron runs. AgentsView's index
-   holds what counts as a session. "Recover unreachable data" (an access question) and
-   "recover data that belongs in this corpus" (a sampling question) look identical
-   until you notice hermes would jump from 0% to 29% of corpus tool calls purely
-   because we handed one agent a private data source.
+8. **"Recover unreachable data" and "recover data that belongs in this corpus" are
+   different questions.** The first is about access, the second about sampling, and
+   they look identical until you notice hermes would jump from 0% to 29% of corpus
+   tool calls purely because we handed one agent a private data source.
    → When a benchmark compares populations, changing *where* one population's data
-   comes from changes *what* is being compared.
+   comes from changes *what* is being compared. The corpus is defined as what
+   `agentsview session list` returns; a single agent does not get to opt out of that
+   definition, even to fix its own under-sampling.
+
+8b. **CORRECTED 2026-07-09 — and this document made the very error it warns about in
+   finding 6.** The original finding 8 explained AgentsView's 89-of-814 sessions as a
+   deliberate "curated view of what counts as a session," contrasted against `state.db`
+   as a raw write-ahead record. That was a hypothesis promoted to a rationale because
+   it made an already-correct decision *feel* principled.
+
+   It is wrong. AgentsView's own stats subsystem sees the archive nearly in full:
+
+   ```
+   agentsview stats --agent hermes  -> totals.sessions_all = 789
+   agentsview session list --agent hermes -> total = 89, next_cursor = null
+   ```
+
+   One binary (v0.36.1), one archive, an 8.9× disagreement between two of its own
+   subsystems. The dropped sessions follow no source rule (701 cron, 18 tui, 5 cli).
+   `session list` is losing sessions, not curating them. Filed upstream.
+
+   The decision survived the correction; only its justification changed. That is the
+   tell — a rationale you would not have discovered to be false by re-reading your own
+   reasoning, only by running one more command against the real system.
+   → **Finding 6 applies to your own conclusions, not just to inherited tickets.** Ask
+   what observation would falsify the story, then go make it. `stats` was one command
+   away the entire time.
 
 9. **A key that is always present is not a signal; its value is.** Hermes tool results
    carry an `error` key on nearly every row, `null` on success. `content LIKE '%"error"%'`

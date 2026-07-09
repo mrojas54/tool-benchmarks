@@ -55,13 +55,32 @@ A time-window bound was considered and rejected: the 500-session corpus page rea
 back to 2026-05-23, while hermes' entire archive begins 2026-06-07. Every hermes
 session is already inside the window, so the filter is a no-op.
 
-`state.db` is a write-ahead record of everything hermes ever did, including 699
-automated cron runs. AgentsView's index is a curated view of what counts as a session.
-They are different datasets, and the benchmark's corpus contract is written against
-the second.
+### Correction (2026-07-09): the 89 is an AgentsView defect, not a curation
 
-**Consequence:** discovery stays with AgentsView. We replace only the read path.
-Hermes keeps exactly the sampling every other agent gets.
+An earlier draft of this spec explained the 89-of-814 gap as AgentsView presenting a
+"curated view" of what counts as a session. **That was a hypothesis, and it is wrong.**
+
+AgentsView's own `stats` subsystem sees the archive nearly in full:
+
+```
+agentsview stats --agent hermes --format json  -> totals.sessions_all = 789
+agentsview session list --agent hermes         -> total = 89, next_cursor = null
+```
+
+Same binary (v0.36.1), same archive, two subsystems disagreeing by 8.9x. The dropped
+sessions do not follow a source rule either — 701 cron, 18 tui, 5 cli. `session list`
+is very likely *losing* hermes sessions, not selecting them.
+
+**The decision is unchanged; its justification is not.** Discovery stays with
+AgentsView because every other agent is sampled through that same `session list` path,
+and unilaterally reinterpreting it for one agent is precisely what would destroy
+cross-agent comparability. We do not enumerate the archive ourselves — but not because
+AgentsView's 89 is *right*. It is because the corpus is *defined* as what `session
+list` returns, and correcting that definition is upstream's job, not a thing to fork
+silently into one agent's adapter.
+
+Filed upstream. Until it is resolved, hermes is under-sampled in this corpus, and that
+is a known, named limitation rather than a hidden one.
 
 ## Design
 
