@@ -1,0 +1,33 @@
+{
+  "assigned_to": null,
+  "branch_links": [],
+  "comment_count": 0,
+  "complexity": "medium",
+  "created_at": "2026-07-09T03:31:31Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "description": "Found while fixing TB-10. Upstream AgentsView defect; toolbench already defends against it (NonTranscriptExport), but every hermes session yields ZERO tool calls as a result.\n\nREPRO:\n  agentsview session export hermes:cron_2d647784731c_20260708_150044 | head -c 16\n  -> 'SQLite format 3\\0'   (returncode 0, empty stderr)\n\nEXPECTED: JSONL transcript for that one session, as every other agent adapter returns.\n\nEVIDENCE (2026-07-08, live archive, 500-session page):\n\n  agent       n    export rc   payload\n  claude      294  0           JSONL      (1.3 MB)\n  codex       12   0           JSONL      (3.3 MB)\n  cowork      79   0           JSONL      (0.3 MB)\n  cursor      1    0           JSONL      (17 KB)\n  hermes      29   0           SQLite DB  (37,175,296 bytes)\n  claude-ai   85   1           empty      (fails cleanly; separate issue, not this ticket)\n\nSo the defect is scoped to the hermes adapter, and to ALL 29 hermes sessions -- not just the cron ones, as TB-10 originally assumed.\n\nTHE ID IS VALIDATED, THEN IGNORED. Three different hermes session ids return\nbyte-identical payloads:\n\n  hermes:cron_2d647784731c_20260708_150044  37175296 bytes  sha256=53ac5769ad225157\n  hermes:cron_2d647784731c_20260708_050027  37175296 bytes  sha256=53ac5769ad225157\n  hermes:cron_1ba0e70d34fd_20260707_114622  37175296 bytes  sha256=53ac5769ad225157\n\nwhile a bogus id is rejected properly:\n  agentsview session export hermes:does_not_exist_at_all\n  -> rc=1, 'fatal: session not in local archive: ...'\n\nThe export path therefore resolves the session, then streams the backing store\ninstead of the resolved session's messages. Tables in the dump (messages,\nmessages_fts_*, compression_locks) confirm it is hermes's whole message archive.\n\nIMPACT:\n- Correctness: hermes tool-call data is entirely unreachable. 29 of 500 sessions\n  contribute 0 calls to every report; hermes never appears in the agent breakdown.\n- Cost: a full run reads and discards 29 x 37 MB = ~1.08 GB, the SAME database 29\n  times over.\n- Blast radius beyond toolbench: any consumer trusting rc=0 + the documented JSONL\n  contract gets a database. A strict UTF-8 reader crashes on it (that WAS TB-10).\n\nWHY rc=0 IS THE REAL BUG: a nonzero exit would have degraded gracefully in every\nconsumer. Returning success with an off-contract payload is what turned a missing\nadapter feature into a crash in ours.\n\nWHAT TOOLBENCH ALREADY DOES (TB-10, PR #10): sniffs the first 8192 bytes for a NUL\n(impossible in JSONL, present at offset 15 of the SQLite header) and raises\nNonTranscriptExport, demoting the session to skipped_roots. The run completes and\nnames the skipped sessions. This ticket is NOT about that guard.\n\nIN SCOPE:\n- Report upstream to AgentsView with the repro above.\n- Decide whether toolbench should read hermes sessions directly from the SQLite\n  archive (messages table) rather than via , since the data plainly\n  exists and is currently 100% unreachable.\n\nOUT OF SCOPE:\n- The claude-ai rc=1 empty export. It fails cleanly and is a separate question.\n- Removing the NUL sniff. It should stay regardless of any upstream fix.",
+  "done_at": null,
+  "evidence_refs": [],
+  "id": "task_01KX2EWFDJ179QJ14JZA90X076",
+  "last_event_id": "ev_01KX2EWFDK8JMX4NC62838H9K2",
+  "last_status_changed_at": "2026-07-09T03:31:31Z",
+  "priority": "high",
+  "relationships_out": [],
+  "reopened_count": 0,
+  "schema_version": 1,
+  "short_id": "TB-11",
+  "status": "backlog",
+  "tags": [
+    "agentsview",
+    "upstream",
+    "export",
+    "S9",
+    "data-coverage",
+    "TB-10-followup"
+  ],
+  "title": "agentsview session export returns the whole SQLite archive for every hermes session",
+  "type": "bug",
+  "updated_at": "2026-07-09T03:31:31Z",
+  "urgency": "normal"
+}
