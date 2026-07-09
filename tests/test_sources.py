@@ -1,18 +1,29 @@
 import json
 import os
 import subprocess
+import sys
 import unittest
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from toolbench.sources import (
+    NonTranscriptExport,
     SessionRef,
+    _run_agentsview,
     iter_agentsview_sessions,
     iter_session_files,
     iter_sessions,
     open_session_jsonl,
 )
+
+# `agentsview session export` returns rc=0 and a whole SQLite database for hermes
+# cron sessions. First 16 bytes of that real payload (TB-10).
+_SQLITE_MAGIC = b"SQLite format 3\x00"
+
+# Child-process source that emits a bare 0xa0 byte — the exact byte that aborted
+# the live corpus scan (TB-10). Written as bytes so no encoding assumption applies.
+_EMIT_NON_UTF8 = 'import sys; sys.stdout.buffer.write(b\'{"note": "caf\\xa0"}\\n\')'
 
 
 def _completed(
@@ -254,6 +265,65 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
     def test_unknown_index_source_raises(self) -> None:
         with self.assertRaises(ValueError):
             iter_sessions(index_source="bogus", runner=FakeRunner([]))  # type: ignore[arg-type]
+
+
+class NonUtf8DecodeTests(unittest.TestCase):
+    """A stray non-UTF-8 byte must degrade to U+FFFD, never abort the scan (TB-10)."""
+
+    def test_run_agentsview_decodes_child_stdout_leniently(self) -> None:
+        # Drives a real subprocess: strict `text=True` raises inside communicate(),
+        # so a fixture-shaped CompletedProcess could never catch this regression.
+        result = _run_agentsview([sys.executable, "-c", _EMIT_NON_UTF8])
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("�", result.stdout)
+        self.assertIn('"note"', result.stdout)
+
+    def test_open_session_jsonl_reads_non_utf8_file_leniently(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sess-bad.jsonl"
+            path.write_bytes(b'{"note": "caf\xa0"}\n{"note": "ok"}\n')
+            ref = SessionRef(
+                agent="claude-code", source="raw", project="p", session_id="sess-bad", path=str(path)
+            )
+            lines = list(open_session_jsonl(ref))
+        self.assertEqual(len(lines), 2)
+        self.assertIn("�", lines[0])
+
+
+class NonTranscriptExportTests(unittest.TestCase):
+    """A payload that is not a transcript at all must be rejected, not absorbed (TB-10).
+
+    Lenient decode alone would turn a 37MB SQLite file into ~351k 'malformed
+    lines', drowning the provenance signal that reads 0 on a clean corpus.
+    """
+
+    def test_export_of_binary_payload_is_rejected(self) -> None:
+        payload = _SQLITE_MAGIC.decode("utf-8", errors="replace") + "\x10\x00\x02tablemessages"
+        runner = FakeRunner([_completed(stdout=payload)])
+        ref = SessionRef(agent="hermes", source="agentsview", project="p", session_id="cron_1", path=None)
+        with self.assertRaises(NonTranscriptExport):
+            list(open_session_jsonl(ref, runner=runner))
+
+    def test_raw_binary_session_file_is_rejected(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sess.jsonl"
+            path.write_bytes(_SQLITE_MAGIC + b"\x10\x00\x02tablemessages")
+            ref = SessionRef(
+                agent="hermes", source="raw", project="p", session_id="cron_1", path=str(path)
+            )
+            with self.assertRaises(NonTranscriptExport):
+                list(open_session_jsonl(ref))
+
+    def test_non_transcript_export_is_a_runtimeerror(self) -> None:
+        # Subclassing RuntimeError is load-bearing: passive.main()'s per-session
+        # guard already catches it, so binary sessions demote to skipped_roots.
+        self.assertTrue(issubclass(NonTranscriptExport, RuntimeError))
+
+    def test_stray_byte_without_nul_is_not_treated_as_binary(self) -> None:
+        # A good session with one bad byte must still parse; only NUL means binary.
+        runner = FakeRunner([_completed(stdout='{"note": "caf�"}\n')])
+        ref = SessionRef(agent="claude", source="agentsview", project="p", session_id="s1", path=None)
+        self.assertEqual(len(list(open_session_jsonl(ref, runner=runner))), 1)
 
 
 if __name__ == "__main__":

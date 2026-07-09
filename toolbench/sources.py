@@ -13,6 +13,24 @@ from typing import Literal
 IndexSource = Literal["auto", "agentsview", "raw"]
 Runner = Callable[[list[str]], "subprocess.CompletedProcess[str]"]
 
+# Bytes sniffed to classify a payload as text or binary. A NUL cannot appear in a
+# JSONL transcript, so it is a sound discriminator rather than a heuristic.
+SNIFF_LEN = 8192
+
+
+class NonTranscriptExport(RuntimeError):
+    """A session payload is not a JSONL transcript (e.g. `agentsview session export`
+    returns a whole SQLite database for hermes cron sessions, with returncode 0).
+
+    Subclasses RuntimeError so `passive.main` demotes the session to `skipped_roots`
+    via its existing per-session guard, instead of absorbing megabytes of binary as
+    'malformed lines'.
+    """
+
+
+def _looks_binary(sample: str) -> bool:
+    return "\x00" in sample
+
 
 @dataclass
 class SessionRef:
@@ -26,7 +44,9 @@ class SessionRef:
 
 
 def _run_agentsview(argv: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(argv, capture_output=True, text=True, check=False)
+    # errors="replace": a session export carrying a stray non-UTF-8 byte must not
+    # raise out of communicate() and abort the whole corpus scan (S9).
+    return subprocess.run(argv, capture_output=True, text=True, errors="replace", check=False)
 
 
 def iter_session_files(
@@ -95,7 +115,12 @@ def open_session_jsonl(
 ) -> Iterator[str]:
     """Stream JSONL lines for `ref` from disk or via `agentsview session export` (S9)."""
     if ref.path is not None:
-        with open(ref.path, encoding="utf-8") as f:
+        # Sniff on a separate binary handle so the text handle can still stream
+        # line-by-line; slurping a head as text would force us to stitch a
+        # mid-line cut back together.
+        if path_looks_binary(ref.path):
+            raise NonTranscriptExport(f"non-transcript payload (binary content): {ref.path}")
+        with open(ref.path, encoding="utf-8", errors="replace") as f:
             yield from f
         return
     result = runner(["agentsview", "session", "export", ref.session_id])
@@ -103,7 +128,15 @@ def open_session_jsonl(
         raise RuntimeError(
             f"agentsview session export failed ({result.returncode}): {result.stderr.strip()}"
         )
+    if _looks_binary(result.stdout[:SNIFF_LEN]):
+        # No session id here: callers that record this already prefix it.
+        raise NonTranscriptExport("non-transcript payload (binary content) from session export")
     yield from result.stdout.splitlines(keepends=True)
+
+
+def path_looks_binary(path: str) -> bool:
+    with open(path, "rb") as f:
+        return b"\x00" in f.read(SNIFF_LEN)
 
 
 def _probe_agentsview(runner: Runner) -> str | None:
