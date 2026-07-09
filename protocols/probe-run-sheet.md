@@ -9,9 +9,11 @@ Everything you need is below. Copy each call exactly.
 
 ## The rules that make the run scoreable
 
-1. **One tool call per turn.** Ten arms, ten turns. `_usage_output_tokens`
-   attributes real usage only when a turn holds exactly one `tool_use` block.
-   If you batch two calls into one turn, both arms lose their usage numbers.
+1. **One tool call per turn.** Ten arms, ten turns. A *turn* here is one API
+   response — one `requestId` — not one JSONL record. `_usage_output_tokens`
+   attributes real usage only when that response emitted exactly one `tool_use`
+   block. If you batch two calls into one turn, both arms lose their usage
+   numbers.
 2. **Never type a sentinel except in the one bash command that owns it.** Do not
    echo one, do not grep for one, do not paste this sheet into a shell. A call
    naming two sentinels is discarded; a call naming one is *indistinguishable
@@ -19,6 +21,16 @@ Everything you need is below. Copy each call exactly.
 3. **Do not touch the corpus files with any other tool** during the run.
 4. **Say nothing to the user mid-run that requires a tool call.** Prose between
    turns is free; tool calls are not.
+5. **An arm turn carries the tool call and nothing else.** `output_tokens` is
+   billed against the whole API response, so a sentence of prose or a block of
+   reasoning emitted alongside the call is charged to the arm. Write your prose
+   in the turns *between* arms, where it costs the run nothing. Rule 4 says
+   prose between turns is free — this is the other half of that: prose *inside*
+   an arm turn is not.
+
+Rules 1 and 5 are enforced (S26). A contaminated arm still matches, but reports
+no usage: its cell shows the seeded baseline, marked. The run is not silently
+wrong, it is visibly incomplete. Do not reach for `--allow-seeded` to hide it.
 
 Sentinels appear only in the bash arms. The tool arms carry none — serena's
 schemas have no field to put one in, and the matcher identifies them
@@ -167,6 +179,13 @@ uv run python -m toolbench.probe --session <that path>
 Expect ten unseeded cells and no `*` in the table. If any cell is seeded, an arm
 did not match — do not paper over it with `--allow-seeded`. A fully-seeded table
 raises `SeededReportError` by design.
+
+Check the two usage columns as well. A `—` there means the arm matched but its
+response was not isolable: it batched a second call, or carried prose or
+reasoning (rules 1 and 5). The context-token columns are still good; the usage
+number for that arm is gone, and only a fresh session can recover it. An arm is
+spent once its call is in the transcript — re-running it adds a second match
+rather than replacing the first, which is the same reason turn 0 exists.
 
 ## Deviation from `active-probes.md`
 

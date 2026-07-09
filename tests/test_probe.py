@@ -350,5 +350,77 @@ class StructuralToolArmTests(unittest.TestCase):
         self.assertEqual(by_id["01"].tool_usage_tokens, 11)
 
 
+class ResponsePooledIsolabilityTests(unittest.TestCase):
+    """`output_tokens` is billed per *response*, not per JSONL record (TB-16).
+
+    Claude Code splits one API response (one `requestId`) into several entries --
+    `thinking`, `text`, `tool_use` -- each stamped with the same `output_tokens`
+    and a *different* timestamp. So a turn is a `requestId`, and an arm's usage
+    is attributable only when its response emitted the tool call and nothing
+    else. Keying on timestamp misses every real contamination: measured over 400
+    session files, no assistant record holds two `tool_use` blocks, while 245
+    `requestId`s do.
+    """
+
+    def setUp(self) -> None:
+        self.matches = find_probe_calls(FIXTURES / "probe_session_response_pooled.jsonl")
+
+    def test_prose_sibling_entry_makes_the_tool_arm_non_isolable(self) -> None:
+        arm = self.matches["01"]
+        self.assertIsNotNone(arm.tool, "the arm still matches; only its usage is unattributable")
+        self.assertFalse(
+            arm.tool_isolable,
+            "response emitted 447 chars of text; 561 output_tokens is not the arm's cost",
+        )
+
+    def test_lone_tool_use_response_stays_isolable(self) -> None:
+        self.assertTrue(self.matches["01"].bash_isolable, "a clean response must be unaffected")
+        self.assertTrue(self.matches["05"].tool_isolable)
+
+    def test_batched_calls_in_one_response_cost_both_arms_their_usage(self) -> None:
+        # Rule 1 of the run sheet. Both calls share requestId req_C but carry
+        # distinct timestamps, so a ts-keyed check scores both as isolable.
+        self.assertFalse(self.matches["02"].tool_isolable, "batched with probe 03")
+        self.assertFalse(self.matches["03"].tool_isolable, "batched with probe 02")
+
+    def test_thinking_sibling_entry_alone_breaks_isolability(self) -> None:
+        self.assertFalse(
+            self.matches["04"].tool_isolable,
+            "reasoning tokens are billed to output_tokens even with no prose",
+        )
+
+    def test_contaminated_arms_fall_back_to_seed_rather_than_reporting_pooled_tokens(self) -> None:
+        by_id = {r.probe_id: r for r in build_comparison_table(self.matches)}
+        self.assertIsNone(by_id["01"].tool_usage_tokens)
+        self.assertIsNone(by_id["02"].tool_usage_tokens)
+        self.assertIsNone(by_id["04"].tool_usage_tokens)
+        self.assertEqual(by_id["01"].bash_usage_tokens, 115, "the clean arm keeps its number")
+        self.assertEqual(by_id["05"].tool_usage_tokens, 95)
+
+    def test_pooled_totals_never_reach_the_rendered_report(self) -> None:
+        report = render_report(build_comparison_table(self.matches), allow_seeded=True)
+        for pooled in ("561", "200", "300"):
+            self.assertNotIn(pooled, report, f"{pooled} is a response total, not an arm cost")
+
+
+class RecordLevelIsolabilityTests(unittest.TestCase):
+    """Fallback path: fixtures with no `requestId` are still grouped by timestamp."""
+
+    def setUp(self) -> None:
+        self.matches = find_probe_calls(FIXTURES / "probe_session_prose.jsonl")
+
+    def test_text_block_in_the_same_record_makes_the_arm_non_isolable(self) -> None:
+        self.assertFalse(self.matches["01"].tool_isolable)
+
+    def test_clean_record_stays_isolable(self) -> None:
+        self.assertTrue(self.matches["01"].bash_isolable)
+
+    def test_whitespace_only_text_block_does_not_break_isolability(self) -> None:
+        self.assertTrue(
+            self.matches["02"].tool_isolable,
+            "an empty/whitespace text block costs no output tokens",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
