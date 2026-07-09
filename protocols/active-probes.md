@@ -22,6 +22,10 @@ Task alternates by file so both seeded task types (`search`, `find`) are
 exercised across the log-spaced size spread. The bash arm for every probe
 uses plain `Bash` (`grep`/`find` over the same corpus file).
 
+Only the **bash** sentinel is required to appear in a call. The tool sentinel
+is retained as a rejection token (see S20): a tool arm may name its own
+sentinel, but must never name another probe's.
+
 ## Tool naming (S19)
 
 Claude Code namespaces an MCP tool by how its server was installed. Serena
@@ -36,15 +40,47 @@ which appears **zero** times as a `tool_use` name anywhere in the transcript
 corpus. The serena arm was therefore unmatchable and every serena cell in
 every report was seeded.
 
+## How each arm is identified (S20)
+
+The two arms carry different evidence, so they are matched differently.
+
+**The tool arm is matched structurally**, on the accepted tool name plus the
+corpus *target* (the basename, e.g. `regex_check.py`) appearing in the call's
+input. It carries no sentinel. It cannot: serena's `find_file` accepts exactly
+
+    {file_mask: str, relative_path: str}
+
+`file_mask` must equal the file being searched for or the search misses, and
+`relative_path` must be a real directory. There is no inert free-text field to
+park a correlation id in. Nor is one needed — a `find_file` for
+`regex_check.py` is already unambiguously probe 01's tool arm.
+
+**The bash arm is matched by sentinel**, because a shell command is
+unstructured text in which nothing else is reliably distinctive. A `#` comment
+carries `TB_PROBE_01_BASH_V2` without changing what the command does.
+
+An earlier revision required a sentinel in *both* arms. Since `find_file` has
+nowhere to put one, all three `find` arms (01, 03, 05) were unperformable, and
+`search_for_pattern` (02, 04) could only comply by bolting a never-matching
+alternation onto the regex being measured — which is not the task.
+
+The fixtures concealed this by inventing parameters serena does not accept
+(`name_path`, `comment`). `ToolArmSchemaTests` now fails if any fixture uses a
+parameter outside serena's real schema.
+
 ## Performing vs. mentioning a probe (S19)
 
 A sentinel is a bare string, so a call that *greps for* `TB_PROBE_01_BASH_V2`
 looks exactly like the call that *performs* probe 01's bash arm.
-`toolbench.probe._performing_sentinel` therefore rejects any call that:
+`toolbench.probe.find_probe_calls` therefore discards any call that:
 
-- names more than one probe sentinel (a real arm names exactly its own), or
+- names more than one probe sentinel (a real bash arm names exactly its own), or
 - targets the transcript corpus or the probe's own source — see
   `MENTION_MARKERS` (`.claude/projects`, `toolbench/probe.py`, this file).
+
+A tool-arm candidate carrying some *other* probe's sentinel is rejected on the
+same grounds: a serena search of `tools/mcp.py` for `TB_PROBE_01_TOOL_V2` is a
+hunt for a sentinel, not probe 02's tool arm.
 
 This narrows contamination; it does not eliminate it. A single-sentinel grep
 against the corpus file is indistinguishable from the bash arm it imitates.
