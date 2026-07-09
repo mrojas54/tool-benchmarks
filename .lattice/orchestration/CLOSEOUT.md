@@ -8,6 +8,8 @@
   run in degraded mode (Orchestrator-as-validator; see caveat in that report).
 - Merged (PRs #1–#7). **Operator smoke checklist run 2026-07-08: 4 PASS,
   1 bug found (TB-8, fixed).** Row 4 opened as TB-9 and closed the same day.
+  Verifying TB-9 against the live corpus then exposed TB-10 (crash on a
+  non-transcript session export), also fixed the same day.
   See "Operator smoke results" below.
 
 ## Operator smoke results (2026-07-08)
@@ -18,7 +20,7 @@ Gate re-verified on merged `main` first: ruff clean, mypy --strict clean (10 fil
 | Row | Criterion | Verdict | Evidence |
 |---|---|---|---|
 | 1 | Join-key on real data (S1/S2) | **PASS** | 301 calls joined, 470k output tokens, 0 malformed. Real transcripts hold 302 block-local `tool_use_id` results and **zero** top-level `toolUseID` — the block-local branch is the only path that ever fires. Reversed precedence would have zeroed every join. |
-| 2 | AgentsView live path (S10/S25) | **PASS** | Healthy daemon → `auto` uses AgentsView (`fallback reason: none`). Binary hidden from `PATH` → falls back to raw, names the reason. `--index-source agentsview` → fatal, exit 1. |
+| 2 | AgentsView live path (S10/S25) | **PASS** (incomplete) | Healthy daemon → `auto` uses AgentsView (`fallback reason: none`). Binary hidden from `PATH` → falls back to raw, names the reason. `--index-source agentsview` → fatal, exit 1. **All three exercise an *early* failure inside `_discover_refs`, where `FileNotFoundError` is caught. A failure during *per-session export* was never exercised — that gap is TB-10.** |
 | 3 | Scale / flat memory (S11) | **PASS** | Pushed past the 200-session bar to the full corpus: 3,705 sessions / 417 MB / 5.2 s, peak RSS **44.8 MB** vs 35.9 MB at 20 sessions (+25% for 185× sessions). Joined 6,683 of 6,684 ground-truth `tool_use` blocks; the 1 gap is a call appended to the live transcript mid-read. |
 | 4 | Report reads well (`felt`) | **PASS** (was PARTIAL) | Four sections in spec order, scannable. Callouts were bare counts with no denominators or attribution — `Failures: 865` named no tool. Ticketed as TB-9 and fixed: each callout now reads `N of M calls (P%); top: <tool> (n)`. Live corpus: `Failures: 147 of 997 calls (14.7%); top: Bash (109)`. |
 
@@ -38,6 +40,56 @@ gains a denominator.
 S14 fixes *which* callouts appear, not their formatting, so no spec change was needed.
 Verified by driving the real CLI (`--index-source raw --limit 80`), not fixtures alone
 — per the retrospective finding below. RED → GREEN → DOCS, 109 tests.
+
+### Bug found: TB-10 — one non-transcript session aborted the whole corpus scan
+
+Found while verifying TB-9 against the live corpus. `--index-source auto --limit 60`
+died with an unhandled `UnicodeDecodeError` (`0xa0`); `--limit 3` succeeded, so the
+failure was data-dependent, not daemon-dependent.
+
+Three decode boundaries read strict UTF-8: `subprocess.run(..., text=True)` in
+`_run_agentsview` (the crash site — decoding happens inside `communicate()`, before
+any parsing code runs), `open()` in `open_session_jsonl`, and `Path.open()` in
+`parse_session`. That third one is the boundary the **raw** CLI path actually hits:
+`_parse_ref` calls `parse_session(ref.path)` directly and never routes through
+`open_session_jsonl`, so the ticket's stated `sources.py:98` was not the raw crash
+site. All three now decode with `errors="replace"`.
+
+`main()` wraps `_parse_ref` in `except (OSError, RuntimeError)` precisely so a bad
+session degrades to `skipped_roots`. `UnicodeDecodeError` subclasses `ValueError`,
+so it slipped that guard and took the whole run down. The guard now names
+`UnicodeDecodeError` explicitly — deliberately narrower than the ticket's proposed
+bare `ValueError`, which would have converted genuine programming errors inside
+`parse_session` into silently-skipped sessions.
+
+**The stray byte had a bigger cause than the ticket assumed.** `agentsview session
+export` returns returncode 0 and a **37 MB SQLite database** for hermes cron sessions
+(`SQLite format 3\0…`), not JSONL. Lenient decode alone would have *absorbed* that as
+351,110 "malformed lines" per session — 702,220 across a 60-session run, drowning a
+provenance counter that reads 0 on a clean corpus. Sessions are now sniffed for a NUL
+byte (impossible in JSONL, present in SQLite's header at offset 15) and rejected as
+`NonTranscriptExport`, which subclasses `RuntimeError` so the existing per-session
+guard demotes them to `skipped_roots` with no new branch.
+
+The two fixes the ticket proposed in the alternative — lenient decode *or* a widened
+guard — turn out to conflict: decode alone absorbs binary as garbage, guard alone
+discards good sessions that carry a single stray byte. Both are needed, at different
+layers. A session with one bad byte keeps its calls; a session that is not a
+transcript is skipped by name.
+
+Fixing this surfaced a latent temp-file leak: `_parse_ref` bound `tmp_path` only
+*after* the write loop, so any exception from the line generator stranded a
+`delete=False` `NamedTemporaryFile`. It already leaked on a nonzero export returncode;
+the new raise merely made the path hot.
+
+Live corpus, the original repro (`--limit 60`): before, `UnicodeDecodeError` and no
+report; after, 58 scanned, 4,518 calls, `Malformed lines: 0`, 2 skipped roots named.
+`--index-source raw` unaffected. RED → GREEN → DOCS, 121 tests.
+
+Open question for AgentsView, not fixed here: an `export` that exits 0 while emitting
+a database file rather than the transcript it contracts is arguably broken upstream.
+27 such sessions appear in a default 500-session page (~1 GB of binary read and
+discarded per full run).
 
 ### Bug found: TB-8 — `--project` silently dropped every subagent session
 
@@ -101,6 +153,27 @@ Violated **S13** and **S15**. Fixed in `tb-8-subagent-project-filter` (RED → G
    tagged `post-merge-smoke` and **not counted as a pass**. Two rows here were counted
    as passes. Corollary: "leave-at-review" merged one row too early — the smoke rows
    were the only ones that could have caught this, and they ran after the merge.
+
+   **Confirmed twice.** TB-10 is the same failure at the byte layer: every source test
+   built `CompletedProcess(stdout=<str>)` by hand, so no test ever let
+   `subprocess.run(text=True)` *decode* anything — which is exactly where the crash
+   lived. A fixture cannot reproduce a defect in the step that produces fixtures.
+   Both TB-8 and TB-10 were found by running the real CLI over the real corpus, and
+   both were invisible to a green suite. TB-10's tests therefore drive a live
+   subprocess emitting real `0xa0` bytes and write real bytes to disk.
+   → Generalization: **mock at the seam you own, never at the seam you're testing.**
+   For any boundary that decodes, parses, or globs, at least one test must cross it
+   for real.
+
+6. **A bug report's root cause is a hypothesis, not a finding.** TB-10's ticket named
+   `sources.py:98` as the raw-path crash site; the raw path never executes that line
+   (`_parse_ref` → `parse_session`). It proposed catching bare `ValueError`, which
+   would have masked real errors, and its two proposed fixes silently conflicted —
+   one absorbs binary as garbage, the other discards salvageable sessions. It also
+   assumed "a stray non-UTF-8 byte" where the truth was a 37 MB SQLite file. Every one
+   of those was written by an agent that had reproduced the crash but not the *cause*.
+   → Reproduce before you fix, and re-derive the root cause from the failing run
+   rather than inheriting it from the ticket — even a ticket you wrote yourself.
 
 ## Config decisions (see run-state.md decision log)
 - Delegators Sonnet; Result Validator downgraded Opus→Sonnet at 76% weekly usage.
