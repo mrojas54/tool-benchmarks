@@ -206,6 +206,47 @@ class ReducerAbsorbTests(unittest.TestCase):
         reducer.absorb("claude-code", ParseResult(calls=calls, malformed=0))
         self.assertEqual(reducer.inefficiency.churn_retries, 0)
 
+    def test_failures_attributed_to_owning_tool(self) -> None:
+        reducer = Reducer()
+        calls = [
+            make_call(name="Bash", error="tool_error"),
+            make_call(name="Read", error="tool_error"),
+            make_call(name="Bash", error="tool_error"),
+            make_call(name="Read"),
+        ]
+        reducer.absorb("claude-code", ParseResult(calls=calls, malformed=0))
+        self.assertEqual(reducer.inefficiency.failures_by_tool, {"Bash": 2, "Read": 1})
+
+    def test_oversized_outputs_attributed_to_owning_tool(self) -> None:
+        reducer = Reducer()
+        big = OVERSIZED_OUTPUT_TOKENS * 4 + 40
+        calls = [
+            make_call(name="Read", output_chars=big),
+            make_call(name="Bash", output_chars=big),
+            make_call(name="Read", output_chars=big),
+            make_call(name="Read", output_chars=40),
+        ]
+        reducer.absorb("claude-code", ParseResult(calls=calls, malformed=0))
+        self.assertEqual(reducer.inefficiency.oversized_by_tool, {"Read": 2, "Bash": 1})
+
+    def test_churn_attributed_to_owning_tool(self) -> None:
+        reducer = Reducer()
+        calls = [
+            make_call(name="Bash", error="tool_error"),
+            make_call(name="Bash", error="tool_error"),
+            make_call(name="Bash", error="tool_error"),
+            make_call(name="Read"),
+        ]
+        reducer.absorb("claude-code", ParseResult(calls=calls, malformed=0))
+        self.assertEqual(reducer.inefficiency.churn_by_tool, {"Bash": 2})
+
+    def test_attribution_accumulates_across_sessions(self) -> None:
+        reducer = Reducer()
+        calls = [make_call(name="Bash", error="tool_error")]
+        reducer.absorb("claude-code", ParseResult(calls=calls, malformed=0))
+        reducer.absorb("codex", ParseResult(calls=calls, malformed=0))
+        self.assertEqual(reducer.inefficiency.failures_by_tool, {"Bash": 2})
+
 
 class DateRangeFilterTests(unittest.TestCase):
     def test_no_bounds_returns_same_calls(self) -> None:
@@ -366,6 +407,63 @@ class RenderReportTests(unittest.TestCase):
             "--since is file-mtime based",
         ):
             self.assertIn(expected, report)
+
+    def _callout_reducer(self) -> Reducer:
+        """Two consecutive Bash failures then a clean Read: 3 calls, 2 failures, 1 churn."""
+        reducer = Reducer()
+        reducer.absorb(
+            "claude-code",
+            ParseResult(
+                calls=[
+                    make_call(name="Bash", error="tool_error"),
+                    make_call(name="Bash", error="tool_error"),
+                    make_call(name="Read"),
+                ],
+                malformed=0,
+            ),
+        )
+        return reducer
+
+    def _callouts(self, reducer: Reducer) -> str:
+        report = render_report(
+            reducer,
+            index_source="auto",
+            fallback_reason=None,
+            skipped_roots=[],
+            include_subagents=True,
+            since_note=None,
+        )
+        start = report.index("## Inefficiency Callouts")
+        return report[start : report.index("## Summary")]
+
+    def test_callouts_carry_denominator_and_percentage(self) -> None:
+        section = self._callouts(self._callout_reducer())
+        self.assertIn("Failures: 2 of 3 calls (66.7%)", section)
+        self.assertIn("Churn (consecutive-repeat retries): 1 of 3 calls (33.3%)", section)
+
+    def test_callouts_name_top_offending_tool(self) -> None:
+        section = self._callouts(self._callout_reducer())
+        self.assertIn("Failures: 2 of 3 calls (66.7%); top: Bash (2)", section)
+        self.assertIn("Churn (consecutive-repeat retries): 1 of 3 calls (33.3%); top: Bash (1)", section)
+
+    def test_zero_count_callout_omits_top_offender(self) -> None:
+        section = self._callouts(self._callout_reducer())
+        self.assertIn("Subagent fan-out calls: 0 of 3 calls (0.0%)", section)
+        self.assertNotIn("Subagent fan-out calls: 0 of 3 calls (0.0%); top:", section)
+
+    def test_top_offender_ties_break_alphabetically(self) -> None:
+        reducer = Reducer()
+        reducer.absorb(
+            "claude-code",
+            ParseResult(
+                calls=[
+                    make_call(name="Write", error="tool_error"),
+                    make_call(name="Bash", error="tool_error"),
+                ],
+                malformed=0,
+            ),
+        )
+        self.assertIn("top: Bash (1)", self._callouts(reducer))
 
     def test_leaderboard_ranked_by_output_tokens_not_call_count_or_cache(self) -> None:
         reducer = Reducer()
