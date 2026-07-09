@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import sys
 import unittest
 from datetime import datetime
 from pathlib import Path
@@ -8,11 +9,16 @@ from tempfile import TemporaryDirectory
 
 from toolbench.sources import (
     SessionRef,
+    _run_agentsview,
     iter_agentsview_sessions,
     iter_session_files,
     iter_sessions,
     open_session_jsonl,
 )
+
+# Child-process source that emits a bare 0xa0 byte — the exact byte that aborted
+# the live corpus scan (TB-10). Written as bytes so no encoding assumption applies.
+_EMIT_NON_UTF8 = 'import sys; sys.stdout.buffer.write(b\'{"note": "caf\\xa0"}\\n\')'
 
 
 def _completed(
@@ -254,6 +260,29 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
     def test_unknown_index_source_raises(self) -> None:
         with self.assertRaises(ValueError):
             iter_sessions(index_source="bogus", runner=FakeRunner([]))  # type: ignore[arg-type]
+
+
+class NonUtf8DecodeTests(unittest.TestCase):
+    """A stray non-UTF-8 byte must degrade to U+FFFD, never abort the scan (TB-10)."""
+
+    def test_run_agentsview_decodes_child_stdout_leniently(self) -> None:
+        # Drives a real subprocess: strict `text=True` raises inside communicate(),
+        # so a fixture-shaped CompletedProcess could never catch this regression.
+        result = _run_agentsview([sys.executable, "-c", _EMIT_NON_UTF8])
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("�", result.stdout)
+        self.assertIn('"note"', result.stdout)
+
+    def test_open_session_jsonl_reads_non_utf8_file_leniently(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sess-bad.jsonl"
+            path.write_bytes(b'{"note": "caf\xa0"}\n{"note": "ok"}\n')
+            ref = SessionRef(
+                agent="claude-code", source="raw", project="p", session_id="sess-bad", path=str(path)
+            )
+            lines = list(open_session_jsonl(ref))
+        self.assertEqual(len(lines), 2)
+        self.assertIn("�", lines[0])
 
 
 if __name__ == "__main__":

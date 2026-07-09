@@ -1,5 +1,6 @@
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from toolbench.transcript import (
     ToolCall,
@@ -165,6 +166,33 @@ class ParseSessionTests(unittest.TestCase):
 
     def test_model_none_when_message_omits_it(self) -> None:
         self.assertIsNone(self.by_name["Read"].model)
+
+
+class NonUtf8SessionTests(unittest.TestCase):
+    """Raw sessions carrying a stray byte parse to completion (TB-10).
+
+    `_parse_ref` sends raw sessions straight to `parse_session`, bypassing
+    `open_session_jsonl` — so this is the decode boundary the raw CLI path hits.
+    """
+
+    def test_non_utf8_byte_does_not_abort_parse(self) -> None:
+        good = (FIXTURES / "sample.jsonl").read_bytes()
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sess-bad.jsonl"
+            path.write_bytes(good + b'{"type": "assistant", "note": "caf\xa0"}\n')
+            result = parse_session(str(path), agent="claude-code", source="raw", project="p")
+        # The undamaged calls still land; the mangled line is JSON-valid, so it is
+        # simply an entry with no tool_use rather than a malformed-line bump.
+        self.assertGreater(len(result.calls), 0)
+
+    def test_non_utf8_byte_breaking_json_counts_as_malformed(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sess-bad.jsonl"
+            # 0xa0 lands on the closing quote, so U+FFFD leaves the JSON unparseable.
+            path.write_bytes(b'{"type": "assistant"\xa0\n')
+            result = parse_session(str(path), agent="claude-code", source="raw", project="p")
+        self.assertEqual(result.calls, [])
+        self.assertEqual(result.malformed, 1)
 
 
 if __name__ == "__main__":

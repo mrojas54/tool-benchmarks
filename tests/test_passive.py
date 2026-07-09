@@ -619,5 +619,54 @@ class MainExitContractTests(unittest.TestCase):
         self.assertIn("Malformed lines: 1", report)
 
 
+class NonUtf8SessionTests(unittest.TestCase):
+    """One corrupt session must not abort the corpus scan (TB-10)."""
+
+    def test_raw_session_with_non_utf8_byte_still_produces_report(self) -> None:
+        with TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "proj"
+            proj.mkdir()
+            good = (FIXTURES / "sample.jsonl").read_bytes()
+            # Real bytes on disk, not a hand-built ToolCall: the TB-8 retrospective
+            # showed fixture-only tests cannot exercise the discovery/decode path.
+            (proj / "sess-bad.jsonl").write_bytes(good.replace(b"total 0", b"total \xa0"))
+            (proj / "sess-good.jsonl").write_bytes(good)
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = main(["--index-source", "raw"], root=tmp)
+        self.assertEqual(code, 0)
+        report = out.getvalue()
+        self.assertIn("## Summary", report)
+        self.assertIn("Sessions scanned: 2", report)
+
+    def test_export_decode_error_demotes_session_to_skipped_root(self) -> None:
+        # Guards the injected-runner seam: a caller supplying a strict-decode
+        # runner still gets a report for every session that did decode.
+        raw_text = (FIXTURES / "sample.jsonl").read_text()
+        payload = {
+            "sessions": [
+                {"id": "bad-session", "project": "p", "agent": "claude"},
+                {"id": "good-session", "project": "p", "agent": "claude"},
+            ],
+            "next_cursor": "",
+            "total": 2,
+        }
+        runner = FakeRunner(
+            [
+                _completed(stdout=json.dumps(payload)),
+                UnicodeDecodeError("utf-8", b"\xa0", 0, 1, "invalid start byte"),
+                _completed(stdout=raw_text),
+            ]
+        )
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = main(["--index-source", "agentsview"], runner=runner)
+        self.assertEqual(code, 0)
+        report = out.getvalue()
+        self.assertIn("## Summary", report)
+        self.assertIn("bad-session", report)
+        self.assertIn("Sessions scanned: 1", report)
+
+
 if __name__ == "__main__":
     unittest.main()
