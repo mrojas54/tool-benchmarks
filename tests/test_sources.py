@@ -138,6 +138,23 @@ class IterSessionFilesTests(unittest.TestCase):
             self.assertEqual(len(paths), 1)
             self.assertEqual(paths[0].name, "s1.jsonl")
 
+    def test_project_filter_keeps_nested_subagent_sessions(self) -> None:
+        with TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "-Users-me-tool-benchmarks"
+            (proj / "subagents").mkdir(parents=True)
+            (proj / "s1.jsonl").write_text("{}\n")
+            (proj / "subagents" / "sub1.jsonl").write_text("{}\n")
+            paths = list(iter_session_files(root=tmp, project="tool-benchmarks"))
+            self.assertEqual(sorted(p.name for p in paths), ["s1.jsonl", "sub1.jsonl"])
+
+    def test_project_filter_excludes_other_projects_nested_sessions(self) -> None:
+        with TemporaryDirectory() as tmp:
+            other = Path(tmp) / "-Users-me-other-project"
+            (other / "subagents").mkdir(parents=True)
+            (other / "subagents" / "sub2.jsonl").write_text("{}\n")
+            paths = list(iter_session_files(root=tmp, project="tool-benchmarks"))
+            self.assertEqual(paths, [])
+
     def test_filters_by_since_mtime(self) -> None:
         with TemporaryDirectory() as tmp:
             proj = Path(tmp) / "proj"
