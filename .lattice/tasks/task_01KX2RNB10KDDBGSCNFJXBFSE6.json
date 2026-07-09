@@ -1,0 +1,29 @@
+{
+  "assigned_to": null,
+  "branch_links": [],
+  "comment_count": 0,
+  "complexity": "low",
+  "created_at": "2026-07-09T06:22:23Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "description": "ORIGINAL REPORT (partly wrong): assumed prose shared a JSONL record with the tool_use block.\n\nACTUAL DEFECT. Claude Code splits one API response (one requestId) into several JSONL entries -- thinking, text, tool_use -- each stamped with the SAME usage.output_tokens and a DIFFERENT timestamp.\n\nfind_probe_calls computes isolable = turn_call_counts[ts] == 1, keyed on timestamp. Consequences, both live:\n\n1. Batching guard is a no-op. Rule 1 of the run sheet says two tool calls in one turn cost both arms their usage. Measured over 400 real session files: 0 assistant records hold >=2 tool_use blocks; 245 requestIds hold >=2 tool_use blocks across separate entries with distinct timestamps. The check has never fired on real data. The fixtures encode a transcript shape Claude Code does not emit -- fixtures authored from the matcher's own mental model, so they confirm rather than verify (same failure shape as TB-14/TB-15).\n\n2. Prose and thinking pool into the arm. output_tokens is per-response. In session edcea84f the probe 01 tool arm reported 561 usage tokens vs 93-105 for the other four tool arms: its response was thinking + 447 chars of text + the find_file call, requestId req_011Ccqzmvq1P2yYsUt2bLqgG, three entries, all reading ot=561. The tool_use record itself has zero text blocks, so a same-record prose check would not catch it either.\n\nFIX. Group records by requestId, falling back to timestamp when absent (legacy fixtures). A response is isolable only when it emitted exactly one tool_use block and no thinking block and no non-empty text block. A contaminated arm yields usage=None, so the cell renders the seeded baseline with a visible '*' instead of a silently inflated number. Add rule 5 to protocols/probe-run-sheet.md: an arm turn carries the tool call and nothing else.\n\nSCOPE. Present on main (toolbench/probe.py:201); predates TB-15. Stacked on tb-15 branch because the run sheet exists only there. Nine of ten arms in edcea84f are clean (1 tool_use, 0 thinking, 0 text); probe 01 tool arm is the only contaminated cell.",
+  "done_at": null,
+  "evidence_refs": [],
+  "id": "task_01KX2RNB10KDDBGSCNFJXBFSE6",
+  "last_event_id": "ev_01KX2RTYRYYSWEB6QZ4D7N3314",
+  "last_status_changed_at": "2026-07-09T06:22:23Z",
+  "priority": "high",
+  "relationships_out": [],
+  "reopened_count": 0,
+  "schema_version": 1,
+  "short_id": "TB-16",
+  "status": "in_progress",
+  "tags": [
+    "probe",
+    "integrity"
+  ],
+  "title": "Arm isolability is keyed on timestamp, not requestId -- the guard never fires",
+  "type": "bug",
+  "updated_at": "2026-07-09T06:25:27Z",
+  "urgency": null
+}
