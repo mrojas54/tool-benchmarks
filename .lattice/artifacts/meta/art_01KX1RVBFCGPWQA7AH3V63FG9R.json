@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-08T21:06:26Z",
+  "created_by": "agent:tb-7-delegator",
+  "custom_fields": {},
+  "id": "art_01KX1RVBFCGPWQA7AH3V63FG9R",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KX1RVBFCGPWQA7AH3V63FG9R.md",
+    "size_bytes": 480
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": null,
+  "tags": [],
+  "title": "Strict gate (S22) validation results",
+  "token_usage": null,
+  "type": "note"
+}

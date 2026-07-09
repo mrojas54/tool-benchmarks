@@ -1,0 +1,1 @@
+PR #3 (tb-3-parse) merged to main as b6823d6 at 2026-07-09T01:00:58Z. parse_session id-join landed (S1,S2,S5,S6); model captured from message.model alongside usage. Verified on origin/main @4461c0e: ruff clean, mypy --strict clean (10 source files), 99 tests pass. Remote branch pruned post-merge.

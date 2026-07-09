@@ -1,0 +1,60 @@
+{
+  "assigned_to": null,
+  "branch_links": [],
+  "comment_count": 2,
+  "complexity": "high",
+  "created_at": "2026-07-08T17:25:46Z",
+  "created_by": "agent:orchestrator",
+  "custom_fields": {},
+  "description": "ParseResult(calls, malformed), _result_id/_result_payload, block-local content precedence, malformed + interrupted handling; parser fixtures. Carries the flagged join-key risk (de-risked by block-local fixture).\n\nSPEC: S1, S2, S5, S6, S24\nBUILDPLAN anchor: T2\nDepends on: T1\nPlan: filled in by delegator plan phase.",
+  "done_at": "2026-07-09T01:20:55Z",
+  "evidence_refs": [
+    {
+      "id": "art_01KX1QHBDHJ8FS2VMNVD1KJFXG",
+      "role": "review",
+      "source_type": "artifact"
+    },
+    {
+      "id": "art_01KX1QK6PCKVWG25G6YP6XSCZH",
+      "role": null,
+      "source_type": "artifact"
+    },
+    {
+      "id": "art_01KX1QMB4894QSFP2E4SKZQW7K",
+      "role": null,
+      "source_type": "artifact"
+    },
+    {
+      "id": "ev_01KX27DB4NZ2JSGTPJSZ5ZTQF1",
+      "role": "review",
+      "source_type": "comment"
+    },
+    {
+      "id": "art_01KX27DB4NZ2JSGTPJSZ5ZTQF0",
+      "role": "review",
+      "source_type": "artifact"
+    }
+  ],
+  "id": "task_01KX1C79ZSFFWY22NFNBQ46JP2",
+  "last_event_id": "ev_01KX27DB4NZ2JSGTPJSZ5ZTQF3",
+  "last_status_changed_at": "2026-07-09T01:20:55Z",
+  "priority": "medium",
+  "relationships_out": [
+    {
+      "created_at": "2026-07-08T17:25:57Z",
+      "created_by": "agent:orchestrator",
+      "note": null,
+      "target_task_id": "task_01KX1C79VY26XAHQ37ZT5E3H78",
+      "type": "depends_on"
+    }
+  ],
+  "reopened_count": 0,
+  "schema_version": 1,
+  "short_id": "TB-3",
+  "status": "done",
+  "tags": null,
+  "title": "parse_session id-join",
+  "type": "task",
+  "updated_at": "2026-07-09T01:20:55Z",
+  "urgency": null
+}

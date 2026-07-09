@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-08T20:44:30Z",
+  "created_by": "agent:tb-3-delegator",
+  "custom_fields": {},
+  "id": "art_01KX1QK6PCKVWG25G6YP6XSCZH",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KX1QK6PCKVWG25G6YP6XSCZH.md",
+    "size_bytes": 419
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": null,
+  "tags": [],
+  "title": "Validation gate output",
+  "token_usage": null,
+  "type": "note"
+}

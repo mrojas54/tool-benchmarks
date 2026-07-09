@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-09T01:20:55Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "id": "art_01KX27DB4NZ2JSGTPJSZ5ZTQF0",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KX27DB4NZ2JSGTPJSZ5ZTQF0.md",
+    "size_bytes": 297
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": "PR #3 (tb-3-parse) merged to main as b6823d6 at 2026-07-09T01:00:58Z. parse_session id-join landed (S1,S2,S5,S6); model captured from message.model alongside usage. Verified on origin/main @4461c0e: r",
+  "tags": [],
+  "title": "Review findings",
+  "token_usage": null,
+  "type": "note"
+}

@@ -26,3 +26,7 @@ env/
 
 # Generated probe/report output (S16 keeps this separate from tools/ inputs)
 reports/
+
+# Lattice: the board is committed state. Ignore only machine-local runtime.
+.lattice/locks/
+.lattice/tmp-prompts/

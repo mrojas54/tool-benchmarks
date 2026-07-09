@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-08T20:41:40Z",
+  "created_by": "agent:tb-4-delegator",
+  "custom_fields": {},
+  "id": "art_01KX1QE049M4VJVGN0GPN4VFFX",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KX1QE049M4VJVGN0GPN4VFFX.md",
+    "size_bytes": 410
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": null,
+  "tags": [],
+  "title": "Validation",
+  "token_usage": null,
+  "type": "note"
+}

@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-08T20:59:56Z",
+  "created_by": "agent:tb-5-delegator",
+  "custom_fields": {},
+  "id": "art_01KX1RFF3FTZM8E66385FYBSAE",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KX1RFF3FTZM8E66385FYBSAE.md",
+    "size_bytes": 668
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": null,
+  "tags": [],
+  "title": "Validation gate",
+  "token_usage": null,
+  "type": "note"
+}

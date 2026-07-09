@@ -1,0 +1,1 @@
+PR #6 (tb-7-readme) merged to main as 4461c0e at 2026-07-09T01:01:39Z. README + strict gate landed. NOTE: README:89 still claims '93 tests passing'; actual count is 99. Verified on origin/main @4461c0e: ruff clean, mypy --strict clean (10 source files), 99 tests pass. Remote branch pruned post-merge.

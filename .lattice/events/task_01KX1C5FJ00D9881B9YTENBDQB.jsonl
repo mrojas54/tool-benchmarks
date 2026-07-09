@@ -1,0 +1,2 @@
+{"actor":"agent:orchestrator","data":{"priority":"medium","short_id":"TB-1","status":"backlog","title":"scratch probe","type":"task"},"id":"ev_01KX1C5FJ00D9881B9YTENBDQC","schema_version":1,"task_id":"task_01KX1C5FJ00D9881B9YTENBDQB","ts":"2026-07-08T17:24:46Z","type":"task_created"}
+{"actor":"agent:orchestrator","data":{"from":"backlog","to":"cancelled"},"id":"ev_01KX1C79R72H689KSDW4BW8EWP","provenance":{"reason":"scratch probe for status introspection"},"schema_version":1,"task_id":"task_01KX1C5FJ00D9881B9YTENBDQB","ts":"2026-07-08T17:25:46Z","type":"status_changed"}

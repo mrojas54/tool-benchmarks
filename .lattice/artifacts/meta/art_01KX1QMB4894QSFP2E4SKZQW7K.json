@@ -1,0 +1,21 @@
+{
+  "created_at": "2026-07-08T20:45:08Z",
+  "created_by": "agent:tb-3-delegator",
+  "custom_fields": {
+    "url": "https://github.com/mrojas54/tool-benchmarks/pull/3"
+  },
+  "id": "art_01KX1QMB4894QSFP2E4SKZQW7K",
+  "model": null,
+  "payload": {
+    "content_type": null,
+    "file": null,
+    "size_bytes": null
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": null,
+  "tags": [],
+  "title": "https://github.com/mrojas54/tool-benchmarks/pull/3",
+  "token_usage": null,
+  "type": "reference"
+}

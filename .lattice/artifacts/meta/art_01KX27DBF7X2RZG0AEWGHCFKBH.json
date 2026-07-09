@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-09T01:20:56Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "id": "art_01KX27DBF7X2RZG0AEWGHCFKBH",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KX27DBF7X2RZG0AEWGHCFKBH.md",
+    "size_bytes": 238
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": "PR #4 (tb-6-probe) merged to main as 1aaa206 at 2026-07-09T01:01:23Z. probe.py + active-probes.md landed. Verified on origin/main @4461c0e: ruff clean, mypy --strict clean (10 source files), 99 tests ",
+  "tags": [],
+  "title": "Review findings",
+  "token_usage": null,
+  "type": "note"
+}

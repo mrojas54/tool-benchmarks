@@ -1,0 +1,1 @@
+PR #5 (tb-5-passive) merged to main as 4e4b1c2 at 2026-07-09T01:01:31Z. passive.py reducer + report + CLI landed; adds tools_by_model (agent x model x tool) and the Model Breakdown section (S14, five sections). Verified on origin/main @4461c0e: ruff clean, mypy --strict clean (10 source files), 99 tests pass. Remote branch pruned post-merge.
