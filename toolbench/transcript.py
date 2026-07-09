@@ -130,7 +130,10 @@ def parse_session(
     calls: list[ToolCall] = []
     malformed = 0
 
-    with session_path.open(encoding="utf-8") as handle:
+    # errors="replace": a stray non-UTF-8 byte degrades to U+FFFD. If it lands inside
+    # a JSON string the call survives; if it breaks the syntax the line is counted as
+    # malformed below. Either way one bad byte never aborts the session (S5).
+    with session_path.open(encoding="utf-8", errors="replace") as handle:
         for raw_line in handle:
             line = raw_line.strip()
             if not line:

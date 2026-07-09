@@ -16,7 +16,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
-from toolbench.sources import IndexSource, Runner, SessionRef, iter_sessions, open_session_jsonl
+from toolbench.sources import (
+    IndexSource,
+    NonTranscriptExport,
+    Runner,
+    SessionRef,
+    path_looks_binary,
+    iter_sessions,
+    open_session_jsonl,
+)
 from toolbench.transcript import ParseResult, parse_session
 
 OVERSIZED_OUTPUT_TOKENS = 5000
@@ -300,14 +308,20 @@ def _discover_refs(
 def _parse_ref(ref: SessionRef, runner: Runner | None) -> ParseResult:
     """Uniformly parse a raw or AgentsView-sourced session (S11 wiring)."""
     if ref.path is not None:
+        if path_looks_binary(ref.path):
+            raise NonTranscriptExport(f"non-transcript payload (binary content): {ref.path}")
         return parse_session(ref.path, agent=ref.agent, source=ref.source, project=ref.project)
 
     lines = open_session_jsonl(ref, runner=runner) if runner is not None else open_session_jsonl(ref)
-    with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8") as tmp:
-        for line in lines:
-            tmp.write(line)
-        tmp_path = tmp.name
+    # `lines` is a generator that may raise on first advance (bad returncode, binary
+    # payload). Bind tmp_path before writing so the delete=False file is always
+    # reclaimed, rather than stranded by an exception mid-loop.
+    tmp = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8")
+    tmp_path = tmp.name
     try:
+        with tmp:
+            for line in lines:
+                tmp.write(line)
         return parse_session(tmp_path, agent=ref.agent, source=ref.source, project=ref.project)
     finally:
         os.unlink(tmp_path)
@@ -431,7 +445,11 @@ def main(
             print(f"scanning {ref.session_id} ({ref.source})", file=sys.stderr)
         try:
             result = _parse_ref(ref, runner)
-        except (OSError, RuntimeError) as exc:
+        except (OSError, RuntimeError, UnicodeDecodeError) as exc:
+            # UnicodeDecodeError subclasses ValueError, not OSError/RuntimeError.
+            # In-tree readers now decode leniently, so this only fires for a caller
+            # who injects a strict-decode `runner`; catching it keeps one bad
+            # session from taking the corpus down with it.
             skipped_roots.append(f"{ref.session_id}: {exc}")
             continue
         filtered = _apply_date_range(result, args.date_from, args.date_to)

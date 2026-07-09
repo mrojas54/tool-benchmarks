@@ -8,6 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from toolbench.sources import (
+    NonTranscriptExport,
     SessionRef,
     _run_agentsview,
     iter_agentsview_sessions,
@@ -15,6 +16,10 @@ from toolbench.sources import (
     iter_sessions,
     open_session_jsonl,
 )
+
+# `agentsview session export` returns rc=0 and a whole SQLite database for hermes
+# cron sessions. First 16 bytes of that real payload (TB-10).
+_SQLITE_MAGIC = b"SQLite format 3\x00"
 
 # Child-process source that emits a bare 0xa0 byte — the exact byte that aborted
 # the live corpus scan (TB-10). Written as bytes so no encoding assumption applies.
@@ -283,6 +288,42 @@ class NonUtf8DecodeTests(unittest.TestCase):
             lines = list(open_session_jsonl(ref))
         self.assertEqual(len(lines), 2)
         self.assertIn("�", lines[0])
+
+
+class NonTranscriptExportTests(unittest.TestCase):
+    """A payload that is not a transcript at all must be rejected, not absorbed (TB-10).
+
+    Lenient decode alone would turn a 37MB SQLite file into ~351k 'malformed
+    lines', drowning the provenance signal that reads 0 on a clean corpus.
+    """
+
+    def test_export_of_binary_payload_is_rejected(self) -> None:
+        payload = _SQLITE_MAGIC.decode("utf-8", errors="replace") + "\x10\x00\x02tablemessages"
+        runner = FakeRunner([_completed(stdout=payload)])
+        ref = SessionRef(agent="hermes", source="agentsview", project="p", session_id="cron_1", path=None)
+        with self.assertRaises(NonTranscriptExport):
+            list(open_session_jsonl(ref, runner=runner))
+
+    def test_raw_binary_session_file_is_rejected(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sess.jsonl"
+            path.write_bytes(_SQLITE_MAGIC + b"\x10\x00\x02tablemessages")
+            ref = SessionRef(
+                agent="hermes", source="raw", project="p", session_id="cron_1", path=str(path)
+            )
+            with self.assertRaises(NonTranscriptExport):
+                list(open_session_jsonl(ref))
+
+    def test_non_transcript_export_is_a_runtimeerror(self) -> None:
+        # Subclassing RuntimeError is load-bearing: passive.main()'s per-session
+        # guard already catches it, so binary sessions demote to skipped_roots.
+        self.assertTrue(issubclass(NonTranscriptExport, RuntimeError))
+
+    def test_stray_byte_without_nul_is_not_treated_as_binary(self) -> None:
+        # A good session with one bad byte must still parse; only NUL means binary.
+        runner = FakeRunner([_completed(stdout='{"note": "caf�"}\n')])
+        ref = SessionRef(agent="claude", source="agentsview", project="p", session_id="s1", path=None)
+        self.assertEqual(len(list(open_session_jsonl(ref, runner=runner))), 1)
 
 
 if __name__ == "__main__":

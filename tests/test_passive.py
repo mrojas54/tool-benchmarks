@@ -3,6 +3,7 @@ import io
 import json
 import shutil
 import subprocess
+import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -666,6 +667,53 @@ class NonUtf8SessionTests(unittest.TestCase):
         self.assertIn("## Summary", report)
         self.assertIn("bad-session", report)
         self.assertIn("Sessions scanned: 1", report)
+
+
+class NonTranscriptExportTests(unittest.TestCase):
+    """Binary payloads demote to skipped_roots, keeping `Malformed lines` honest (TB-10)."""
+
+    def test_binary_session_is_skipped_not_absorbed_as_malformed(self) -> None:
+        raw_text = (FIXTURES / "sample.jsonl").read_text()
+        sqlite_payload = "SQLite format 3\x00\x10\x00\x02tablemessages\x00" * 50
+        payload = {
+            "sessions": [
+                {"id": "hermes-cron-1", "project": "hermes-cron", "agent": "hermes"},
+                {"id": "good-session", "project": "p", "agent": "claude"},
+            ],
+            "next_cursor": "",
+            "total": 2,
+        }
+        runner = FakeRunner(
+            [
+                _completed(stdout=json.dumps(payload)),
+                _completed(stdout=sqlite_payload),
+                _completed(stdout=raw_text),
+            ]
+        )
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = main(["--index-source", "agentsview"], runner=runner)
+        self.assertEqual(code, 0)
+        report = out.getvalue()
+        self.assertIn("hermes-cron-1", report)
+        self.assertIn("Sessions scanned: 1", report)
+        # The 1 malformed line is the fixture's own; none of the binary leaks in.
+        self.assertIn("Malformed lines: 1", report)
+
+    def test_rejected_export_leaves_no_temp_file_behind(self) -> None:
+        # _parse_ref binds tmp_path only after the write loop, so a raise from the
+        # line generator strands a delete=False NamedTemporaryFile.
+        tmp_root = Path(tempfile.gettempdir())
+        before = set(tmp_root.glob("*.jsonl"))
+        payload = {
+            "sessions": [{"id": "hermes-cron-1", "project": "hermes-cron", "agent": "hermes"}],
+            "next_cursor": "",
+            "total": 1,
+        }
+        runner = FakeRunner([_completed(stdout=json.dumps(payload)), _completed(stdout="SQLite format 3\x00")])
+        with redirect_stdout(io.StringIO()):
+            main(["--index-source", "agentsview"], runner=runner)
+        self.assertEqual(set(tmp_root.glob("*.jsonl")) - before, set())
 
 
 if __name__ == "__main__":
