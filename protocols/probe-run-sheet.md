@@ -28,6 +28,13 @@ Everything you need is below. Copy each call exactly.
    prose between turns is free — this is the other half of that: prose *inside*
    an arm turn is not.
 
+   The prose that kills an arm is rarely a paragraph. It is the transition
+   sentence — "precondition green, starting the ten arms now" — emitted in the
+   same response as turn 1's call, because announcing yourself feels natural at
+   exactly that boundary. **Your last prose of the run comes before turn 0, not
+   after it.** Once turn 0 passes, say nothing until turn 10 has returned. If
+   turn 0 fails, you may speak while you fix it; the run has not started.
+
 Rules 1 and 5 are enforced (S26). A non-isolable arm still matches and keeps its
 real context-token columns; only the usage cell shows `—`. It is **not**
 re-seeded — `*` marks an absent arm, not a contaminated one (S18). The run is
@@ -67,6 +74,12 @@ end-to-end and matches nothing.
 
 Turn 0 is not an arm, carries no sentinel, and touches no corpus file. It does
 not count against the ten turns.
+
+It is not an invitation to narrate, either. Turn 0 passing is the *quietest*
+moment of the run, not a checkpoint to report: turn 1 follows immediately, and
+a word of acknowledgement between them lands inside turn 1's response and
+costs probe 01 its usage number (rule 5). Go straight from turn 0's result to
+turn 1's call.
 
 ## The ten turns
 
