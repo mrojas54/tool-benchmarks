@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-09T05:35:01Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "id": "art_01KX2NYK35NT4SHW8W61JETH1R",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KX2NYK35NT4SHW8W61JETH1R.md",
+    "size_bytes": 10818
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": "ABC loaders+parsers composed behind SessionAdapter; corrects the ticket's unworkable first-line detection spec",
+  "tags": [],
+  "title": "TB-13 schema-dispatch seam design",
+  "token_usage": null,
+  "type": "file"
+}
