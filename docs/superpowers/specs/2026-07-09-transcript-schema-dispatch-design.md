@@ -169,10 +169,11 @@ transcript is read once.
 ### Errors
 
 `UnknownSchema(RuntimeError)`, alongside the existing `NonTranscriptExport`. Because
-`passive.main` already guards each session with `except (OSError, RuntimeError)`, an
-unknown schema demotes to `skipped_roots` with **no change to that guard**. The agent
-is named in the Summary instead of reported as a healthy zero. This single change
-would have surfaced TB-12 on the run that created it.
+`passive.main` already guards each session with
+`except (OSError, RuntimeError, UnicodeDecodeError)` (`passive.py:456`), an unknown
+schema demotes to `skipped_roots` with **no change to that guard**. The agent is named
+in the Summary instead of reported as a healthy zero. This single change would have
+surfaced TB-12 on the run that created it.
 
 Ordering is load-bearing: the NUL sniff runs in the **loader**, before detection. A
 SQLite dump has no first JSON line to detect.
@@ -213,10 +214,14 @@ first; they are not developed in parallel.
 
 ## Acceptance
 
-- `uv run python -m toolbench.passive --agent all --all` emits **byte-identical**
-  agent-breakdown and tool-leaderboard rows to the pre-refactor 2026-07-09 baseline
-  for `claude`, `cowork`, and `hermes`. Those three rows are pinned in a regression
-  test.
+- Golden fixtures (`tests/fixtures/schema_*.jsonl`) pin the four observed line-0
+  shapes and the joined output of a claude and a cowork session. These are the
+  regression test: they are committed, deterministic, and reproducible in CI.
+- A **manual** pre/post run of `uv run python -m toolbench.passive --agent all --all`
+  shows identical `claude`, `cowork`, and `hermes` rows, with `codex` and `cursor`
+  moving into `skipped_roots`. The diff goes in the PR body. This cannot be a test:
+  `reports/` is gitignored (`.gitignore:31`) and the corpus grows every session, so
+  pinning live rows would fail tomorrow for reasons unrelated to TB-13.
 - A fixture session in an invented schema raises `UnknownSchema` and appears in
   `skipped_roots`. It does **not** appear as a 0-call agent row.
 - A fixture whose first 100 lines are valid JSON but match no parser raises
@@ -243,3 +248,18 @@ should be amended to match this spec.
    hermes source-check in the dispatcher. `HermesAdapter.claims` owns it.
 3. **Function protocol + registry.** Superseded by the ABC hierarchy above, on the
    operator's direction. The protocol shape survives inside `TranscriptParser.parse`.
+
+## Corrections to this spec, found while planning
+
+4. **Guard tuple.** An earlier draft quoted `except (OSError, RuntimeError)`. The real
+   guard at `passive.py:456` is `(OSError, RuntimeError, UnicodeDecodeError)`. The
+   conclusion holds — `UnknownSchema` is a `RuntimeError` and is caught — but the
+   quoted code was wrong. Corrected above.
+5. **Regression pin.** "Byte-identical rows vs the 2026-07-09 baseline" is not
+   implementable as a test. `reports/` is gitignored and the rows derive from a live
+   archive that grows daily (claude: 1,338 sessions on 2026-07-09, climbing). Replaced
+   by committed golden fixtures plus a manual pre/post diff. Corrected above.
+6. **`registry.py`.** Absent from the module list above, and required. `hermes.py`
+   must import `SessionAdapter` from `adapters.py`, so `adapters.py` cannot import
+   `HermesAdapter` to register it — a cycle. `registry.py` imports both and is
+   imported by neither.
