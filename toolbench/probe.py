@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from collections import Counter
+from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -120,14 +120,64 @@ class ComparisonRow:
     bash_seeded: bool
 
 
-def _scan_tool_use_blocks(path: str | os.PathLike[str]) -> list[tuple[str, str, str]]:
-    """Raw pass over a session JSONL: `(ts, name, serialized_input)` per `tool_use` block.
+@dataclass
+class _TurnStats:
+    """What one API response emitted, for deciding whether its usage is attributable."""
+
+    tool_uses: int = 0
+    non_tool_output: bool = False
+
+
+@dataclass(frozen=True)
+class _ScanResult:
+    """`records` are `(ts, name, serialized_input, turn_key)`; `turns` is keyed by `turn_key`."""
+
+    records: list[tuple[str, str, str, str]]
+    turns: dict[str, _TurnStats]
+
+
+def _turn_key(entry: dict[str, object], ts: str) -> str:
+    """The unit `output_tokens` is billed against: the API response (S26).
+
+    Claude Code writes one API response as several JSONL entries -- `thinking`,
+    `text`, and each `tool_use` -- sharing a `requestId` and a single `usage`
+    figure, but carrying *distinct* timestamps. Grouping by timestamp therefore
+    sees every response as a lone block. Fixtures predating this discovery have
+    no `requestId`; they fall back to the timestamp, one record per turn.
+    """
+    request_id = entry.get("requestId")
+    if isinstance(request_id, str) and request_id:
+        return f"req:{request_id}"
+    return f"ts:{ts}"
+
+
+def _is_assistant(entry: dict[str, object], message: dict[str, object]) -> bool:
+    """User records carry `text` blocks too (tool results); they are not model output."""
+    return entry.get("type") != "user" and message.get("role") != "user"
+
+
+def _emits_non_tool_output(block: dict[str, object]) -> bool:
+    """True for a block that costs `output_tokens` without being the tool call.
+
+    Prose and reasoning are both billed to `output_tokens`. A whitespace-only
+    text block costs nothing and must not disqualify an otherwise clean arm.
+    """
+    kind = block.get("type")
+    if kind == "text":
+        text = block.get("text")
+        return isinstance(text, str) and bool(text.strip())
+    return kind in ("thinking", "redacted_thinking")
+
+
+def _scan_tool_use_blocks(path: str | os.PathLike[str]) -> _ScanResult:
+    """Raw pass over a session JSONL, grouping blocks by the response that emitted them.
 
     Deliberately independent of `transcript.parse_session`, which normalizes
     tool input to a character count (`result_len`) and drops the raw text a
     sentinel would live in.
     """
-    records: list[tuple[str, str, str]] = []
+    records: list[tuple[str, str, str, str]] = []
+    turns: dict[str, _TurnStats] = defaultdict(_TurnStats)
     session_path = Path(path)
     with session_path.open(encoding="utf-8") as handle:
         for raw_line in handle:
@@ -141,19 +191,27 @@ def _scan_tool_use_blocks(path: str | os.PathLike[str]) -> list[tuple[str, str, 
             if not isinstance(entry, dict):
                 continue
             message = entry.get("message")
-            content = message.get("content") if isinstance(message, dict) else None
-            if not isinstance(content, list):
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            if not isinstance(content, list) or not _is_assistant(entry, message):
                 continue
             ts = entry.get("timestamp")
             ts_str = ts if isinstance(ts, str) else ""
+            key = _turn_key(entry, ts_str)
+            stats = turns[key]
             for block in content:
-                if not isinstance(block, dict) or block.get("type") != "tool_use":
+                if not isinstance(block, dict):
                     continue
+                if block.get("type") != "tool_use":
+                    stats.non_tool_output |= _emits_non_tool_output(block)
+                    continue
+                stats.tool_uses += 1
                 name = block.get("name")
                 if not isinstance(name, str):
                     continue
-                records.append((ts_str, name, json.dumps(block.get("input"))))
-    return records
+                records.append((ts_str, name, json.dumps(block.get("input")), key))
+    return _ScanResult(records=records, turns=dict(turns))
 
 
 def _mentions_probe_machinery(serialized_input: str) -> bool:
@@ -201,23 +259,29 @@ def find_probe_calls(
     against the corpus file remains indistinguishable from the bash arm it
     imitates, which is why probes must be scored from a dedicated session (see
     `protocols/active-probes.md`).
+
+    Matching an arm is separate from *pricing* it. An arm's `output_tokens` is
+    attributable only when its whole API response emitted that one `tool_use`
+    block and nothing else -- no second call, no prose, no reasoning (S26). A
+    contaminated arm still matches; it simply reports no usage, so the table
+    falls back to the seeded baseline and marks the cell.
     """
-    raw_records = _scan_tool_use_blocks(path)
-    turn_call_counts: Counter[str] = Counter(ts for ts, _name, _input in raw_records)
+    scan = _scan_tool_use_blocks(path)
 
     calls_by_key: dict[tuple[str, str], ToolCall] = {}
     for call in parse_session(path).calls:
         calls_by_key.setdefault((call.ts, call.name), call)
 
     matches: dict[str, ArmMatch] = {spec.id: ArmMatch() for spec in probes}
-    for ts, name, serialized_input in raw_records:
+    for ts, name, serialized_input, turn_key in scan.records:
         if _mentions_probe_machinery(serialized_input):
             continue
         present = _sentinels_in(serialized_input, probes)
         if len(present) > 1:
             continue
         sentinel = next(iter(present), None)
-        isolable = turn_call_counts[ts] == 1
+        turn = scan.turns[turn_key]
+        isolable = turn.tool_uses == 1 and not turn.non_tool_output
         for spec in probes:
             arm = matches[spec.id]
             is_tool_arm = (
