@@ -1,0 +1,1 @@
+PR #8 merged to main (96f6725). TDD RED/GREEN/DOCS; 99 tests pass, ruff clean, mypy --strict clean. Fix: sources.py matches --project against the owning project dir instead of path.parent.name, so subagent sessions survive the filter.
