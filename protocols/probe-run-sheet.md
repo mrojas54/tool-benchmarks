@@ -1,8 +1,9 @@
 # Probe run sheet — ten arms, ten turns
 
-Execute this in a **fresh session**, in the repo root, with serena loaded. Do not
-read `toolbench/probe.py` or `protocols/active-probes.md` during the run; you do
-not need them, and reading them is what disqualified the last two sessions.
+Execute this in a **fresh session**, in the repo root, with serena loaded and a
+project activated — turn 0 checks both, and you must run it. Do not read
+`toolbench/probe.py` or `protocols/active-probes.md` during the run; you do not
+need them, and reading them is what disqualified the last two sessions.
 
 Everything you need is below. Copy each call exactly.
 
@@ -22,6 +23,36 @@ Everything you need is below. Copy each call exactly.
 Sentinels appear only in the bash arms. The tool arms carry none — serena's
 schemas have no field to put one in, and the matcher identifies them
 structurally by tool name plus corpus target.
+
+## Turn 0 — precondition check
+
+`mcp__plugin_serena_serena__find_file`
+
+```json
+{"file_mask": "pyproject.toml", "relative_path": "."}
+```
+
+Expect `{"files": ["pyproject.toml"]}`. Anything else — an error, an empty list,
+a prompt to pick a project — means serena has no active project. Activate it
+with `activate_project` on the repo root, re-run turn 0, and only then start
+turn 1.
+
+This turn exists because a *failed* arm call is unrecoverable. The matcher binds
+an arm to any call carrying that arm's tool name and corpus target, and it
+cannot see whether the call succeeded. A `find_file` for `regex_check.py` that
+errors out still matches probe 01's tool arm, and still gets scored — as the
+token cost of an error message. Re-running it only adds a second structurally
+identical match. So the precondition must be tested by a call that is *not* an
+arm, before any arm is spent.
+
+`pyproject.toml` is what makes it not an arm. The five corpus targets are
+`regex_check.py`, `mcp.py`, `monitor.py`, `llm_extraction.py`, and
+`code_analysis.py`; `pyproject.toml` is none of them, so the tool-name half of
+the match succeeds and the target half fails. The call exercises serena
+end-to-end and matches nothing.
+
+Turn 0 is not an arm, carries no sentinel, and touches no corpus file. It does
+not count against the ten turns.
 
 ## The ten turns
 
