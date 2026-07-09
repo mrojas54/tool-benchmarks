@@ -31,6 +31,7 @@ class ProbeSpec:
     corpus_path: str
     task: str
     tool_names: tuple[str, ...]
+    target: str
     tool_sentinel: str
     bash_sentinel: str
 
@@ -47,6 +48,10 @@ def _spec(id_: str, corpus_path: str, task: str, serena_tool: str) -> ProbeSpec:
     reaches this machine as the `serena` plugin's `serena` server, so calls are
     recorded as `mcp__plugin_serena_serena__find_file`. A bare install would
     record `mcp__serena__find_file`. Both are accepted; matching stays exact.
+
+    `target` is the corpus basename. It is what identifies the tool arm (S20):
+    a tool arm cannot carry a sentinel, because serena's schemas have no inert
+    free-text field to park one in.
     """
     return ProbeSpec(
         id=id_,
@@ -56,6 +61,7 @@ def _spec(id_: str, corpus_path: str, task: str, serena_tool: str) -> ProbeSpec:
             f"mcp__plugin_serena_serena__{serena_tool}",
             f"mcp__serena__{serena_tool}",
         ),
+        target=Path(corpus_path).name,
         tool_sentinel=f"TB_PROBE_{id_}_TOOL_V2",
         bash_sentinel=f"TB_PROBE_{id_}_BASH_V2",
     )
@@ -75,6 +81,7 @@ MENTION_MARKERS: tuple[str, ...] = (
     ".claude/projects",
     "toolbench/probe.py",
     "protocols/active-probes.md",
+    "protocols/probe-run-sheet.md",
 )
 
 # Seeded #8376 baselines (S18): used per (task, arm) only when that arm has
@@ -149,42 +156,51 @@ def _scan_tool_use_blocks(path: str | os.PathLike[str]) -> list[tuple[str, str, 
     return records
 
 
-def _performing_sentinel(
-    serialized_input: str, probes: Sequence[ProbeSpec] = PROBE_SPECS
-) -> str | None:
-    """The one sentinel this call performs, or `None` if it merely mentions them.
+def _mentions_probe_machinery(serialized_input: str) -> bool:
+    """True when a call reads the transcript corpus or the probe's own source.
 
-    A call that runs probe 03 names `TB_PROBE_03_*` and nothing else. A call that
-    greps, documents, or writes the sentinels almost always names several, and a
-    single-sentinel search still betrays itself by targeting the transcript
-    corpus or the probe source (`MENTION_MARKERS`).
-
-    This narrows contamination; it does not eliminate it. A single-sentinel grep
-    against the corpus file is indistinguishable from the bash arm it imitates,
-    which is why probes must be scored from a dedicated session (see
-    `protocols/active-probes.md`).
+    Such a call is searching for a probe, not running one, whatever strings it
+    happens to name.
     """
-    present = {
+    return any(marker in serialized_input for marker in MENTION_MARKERS)
+
+
+def _sentinels_in(serialized_input: str, probes: Sequence[ProbeSpec]) -> set[str]:
+    """Every probe sentinel named anywhere in a call's serialized input."""
+    return {
         sentinel
         for spec in probes
         for sentinel in (spec.tool_sentinel, spec.bash_sentinel)
         if sentinel in serialized_input
     }
-    if len(present) != 1:
-        return None
-    if any(marker in serialized_input for marker in MENTION_MARKERS):
-        return None
-    return present.pop()
 
 
 def find_probe_calls(
     path: str | os.PathLike[str], probes: Sequence[ProbeSpec] = PROBE_SPECS
 ) -> dict[str, ArmMatch]:
-    """Match sentinel + expected tool name (S17) to a joined `ToolCall`.
+    """Join each arm of each probe to a `ToolCall`, by the evidence that arm can leave.
 
-    A call matches an arm only if it *performs* exactly that arm's sentinel
-    (S19) *and* used one of the accepted tool names for that arm -- both
-    conditions, not either.
+    The two arms are identified differently, because they can carry different
+    evidence (S20):
+
+    * The **tool arm** is matched *structurally*: an accepted tool name plus the
+      corpus target in the input. Serena's schemas (`find_file` takes exactly
+      `file_mask` and `relative_path`) have no inert free-text field, so a tool
+      arm physically cannot carry a sentinel without corrupting the very query
+      being measured. It does not need one: `find_file` over `regex_check.py` is
+      already unambiguously probe 01's tool arm.
+    * The **bash arm** is matched by *sentinel*, because a shell command is
+      unstructured text in which nothing else is reliably distinctive.
+
+    A call is discarded outright when it trips `MENTION_MARKERS`, or names more
+    than one sentinel -- both mean it is discussing probes rather than running
+    them. A tool-arm candidate carrying some *other* probe's sentinel is
+    likewise rejected: that is a search for a sentinel, not a probe arm.
+
+    This narrows contamination; it does not eliminate it. A single-sentinel grep
+    against the corpus file remains indistinguishable from the bash arm it
+    imitates, which is why probes must be scored from a dedicated session (see
+    `protocols/active-probes.md`).
     """
     raw_records = _scan_tool_use_blocks(path)
     turn_call_counts: Counter[str] = Counter(ts for ts, _name, _input in raw_records)
@@ -195,16 +211,24 @@ def find_probe_calls(
 
     matches: dict[str, ArmMatch] = {spec.id: ArmMatch() for spec in probes}
     for ts, name, serialized_input in raw_records:
-        sentinel = _performing_sentinel(serialized_input, probes)
-        if sentinel is None:
+        if _mentions_probe_machinery(serialized_input):
             continue
+        present = _sentinels_in(serialized_input, probes)
+        if len(present) > 1:
+            continue
+        sentinel = next(iter(present), None)
         isolable = turn_call_counts[ts] == 1
         for spec in probes:
             arm = matches[spec.id]
-            if sentinel == spec.tool_sentinel and name in spec.tool_names:
+            is_tool_arm = (
+                name in spec.tool_names
+                and spec.target in serialized_input
+                and sentinel in (None, spec.tool_sentinel)
+            )
+            if is_tool_arm:
                 arm.tool = calls_by_key.get((ts, name))
                 arm.tool_isolable = isolable
-            elif sentinel == spec.bash_sentinel and name == BASH_TOOL_NAME:
+            elif name == BASH_TOOL_NAME and sentinel == spec.bash_sentinel:
                 arm.bash = calls_by_key.get((ts, name))
                 arm.bash_isolable = isolable
     return matches

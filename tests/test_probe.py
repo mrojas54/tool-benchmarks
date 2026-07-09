@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -68,17 +69,16 @@ class FindProbeCallsTests(unittest.TestCase):
         self.assertEqual(arm.bash.output_chars, len(expected))
         self.assertFalse(arm.bash_isolable, "turn had 2 tool_use blocks, usage isn't attributable")
 
-    def test_right_tool_wrong_sentinel_is_not_a_match(self) -> None:
-        # toolu_c1 uses find_file (the tool expected by probes 03/05 too) but
-        # carries probe 02's sentinel -- must not match 03 or 05.
+    def test_right_tool_wrong_corpus_file_is_not_a_match(self) -> None:
+        # toolu_c1 uses find_file (the tool expected by probes 01/03/05) but
+        # targets a file no probe owns -- must not match any of them.
         self.assertIsNone(self.matches["03"].tool)
         self.assertIsNone(self.matches["05"].tool)
 
-    def test_right_sentinel_wrong_tool_is_not_a_match(self) -> None:
-        # toolu_d1 carries probe 01's TOOL sentinel but via Bash, not
-        # mcp__serena__find_file -- must not overwrite the real tool-arm match
-        # from toolu_a1, and must not be picked up as a bash-arm match either
-        # (wrong sentinel for that arm).
+    def test_tool_sentinel_echoed_by_bash_is_not_a_match(self) -> None:
+        # toolu_d1 echoes probe 01's TOOL sentinel from Bash. It is neither arm:
+        # Bash is not an accepted tool name, and the bash arm wants the BASH
+        # sentinel. It must not overwrite the real tool-arm match from toolu_a1.
         arm = self.matches["01"]
         assert arm.tool is not None
         self.assertEqual(arm.tool.output_chars, len("tools/regex_check.py"))
@@ -201,6 +201,11 @@ class ContaminationGuardTests(unittest.TestCase):
     def test_read_of_probe_source_is_not_an_arm(self) -> None:
         self.assertIsNone(self.matches["04"].tool)
 
+    def test_single_sentinel_grep_of_the_run_sheet_is_not_an_arm(self) -> None:
+        # The run sheet prints every bash arm verbatim. Grepping it for one
+        # sentinel is otherwise indistinguishable from performing that arm.
+        self.assertIsNone(self.matches["05"].bash, "grep over the run sheet scored as an arm")
+
     def test_contaminated_session_produces_a_fully_seeded_table(self) -> None:
         rows = build_comparison_table(self.matches)
         self.assertTrue(all(r.tool_seeded and r.bash_seeded for r in rows))
@@ -231,6 +236,118 @@ class SeededReportRefusalTests(unittest.TestCase):
             with self.assertRaises(SeededReportError):
                 main(["--out", str(out_path)])
             self.assertFalse(out_path.exists(), "refused report must not be written")
+
+
+class ToolArmSchemaTests(unittest.TestCase):
+    """Serena's real parameter schema, not one invented to hold a sentinel."""
+
+    # Exactly the parameters the serena MCP server accepts. `find_file` has no
+    # free-text field, which is the whole of TB-15.
+    ALLOWED: dict[str, frozenset[str]] = {
+        "find_file": frozenset({"file_mask", "relative_path"}),
+        "search_for_pattern": frozenset(
+            {
+                "substring_pattern",
+                "relative_path",
+                "context_lines_before",
+                "context_lines_after",
+                "paths_include_glob",
+                "paths_exclude_glob",
+                "restrict_search_to_code_files",
+                "multiline",
+                "max_answer_chars",
+            }
+        ),
+    }
+
+    def test_fixtures_never_invent_a_serena_parameter(self) -> None:
+        offenders: list[str] = []
+        for path in sorted(FIXTURES.glob("*.jsonl")):
+            for raw in path.read_text().splitlines():
+                if not raw.strip():
+                    continue
+                try:
+                    entry = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue  # malformed-line fixtures exist on purpose
+                if not isinstance(entry, dict):
+                    continue
+                message = entry.get("message")
+                content = message.get("content") if isinstance(message, dict) else None
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    if not isinstance(block, dict) or block.get("type") != "tool_use":
+                        continue
+                    name = block.get("name", "")
+                    if not name.startswith("mcp__"):
+                        continue
+                    bare = name.rsplit("__", 1)[-1]
+                    allowed = self.ALLOWED.get(bare)
+                    if allowed is None:
+                        continue
+                    extra = set(block.get("input", {})) - allowed
+                    if extra:
+                        offenders.append(f"{path.name}:{block['id']} {bare} has {sorted(extra)}")
+        self.assertEqual(offenders, [], "fixture uses a parameter serena does not accept")
+
+    def test_every_spec_has_a_corpus_target(self) -> None:
+        for spec in PROBE_SPECS:
+            self.assertEqual(spec.target, Path(spec.corpus_path).name)
+
+    def test_targets_are_globally_unique_and_no_substrings(self) -> None:
+        targets = [spec.target for spec in PROBE_SPECS]
+        self.assertEqual(len(targets), len(set(targets)))
+        for i, a in enumerate(targets):
+            for j, b in enumerate(targets):
+                if i != j:
+                    self.assertNotIn(a, b, f"{a!r} is a substring of {b!r}")
+
+
+class StructuralToolArmTests(unittest.TestCase):
+    """The tool arm is identified by (tool name + corpus target), not a sentinel."""
+
+    def setUp(self) -> None:
+        self.matches = find_probe_calls(FIXTURES / "probe_session_real_schema.jsonl")
+
+    def test_find_file_without_any_sentinel_matches_its_tool_arm(self) -> None:
+        arm = self.matches["01"]
+        self.assertIsNotNone(arm.tool, "find_file cannot carry a sentinel; it must match structurally")
+        assert arm.tool is not None
+        self.assertEqual(arm.tool.name, "mcp__plugin_serena_serena__find_file")
+        self.assertTrue(arm.tool_isolable)
+
+    def test_search_for_pattern_without_any_sentinel_matches_its_tool_arm(self) -> None:
+        arm = self.matches["02"]
+        self.assertIsNotNone(arm.tool)
+        assert arm.tool is not None
+        self.assertEqual(arm.tool.name, "mcp__plugin_serena_serena__search_for_pattern")
+
+    def test_bash_arm_still_requires_its_sentinel(self) -> None:
+        self.assertIsNotNone(self.matches["01"].bash, "bash arm carries TB_PROBE_01_BASH_V2")
+        self.assertIsNone(
+            self.matches["03"].bash,
+            "a sentinel-free grep over the corpus is not a scoreable bash arm",
+        )
+
+    def test_tool_call_carrying_a_foreign_sentinel_is_not_an_arm(self) -> None:
+        # toolu_r5 greps mcp.py (probe 02's corpus) for probe 01's TOOL sentinel.
+        # It must not overwrite probe 02's real tool arm from toolu_r3.
+        arm = self.matches["02"]
+        assert arm.tool is not None
+        self.assertEqual(arm.tool.usage, {"output_tokens": 13}, "foreign-sentinel call overwrote the arm")
+
+    def test_tool_call_tripping_mention_markers_is_not_an_arm(self) -> None:
+        # toolu_r6 names probe 04's corpus but reads toolbench/probe.py.
+        self.assertIsNone(self.matches["04"].tool)
+
+    def test_real_schema_session_yields_unseeded_rows(self) -> None:
+        by_id = {r.probe_id: r for r in build_comparison_table(self.matches)}
+        self.assertFalse(by_id["01"].tool_seeded)
+        self.assertFalse(by_id["01"].bash_seeded)
+        self.assertFalse(by_id["02"].tool_seeded)
+        self.assertTrue(by_id["02"].bash_seeded, "probe 02 has no bash arm in this fixture")
+        self.assertEqual(by_id["01"].tool_usage_tokens, 11)
 
 
 if __name__ == "__main__":

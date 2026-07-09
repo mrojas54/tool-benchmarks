@@ -261,6 +261,34 @@ independently corroborated by hermes' own `sessions.tool_call_count` column, whi
 agrees on all 29. Recovers the corpus's only MCP-tool data (16 `mcp_dash0_*` calls).
 145 tests, ruff clean, mypy --strict clean.
 
+## Finding: the probe's tool arm had no sentinel channel (TB-15)
+
+The sentinel scheme assumed every tool has an **inert free-text field** — somewhere
+to write a correlation id the tool ignores. `Bash` has one (a `#` comment). Serena's
+`find_file` does not: its schema is exactly `{file_mask, relative_path}`, and both
+are load-bearing. So the tool arm could not carry `TB_PROBE_<id>_TOOL_V2`, and
+probes 01/03/05 — every `find` arm — were unperformable as written.
+
+This is the tool-naming bug one layer in. That one named a tool that occurs zero
+times; this one demanded evidence the tool cannot emit. Both made the serena arm
+unmatchable *by construction*, and both were invisible because the fixtures agreed
+with the wrong assumption: `probe_session.jsonl` passed `name_path` and
+`probe_session_plugin_names.jsonl` passed `comment` — neither is a `find_file`
+parameter. **A fixture that shares the code's false assumption cannot catch it.**
+This is now the second time that exact sentence has been the retro finding.
+
+Fix: match each arm by the evidence it can actually leave. The tool arm is
+identified structurally by (accepted tool name + corpus target in input); the bash
+arm keeps its sentinel, since a shell command has no other distinctive structure.
+`_performing_sentinel` split into `_mentions_probe_machinery` + `_sentinels_in`,
+because the tool arm must distinguish "no sentinel" (legal) from "mentions probe
+machinery" (rejected) — the old helper collapsed both to `None`.
+`ToolArmSchemaTests` now fails if a fixture ever invents a serena parameter again.
+
+166 tests, ruff clean, mypy --strict clean. **The probes remain unrun**: scoring
+requires a dedicated session, and any session that discussed or edited the probes —
+including the one that produced this fix — is disqualified by the S19 rule.
+
 ## Config decisions (see run-state.md decision log)
 - Delegators Sonnet; Result Validator downgraded Opus→Sonnet at 76% weekly usage.
 - Leave-at-review (no auto-merge). One delegate pane (well under surface cap).
