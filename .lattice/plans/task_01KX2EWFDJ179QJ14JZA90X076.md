@@ -55,8 +55,8 @@ names the skipped sessions. This ticket is NOT about that guard.
 IN SCOPE:
 - Report upstream to AgentsView with the repro above.
 - Decide whether toolbench should read hermes sessions directly from the SQLite
-  archive (messages table) rather than via , since the data plainly
-  exists and is currently 100% unreachable.
+  archive (messages table) rather than via `agentsview session export`, since the
+  data plainly exists and is currently 100% unreachable.
 
 OUT OF SCOPE:
 - The claude-ai rc=1 empty export. It fails cleanly and is a separate question.

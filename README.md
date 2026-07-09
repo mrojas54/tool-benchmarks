@@ -86,7 +86,7 @@ inputs.
 **Implemented.** `toolbench/` ships all of tickets **T1–T6** in
 [`BUILDPLAN.md`](BUILDPLAN.md): the scaffold, the transcript parser, the
 multi-agent source layer, the passive analyzer, and the active probes. The
-strict gate (`ruff`, `mypy --strict`, `unittest`) is green — 93 tests passing.
+strict gate (`ruff`, `mypy --strict`, `unittest`) is green — 145 tests passing.
 
 Source-of-truth documents:
 
@@ -100,13 +100,26 @@ Source-of-truth documents:
 
 ## Agents / targets
 
-Two source adapters, selected per-session by `--index-source`:
+Three source adapters. The first two are selected per-session by
+`--index-source`; the third is selected by agent.
 
 - **Claude Code raw transcripts** — scans on-disk JSONL session files
   directly under a root (default `~/.claude/projects`).
 - **AgentsView** — pages the `agentsview` CLI for any AgentsView-registered
   runtime (Claude Code, Codex, Hermes, …), yielding one `SessionRef` per
   session with cursor-based pagination.
+- **Hermes SQLite** — reads hermes sessions straight from `~/.hermes`
+  (`$HERMES_HOME` overrides). `agentsview session export` returns `rc=0` and
+  streams the whole 37 MB default-profile database for every hermes session
+  instead of that session's transcript, so hermes contributed zero tool calls
+  until this adapter landed (TB-11).
+
+Hermes **discovery** still comes from AgentsView; only the read is redirected.
+The archive holds 814 sessions while AgentsView indexes 89, and nothing in the
+archive explains that selection — it is a write-ahead record of everything
+hermes ever did, not a curated view of what counts as a session. Enumerating it
+here would silently redefine the corpus and skew every cross-agent rate, so
+hermes keeps exactly the sampling every other agent gets.
 
 ## Usage
 
@@ -139,8 +152,14 @@ uv run python -m unittest discover tests
 - `agentsview` — AgentsView only; a source error is fatal.
 - `raw` — raw local transcript roots only; a source error is fatal.
 
-The fast test suite is hermetic — it fakes the `agentsview` CLI and never
-touches `~/.claude`, so the inner loop never depends on a live daemon.
+The fast test suite is hermetic — it fakes the `agentsview` CLI, points
+`$HERMES_HOME` at a fixture database, and never touches `~/.claude` or
+`~/.hermes`, so the inner loop never depends on a live daemon. One test in
+`tests/test_hermes.py` reads the real hermes archive to pin the schema
+compatibility envelope, and skips when that archive is absent.
+
+Hermes databases are always opened `file:…?mode=ro`. A running hermes owns
+those files; the adapter never writes to them.
 
 ## Quality gate
 
