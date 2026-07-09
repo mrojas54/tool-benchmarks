@@ -10,20 +10,20 @@
   "done_at": null,
   "evidence_refs": [],
   "id": "task_01KX2RNB10KDDBGSCNFJXBFSE6",
-  "last_event_id": "ev_01KX2RTYRYYSWEB6QZ4D7N3314",
-  "last_status_changed_at": "2026-07-09T06:22:23Z",
+  "last_event_id": "ev_01KX2S5J0V14A050KQKGNDND1T",
+  "last_status_changed_at": "2026-07-09T06:31:15Z",
   "priority": "high",
   "relationships_out": [],
   "reopened_count": 0,
   "schema_version": 1,
   "short_id": "TB-16",
-  "status": "in_progress",
+  "status": "review",
   "tags": [
     "probe",
     "integrity"
   ],
   "title": "Arm isolability is keyed on timestamp, not requestId -- the guard never fires",
   "type": "bug",
-  "updated_at": "2026-07-09T06:25:27Z",
+  "updated_at": "2026-07-09T06:31:15Z",
   "urgency": null
 }
