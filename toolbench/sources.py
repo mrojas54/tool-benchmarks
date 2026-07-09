@@ -40,8 +40,12 @@ def iter_session_files(
         raise FileNotFoundError(f"raw session root not found: {base}")
     since_ts = datetime.fromisoformat(since).timestamp() if since is not None else None
     for path in sorted(base.rglob("*.jsonl")):
-        if project is not None and project not in path.parent.name:
-            continue
+        if project is not None:
+            # Match the owning project dir, not `path.parent.name`: subagent
+            # transcripts live at <project>/subagents/*.jsonl (S13).
+            rel = path.relative_to(base)
+            if len(rel.parts) < 2 or project not in rel.parts[0]:
+                continue
         if since_ts is not None and path.stat().st_mtime < since_ts:
             continue
         yield path
