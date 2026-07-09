@@ -263,3 +263,34 @@ should be amended to match this spec.
    must import `SessionAdapter` from `adapters.py`, so `adapters.py` cannot import
    `HermesAdapter` to register it — a cycle. `registry.py` imports both and is
    imported by neither.
+
+## Corrections found while executing
+
+7. **`test_transcript.py` could not stay untouched.** The plan said to delete
+   `_result_id` / `_result_payload` from `transcript.py` *and* that
+   `test_transcript.py` would pass unmodified. It imports both names directly, so
+   both could not hold. The import site was repointed at `toolbench.parsers`; every
+   assertion is unchanged, so the S1/S2 behavioural pin survives intact.
+
+8. **S24/S25 were already taken — and then S26 was too.** The plan directed new
+   acceptance criteria to be filed as S24 (schema dispatch) and S25 (no default
+   parser). `SPEC.md` already defines S24 (fixtures) and S25 (acceptance smoke), so
+   they were first written as S26/S27. While this branch was in flight, PR #17
+   merged TB-16's **S26** (response-pooled isolability) to `main`, colliding again.
+   Final numbers are **S27/S28**, resolved in the merge of `origin/main`. Acceptance
+   IDs are append-only and shared across concurrent branches; check `main` at merge
+   time, not just at plan time.
+
+9. **Claim depth is 1, not 0.** The plan's `DETECT_WINDOW` comment asserted a
+   measured max depth of 0 across 40 sessions. Measured across all 2,142 loadable
+   claude/cowork sessions in the archive, every session claims at decodable line
+   **1** and none is ever unclaimed. Depth is counted in *decodable* lines, so blank
+   and malformed lines do not advance it — which is why "line 0 is a `last-prompt`
+   record" and "claims at depth 1" are both true. Comment corrected in `adapters.py`.
+
+10. **The acceptance diff needs a frozen corpus, not just a pre/post pair.** Running
+    the pre- and post-change binaries thirty minutes apart showed claude +71 calls and
+    cowork +2 sessions — pure archive growth, including the very session doing the
+    refactor. Re-running both binaries with `--date-to 2026-07-08` closes the window
+    and yields byte-identical claude/cowork/hermes rows. A manual pre/post check on a
+    live archive is not evidence unless the window is closed.

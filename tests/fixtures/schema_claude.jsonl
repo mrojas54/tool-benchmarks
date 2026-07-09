@@ -1,0 +1,4 @@
+{"type":"last-prompt","sessionId":"s1","leafUuid":"u0"}
+{"type":"mode","sessionId":"s1","mode":"default"}
+{"sessionId":"s1","timestamp":"t0","message":{"model":"m","content":[{"type":"tool_use","id":"u1","name":"Bash","input":{"command":"ls"}}]}}
+{"sessionId":"s1","timestamp":"t1","message":{"content":[{"type":"tool_result","tool_use_id":"u1","content":"a.txt"}]}}

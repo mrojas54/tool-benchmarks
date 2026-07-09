@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
@@ -113,8 +114,36 @@ def open_session_jsonl(
     ref: SessionRef,
     runner: Runner = _run_agentsview,
 ) -> Iterator[str]:
-    """Stream JSONL lines for `ref` from disk or via `agentsview session export` (S9)."""
-    if ref.path is not None:
+    """Stream JSONL lines for `ref` from disk or via `agentsview session export` (S9).
+
+    Retained as the documented entry point; the branch it used to own is now
+    `RawFileLoader` / `AgentsViewLoader`.
+    """
+    loader: SessionLoader = RawFileLoader() if ref.path is not None else AgentsViewLoader(runner)
+    yield from loader.lines(ref)
+
+
+def path_looks_binary(path: str) -> bool:
+    with open(path, "rb") as f:
+        return b"\x00" in f.read(SNIFF_LEN)
+
+
+class SessionLoader(ABC):
+    """Acquisition. Knows nothing about schemas.
+
+    The NUL sniff lives here, and therefore runs before schema detection -- a
+    SQLite dump has no first JSON line to detect (TB-11).
+    """
+
+    @abstractmethod
+    def lines(self, ref: SessionRef) -> Iterator[str]: ...
+
+
+class RawFileLoader(SessionLoader):
+    """A session already on disk."""
+
+    def lines(self, ref: SessionRef) -> Iterator[str]:
+        assert ref.path is not None, "RawFileLoader requires ref.path"
         # Sniff on a separate binary handle so the text handle can still stream
         # line-by-line; slurping a head as text would force us to stitch a
         # mid-line cut back together.
@@ -122,21 +151,26 @@ def open_session_jsonl(
             raise NonTranscriptExport(f"non-transcript payload (binary content): {ref.path}")
         with open(ref.path, encoding="utf-8", errors="replace") as f:
             yield from f
-        return
-    result = runner(["agentsview", "session", "export", ref.session_id])
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"agentsview session export failed ({result.returncode}): {result.stderr.strip()}"
-        )
-    if _looks_binary(result.stdout[:SNIFF_LEN]):
-        # No session id here: callers that record this already prefix it.
-        raise NonTranscriptExport("non-transcript payload (binary content) from session export")
-    yield from result.stdout.splitlines(keepends=True)
 
 
-def path_looks_binary(path: str) -> bool:
-    with open(path, "rb") as f:
-        return b"\x00" in f.read(SNIFF_LEN)
+class AgentsViewLoader(SessionLoader):
+    """A session fetched through `agentsview session export`."""
+
+    def __init__(self, runner: Runner = _run_agentsview) -> None:
+        self._runner = runner
+
+    def lines(self, ref: SessionRef) -> Iterator[str]:
+        result = self._runner(["agentsview", "session", "export", ref.session_id])
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"agentsview session export failed ({result.returncode}): {result.stderr.strip()}"
+            )
+        if _looks_binary(result.stdout[:SNIFF_LEN]):
+            # No session id here: callers that record this already prefix it.
+            raise NonTranscriptExport(
+                "non-transcript payload (binary content) from session export"
+            )
+        yield from result.stdout.splitlines(keepends=True)
 
 
 def _probe_agentsview(runner: Runner) -> str | None:

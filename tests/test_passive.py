@@ -9,12 +9,16 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import pytest
+
+from toolbench.adapters import UnknownSchema
 from toolbench.passive import (
     OVERSIZED_OUTPUT_TOKENS,
     UNKNOWN_MODEL,
     Reducer,
     _apply_date_range,
     _is_subagent_path,
+    _parse_ref,
     filter_subagents,
     main,
     parse_args,
@@ -721,6 +725,56 @@ class NonTranscriptExportTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             main(["--index-source", "agentsview"], runner=runner)
         self.assertEqual(set(tmp_root.glob("*.jsonl")) - before, set())
+
+
+# --- TB-13: _parse_ref delegates to the registry; unknown schemas raise --------
+
+
+def _ok_export(stdout: str) -> "subprocess.CompletedProcess[str]":
+    return subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr="")
+
+
+def test_parse_ref_parses_an_agentsview_claude_session_without_a_temp_file():
+    ref = SessionRef(agent="claude", source="agentsview", project="p", session_id="c:1", path=None)
+    body = (
+        '{"sessionId":"s1","timestamp":"t0","message":{"content":'
+        '[{"type":"tool_use","id":"u1","name":"Grep","input":{}}]}}\n'
+        '{"sessionId":"s1","timestamp":"t1","message":{"content":'
+        '[{"type":"tool_result","tool_use_id":"u1","content":"hit"}]}}\n'
+    )
+    result = _parse_ref(ref, runner=lambda argv: _ok_export(body))
+    assert len(result.calls) == 1
+    assert result.calls[0].name == "Grep"
+
+
+def test_parse_ref_raises_unknown_schema_for_codex_instead_of_returning_zero():
+    ref = SessionRef(
+        agent="codex", source="agentsview", project="p", session_id="codex:1", path=None
+    )
+    body = '{"type":"session_meta","payload":{},"timestamp":"t"}\n'
+    with pytest.raises(UnknownSchema):
+        _parse_ref(ref, runner=lambda argv: _ok_export(body))
+
+
+def test_passive_no_longer_imports_tempfile():
+    import toolbench.passive as p
+
+    assert not hasattr(p, "tempfile"), "the NamedTemporaryFile round-trip must be gone"
+
+
+def test_unknown_schema_lands_in_skipped_roots_not_as_a_zero_row():
+    # UnknownSchema is a RuntimeError, so main()'s existing guard demotes it.
+    ref = SessionRef(
+        agent="codex", source="agentsview", project="p", session_id="codex:1", path=None
+    )
+    reducer = Reducer()
+    skipped: list[str] = []
+    try:
+        _parse_ref(ref, runner=lambda argv: _ok_export('{"role":"user","message":{}}\n'))
+    except (OSError, RuntimeError, UnicodeDecodeError) as exc:
+        skipped.append(str(exc))
+    assert skipped, "an unparseable session must be skipped, never counted as 0 calls"
+    assert reducer.calls_joined == 0
 
 
 if __name__ == "__main__":

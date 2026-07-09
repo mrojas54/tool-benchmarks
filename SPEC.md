@@ -157,3 +157,16 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   prose, or reasoning in the arm turn keeps the match and the context-token
   columns, and blanks usage (`—`). Only a fresh session recovers the number
   (TB-16).
+
+## Schema dispatch — `toolbench/adapters.py` + `toolbench/registry.py`
+
+- **S27 — schema dispatch.** `detect_parser` sniffs up to 100 non-empty lines
+  and returns the single parser whose `claims_line` matches. Two matches raise
+  `AmbiguousSchema`; zero matches raise `UnknownSchema`. Both subclass
+  `RuntimeError`, so `passive.main` demotes the session to `skipped_roots`.
+  Hermes claims by source (`agent == "hermes" and path is None`) because it is a
+  SQLite read with no lines; every other session is claimed by content, since
+  schema is a property of the payload, not of the producer (TB-13).
+- **S28 — no parser is the default.** An unrecognized transcript is never parsed
+  by `ClaudeParser`, and never reported as an agent with zero tool calls. `codex`
+  and `cursor` land in `skipped_roots` pending a `CodexParser` (TB-12).

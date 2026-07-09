@@ -41,7 +41,11 @@ slow / retry-churn feed the inefficiency callouts only.
 ```
 raw roots + AgentsView exports
           │
- source adapters (transcript.py + sources.py)
+   loaders (sources.py)  ── acquisition: bytes → lines
+          │
+   parsers (parsers.py)  ── interpretation: lines → ToolCall
+          │
+   adapters (adapters.py + registry.py)  ── SessionRef → ParseResult
           │
      ┌────┴─────┐
  passive.py   probe.py
@@ -49,13 +53,45 @@ raw roots + AgentsView exports
    reports/YYYY-MM-DD-tool-usage.md
 ```
 
-- **`transcript.py`** — parses a session's JSONL, joining each assistant
-  `tool_use` block to its result by id, and normalizes payloads to a
-  character length. Malformed lines are counted and skipped, never fatal.
-- **`sources.py`** — multi-agent discovery. Either scans raw local transcript
-  roots or pages the AgentsView CLI (`--index-source auto | agentsview |
-  raw`). `auto` tries AgentsView first and falls back to raw scanning,
-  recording the reason.
+### Three layers, one seam (TB-13)
+
+Acquisition and interpretation are orthogonal, so they are separate ABCs:
+
+- A **`SessionLoader`** turns a `SessionRef` into lines. It owns the NUL sniff,
+  which therefore runs *before* schema detection — a SQLite dump has no first
+  JSON line to detect.
+- A **`TranscriptParser`** interprets already-acquired lines. It never opens a
+  file and never decides which schema it is looking at.
+- A **`SessionAdapter`** composes the two. `registry.pick_adapter` walks an
+  ordered list of `claims(ref)` predicates and returns the first match.
+
+**Hermes is keyed on source; everything else is keyed on content.** Hermes is a
+SQLite read, not a transcript, so it claims by `agent == "hermes" and path is
+None`. Every other session is content-sniffed over a bounded 100-line window,
+because schema is a property of the payload, not of the producer: `cowork` emits
+Claude's exact schema and parses correctly with zero registry entries of its own.
+
+**No parser is the default.** An unrecognized transcript raises `UnknownSchema`
+(a `RuntimeError`, so `passive.main`'s existing per-session guard demotes it to
+`skipped_roots`). Previously such a session fell through to the Claude parser,
+matched nothing, and reported a healthy zero. `codex` and `cursor` land in
+`skipped_roots` today, pending a `CodexParser` in TB-12.
+
+- **`transcript.py`** — the schema-neutral records: `ToolCall`, `ParseResult`,
+  and `result_len`, which normalizes a payload to a character length.
+  `parse_session` remains as a compat shim over `ClaudeParser`.
+- **`parsers.py`** — one class per schema. `ClaudeParser` joins each assistant
+  `tool_use` block to its result by id. Malformed lines are counted and
+  skipped, never fatal.
+- **`adapters.py`** — `detect_parser`, `UnknownSchema`, `AmbiguousSchema`, and
+  `ComposedAdapter` (the terminal fallback).
+- **`registry.py`** — the ordered adapter list and `pick_adapter`. Exists to
+  break the `hermes.py` ↔ `adapters.py` import cycle. Adding an agent means
+  adding an entry here, never editing a dispatcher.
+- **`sources.py`** — multi-agent discovery plus the loaders. Either scans raw
+  local transcript roots or pages the AgentsView CLI (`--index-source auto |
+  agentsview | raw`). `auto` tries AgentsView first and falls back to raw
+  scanning, recording the reason.
 - **`passive.py`** — streams and aggregates **incrementally** (per-agent /
   per-tool reducers only, never a whole-corpus `list[ToolCall]`), then emits
   a five-section report: agent breakdown, tool leaderboard, model breakdown,
@@ -89,12 +125,12 @@ inputs.
 **Implemented.** `toolbench/` ships all of tickets **T1–T6** in
 [`BUILDPLAN.md`](BUILDPLAN.md): the scaffold, the transcript parser, the
 multi-agent source layer, the passive analyzer, and the active probes. The
-strict gate (`ruff`, `mypy --strict`, `unittest`) is green — 176 tests
+strict gate (`ruff`, `mypy --strict`, `unittest`) is green — 213 tests
 passing (1 skipped when the live hermes archive is absent).
 
 Source-of-truth documents:
 
-- [`SPEC.md`](SPEC.md) — 26 numbered acceptance criteria (S1–S26).
+- [`SPEC.md`](SPEC.md) — 28 numbered acceptance criteria (S1–S28).
 - [`EVALUATION.md`](EVALUATION.md) — verification map for every criterion.
 - [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the T1–T6 tickets.
 - [`docs/2026-07-07-tool-benchmarks-design.md`](docs/2026-07-07-tool-benchmarks-design.md)
