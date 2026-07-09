@@ -31,15 +31,17 @@ One row per SPEC criterion, each tagged by how it is verified:
 | S4 | `ToolCall` field set (incl. `model`) + derived props | `autonomous` | `test` |
 | S5 | malformed counted + skipped | `autonomous` | `test` |
 | S6 | interrupted kept, `output_chars=0` | `autonomous` | `test` |
-| S7 | raw discovery filters + FileNotFoundError | `autonomous` | `test` (tmp tree) |
+| S7 | raw discovery filters (owning project dir, nested subagents) + FileNotFoundError | `autonomous` | `test` (tmp tree) |
 | S8 | AgentsView cursor pagination + `SessionRef` | `autonomous` | `test` (fake runner) |
-| S9 | uniform open of raw path vs export | `autonomous` | `test` (fake runner) |
+| S9 | uniform open; lenient decode; reject binary / non-transcript exports | `autonomous` | `test` (fake runner + real bytes) |
+| S9a | hermes direct SQLite read (`parse_hermes_session`, mode=ro) | `autonomous` / `operator-assisted` (live archive) | `test` (`test_hermes.py`) |
+| S9b | hermes discovery stays on AgentsView `session list` | `autonomous` (routing) / `external-oracle` (list vs stats) | `test` + live AgentsView |
 | S10 | auto/strict/raw index-source behavior + fallback reason | `autonomous` (logic) / `external-oracle` (live) | `test` + `test:full` |
 | S11 | incremental — no whole-corpus list | `autonomous` (reducer unit) / `operator-assisted` (mem at scale) | `test` + `--all --limit 200 --verbose` |
 | S12 | CLI arg parsing / defaults | `autonomous` | `test` |
 | S13 | subagent include/exclude path filter | `autonomous` | `test` |
-| S14 | five report sections present (incl. per-model breakdown) | `autonomous` | `test` (report string) |
-| S15 | report provenance fields present | `autonomous` | `test` (report string) |
+| S14 | five report sections; callouts carry denominators + top offender | `autonomous` | `test` (report string) |
+| S15 | report provenance fields present (incl. skipped roots) | `autonomous` | `test` (report string) |
 | S16 | exact 5 corpus paths listed | `operator-assisted` | inspect `active-probes.md` vs real dir |
 | S17 | structural tool-arm match + bash sentinel; contamination guards | `autonomous` | `test` (probe fixtures) |
 | S18 | comparison table + seeded fallback + SeededReportError | `autonomous` | `test` |
@@ -47,10 +49,12 @@ One row per SPEC criterion, each tagged by how it is verified:
 | S20 | stdlib runtime; uv project shape | `autonomous` | `test` + import-scan + `pyproject.toml` |
 | S21 | entry points run | `autonomous` | smoke via `uv run python -m …` |
 | S22 | strict gate green | `autonomous` | ruff + mypy + `test` |
-| S23 | exit-code contract | `autonomous` | `test` (argv, tmp roots) |
+| S23 | exit-code contract; per-session skip continues the run | `autonomous` | `test` (argv, tmp roots, binary/non-UTF-8) |
 | S24 | fixtures + fake runner present | `autonomous` | `test` |
 | S25 | acceptance smoke completes | `operator-assisted` / `external-oracle` | `test:full` |
 | S26 | requestId-keyed isolability; prose/thinking/batch blank usage | `autonomous` | `test` (prose + pooled fixtures) |
+| S27 | schema dispatch (`detect_parser`); UnknownSchema / AmbiguousSchema | `autonomous` | `test` (`test_adapters` / `test_registry`) |
+| S28 | no default parser; unrecognized schemas skip loudly | `autonomous` | `test` (codex/cursor → skipped_roots) |
 
 ## Operator post-merge smoke checkpoints (human-driven)
 
@@ -63,7 +67,8 @@ One row per SPEC criterion, each tagged by how it is verified:
    fallback-to-raw path and that the report names the reason.
 3. **Scale (S11).** `--all --limit 200 --verbose` completes with flat memory.
 4. **Report reads well (`felt`).** The five-section report is scannable and
-   the inefficiency callouts are actionable, not noise.
+   the inefficiency callouts are actionable (`N of M (P%); top: <tool>`),
+   not bare counts.
 5. **Probe isolability (S26).** Score a dedicated probe session with
    `toolbench.probe --session …`. Expect ten unseeded context-token cells and
    real usage numbers (not `—`). A `—` in usage with unseeded context tokens

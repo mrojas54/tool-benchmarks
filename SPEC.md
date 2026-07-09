@@ -31,18 +31,20 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 - **S7 — raw discovery.** `iter_session_files(root="~/.claude/projects",
   project=None, since=None)` yields Claude Code JSONL paths, filtered by
   owning-project-dir substring (`project in rel.parts[0]`, so
-  `<project>/subagents/*.jsonl` still matches — TB-8) and file mtime
-  (`since`, ISO-8601); raises `FileNotFoundError` if `root` is missing.
+  `<project>/subagents/*.jsonl` still matches — TB-8; not merely
+  `path.parent.name`) and file mtime (`since`, ISO-8601); raises
+  `FileNotFoundError` if `root` is missing.
 - **S8 — AgentsView listing.** `iter_agentsview_sessions(agent="all", …)`
   pages `agentsview session list --json --limit 500` with **cursor
   pagination** and yields `SessionRef(agent, source, project, session_id,
   path)`.
 - **S9 — uniform open.** `open_session_jsonl(ref)` streams JSONL lines from
-  either a filesystem path or `agentsview session export <id>`. A payload
-  containing a NUL in its first 8 KiB is **not** a transcript: raise
-  `NonTranscriptExport` rather than absorb megabytes of binary as malformed
-  lines. The guard is agent-agnostic and stays so regardless of any upstream
-  fix (TB-10).
+  either a filesystem path or `agentsview session export <id>`. Text is
+  decoded with `errors="replace"` so a stray non-UTF-8 byte never aborts
+  the open. A payload containing a NUL in its first 8 KiB is **not** a
+  transcript: raise `NonTranscriptExport` rather than absorb megabytes of
+  binary as malformed lines. The guard is agent-agnostic and stays so
+  regardless of any upstream fix (TB-10).
 - **S9a — hermes direct read.** `agent == "hermes"` sessions are read from the
   hermes archive (`$HERMES_HOME`, default `~/.hermes`) via
   `parse_hermes_session`, never via `agentsview session export`, which returns
@@ -78,11 +80,14 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   leaderboard (per agent+tool), (3) Model breakdown (per agent+model+tool,
   `model` normalized to `unknown` when absent), (4) Inefficiency callouts
   (ToolSearch/deferral tax, failures, oversized outputs, subagent fan-out,
-  churn), (5) Summary.
+  churn), (5) Summary. Each callout (except ToolSearch, which already
+  carries a token figure) renders as `N of M calls (P%)` and names the
+  top-offending tool when the count is non-zero; ties break alphabetically.
 - **S15 — report provenance.** The report states the index source used,
   sessions scanned, tool calls joined, malformed-line count, whether
-  subagents were included, and any AgentsView fallback reason; it notes
-  `--since` is file-mtime based.
+  subagents were included, any AgentsView fallback reason, and skipped
+  roots (including per-session `NonTranscriptExport` / decode failures); it
+  notes `--since` is file-mtime based.
 
 ## Active probes — `toolbench/probe.py` + `protocols/active-probes.md`
 
@@ -132,7 +137,10 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 - **S23 — error handling.** Empty session selection → clear message,
   exit 0. Missing selected raw root → exit 1 for a strict source; but
   `--agent all --index-source auto` continues with other sources and
-  reports skipped roots.
+  reports skipped roots. Per-session parse failures (`OSError`,
+  `RuntimeError` including `NonTranscriptExport`, and `UnicodeDecodeError`)
+  demote that session into skipped roots and continue the corpus scan —
+  one bad export must not abort the run.
 
 ## Testing
 

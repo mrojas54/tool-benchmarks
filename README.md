@@ -79,7 +79,9 @@ matched nothing, and reported a healthy zero. `codex` and `cursor` land in
 
 - **`transcript.py`** — the schema-neutral records: `ToolCall`, `ParseResult`,
   and `result_len`, which normalizes a payload to a character length.
-  `parse_session` remains as a compat shim over `ClaudeParser`.
+  `parse_session` remains as a compat shim over `ClaudeParser`. Stray
+  non-UTF-8 bytes decode with `errors="replace"` so one bad byte never aborts
+  the session (TB-10).
 - **`parsers.py`** — one class per schema. `ClaudeParser` joins each assistant
   `tool_use` block to its result by id. Malformed lines are counted and
   skipped, never fatal.
@@ -91,7 +93,12 @@ matched nothing, and reported a healthy zero. `codex` and `cursor` land in
 - **`sources.py`** — multi-agent discovery plus the loaders. Either scans raw
   local transcript roots or pages the AgentsView CLI (`--index-source auto |
   agentsview | raw`). `auto` tries AgentsView first and falls back to raw
-  scanning, recording the reason.
+  scanning, recording the reason. Exports that are not JSONL (e.g. a SQLite
+  dump with a NUL in the header) raise `NonTranscriptExport` and are skipped
+  by name (TB-10).
+- **`hermes.py`** — direct read-only SQLite adapter for Hermes sessions
+  (TB-11). Discovery still comes from AgentsView; only the read is redirected
+  because `session export` returns the whole default-profile database.
 - **`passive.py`** — streams and aggregates **incrementally** (per-agent /
   per-tool reducers only, never a whole-corpus `list[ToolCall]`), then emits
   a five-section report: agent breakdown, tool leaderboard, model breakdown,
@@ -124,9 +131,13 @@ inputs.
 
 **Implemented.** `toolbench/` ships all of tickets **T1–T6** in
 [`BUILDPLAN.md`](BUILDPLAN.md): the scaffold, the transcript parser, the
-multi-agent source layer, the passive analyzer, and the active probes. The
-strict gate (`ruff`, `mypy --strict`, `unittest`) is green — 213 tests
-passing (1 skipped when the live hermes archive is absent).
+multi-agent source layer, the passive analyzer, and the active probes.
+Post-merge hardening covers **TB-8** (subagent `--project` filter), **TB-9**
+(callout denominators), **TB-10** (non-UTF-8 / non-transcript exports),
+**TB-11** (Hermes SQLite direct read — discovery still via AgentsView),
+probe isolability (**S26** / TB-14–16), and schema dispatch (**S27–S28** /
+TB-13). The strict gate (`ruff`, `mypy --strict`, `unittest`) is green —
+**213** tests passing (1 skipped when the live hermes archive is absent).
 
 Source-of-truth documents:
 
@@ -214,6 +225,14 @@ uv run python -m unittest discover tests
 - `agentsview` — AgentsView only; a source error is fatal.
 - `raw` — raw local transcript roots only; a source error is fatal.
 
+`--agent` filters AgentsView listing only. Under `--index-source raw` the
+discovery root is Claude Code sessions, so `--agent` is a no-op there.
+
+`--project` matches the **owning project directory** under the raw root
+(first path segment after the root), not `path.parent.name`. Nested
+subagent transcripts at `<project>/subagents/*.jsonl` therefore survive
+`--project` and are only dropped when you pass `--exclude-subagents`.
+
 The fast test suite is hermetic — it fakes the `agentsview` CLI, points
 `$HERMES_HOME` at a fixture database, and never touches `~/.claude` or
 `~/.hermes`, so the inner loop never depends on a live daemon. One test in
@@ -222,6 +241,35 @@ compatibility envelope, and skips when that archive is absent.
 
 Hermes databases are always opened `file:…?mode=ro`. A running hermes owns
 those files; the adapter never writes to them.
+
+### Reading the report
+
+Inefficiency callouts are written as `N of M calls (P%)` and name the
+worst tool when the count is non-zero, for example:
+
+```text
+- Failures: 147 of 997 calls (14.7%); top: Bash (109)
+- ToolSearch/deferral tax: 12 of 997 calls (1.2%), 3400 tokens
+```
+
+Ties for "top" break alphabetically so the report stays deterministic. A
+zero count omits the top-offender clause.
+
+### Troubleshooting / common pitfalls
+
+| Symptom | Likely cause | What to do |
+|---|---|---|
+| Run dies with `UnicodeDecodeError` | Pre-TB-10 behavior, or a custom strict-decode runner | In-tree readers use `errors="replace"`. One bad session should land in **Skipped roots**, not abort the corpus. |
+| Summary shows `Skipped roots: … non-transcript payload` for a non-Hermes session | AgentsView `session export` returned binary with returncode 0 | Expected for off-contract exports; the NUL sniff rejects them before parse (TB-10). Hermes sessions should not hit this path — they route through `hermes.py`. |
+| `--project X` silently omits every subagent | Pre-TB-8 filter matched `path.parent.name` (`subagents`) | Current code matches the owning project dir. Re-run on current `main`. |
+| Callouts are bare integers (`Failures: 865`) | Pre-TB-9 report formatting | Current callouts include denominators and a top offender. |
+| `--agent hermes` yields far fewer sessions than expected | AgentsView `session list` under-counts Hermes vs `stats` (~89 vs ~789) | Known upstream limit ([#1048](https://github.com/kenn-io/agentsview/issues/1048)); discovery is intentionally not forked into the Hermes adapter (S9b). |
+| Hermes session skipped / archive not found | `$HERMES_HOME` / `~/.hermes` missing, or session only in an unread profile DB | Confirm `HERMES_HOME`; skipped roots name the session. Profile DBs under `profiles/*/state.db` are searched. |
+| `Malformed lines` explodes into the hundreds of thousands | Binary export absorbed as text (would happen without the NUL sniff) | Should not occur on current code — binary payloads are rejected before parse. |
+| Empty selection message | No sessions matched filters, or all matched sessions were skipped | Check `--project` / `--since` / `--date-*`, and the skipped-roots suffix on the message. |
+| `toolbench.probe` without `--session` refuses to write | Seeded-only report is blocked (`SeededReportError`) | Pass `--session PATH`, or `--allow-seeded` for the baseline table only. |
+| Probe usage column shows `—` but context tokens are real | Arm matched, but the API response was not isolable (prose, thinking, or batched `tool_use` — S26) | Re-run from [`protocols/probe-run-sheet.md`](protocols/probe-run-sheet.md); one tool call per turn, no surrounding prose. |
+| `codex` / `cursor` sessions appear only in Skipped roots | No parser claims their schema yet (`UnknownSchema`, S28) | Expected until TB-12 lands a `CodexParser`. They must not appear as healthy zero-call agents. |
 
 ## Quality gate
 

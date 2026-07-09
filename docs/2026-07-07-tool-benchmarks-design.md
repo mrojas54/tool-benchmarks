@@ -156,8 +156,9 @@ Report sections:
 
 1. **Agent breakdown** — per agent: sessions, tool calls, total context-tokens, failures, slow-call count, retry/edit-churn indicators where available.
 2. **Tool leaderboard** — per agent + tool: call count, total context-tokens, median context-tokens, total input-tokens, error count, slowest observed call.
-3. **Inefficiency callouts** — ToolSearch/deferred-tool tax, repeated failed calls, oversized outputs, subagent fan-out, context pressure, and edit churn where source data exposes it.
-4. **Summary** — total sessions, total tool calls, total tool-output tokens, top-5 cost drivers, count of skipped malformed lines.
+3. **Model breakdown** — per agent + model + tool (model normalized to `unknown` when absent).
+4. **Inefficiency callouts** — ToolSearch/deferred-tool tax, repeated failed calls, oversized outputs, subagent fan-out, context pressure, and edit churn where source data exposes it. Each count callout renders as `N of M calls (P%)` and names the top-offending tool.
+5. **Summary** — total sessions, total tool calls, total tool-output tokens, top-5 cost drivers, count of skipped malformed lines, skipped roots, AgentsView fallback reason.
 
 ### `probe.py` + `protocols/active-probes.md` — targets #1 + #2-active
 
