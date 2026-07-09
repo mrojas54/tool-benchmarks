@@ -6,6 +6,7 @@ from toolbench.probe import (
     PROBE_SPECS,
     SEED_BASELINES,
     ArmMatch,
+    SeededReportError,
     build_comparison_table,
     find_probe_calls,
     render_report,
@@ -134,7 +135,7 @@ class BuildComparisonTableTests(unittest.TestCase):
 class RenderReportTests(unittest.TestCase):
     def test_seeded_rows_are_marked(self) -> None:
         rows = build_comparison_table({})
-        report = render_report(rows)
+        report = render_report(rows, allow_seeded=True)
         self.assertIn("68*", report)
         self.assertIn("seeded", report.lower())
 
@@ -143,10 +144,93 @@ class RenderReportTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             out_path = Path(tmp) / "reports" / "active-probe-comparison.md"
-            main(["--out", str(out_path)])
+            main(["--out", str(out_path), "--allow-seeded"])
             self.assertTrue(out_path.is_file())
             content = out_path.read_text()
             self.assertIn("Active probe comparison", content)
+
+
+class SerenaToolNamingTests(unittest.TestCase):
+    """The serena arm must name the tool as the runtime actually records it."""
+
+    def test_specs_accept_plugin_namespaced_serena_names(self) -> None:
+        for spec in PROBE_SPECS:
+            bare = spec.tool_names[0].rsplit("__", 1)[-1]
+            self.assertIn(
+                f"mcp__plugin_serena_serena__{bare}",
+                spec.tool_names,
+                f"probe {spec.id} cannot match the name Claude Code records",
+            )
+
+    def test_primary_tool_name_is_the_plugin_namespaced_one(self) -> None:
+        for spec in PROBE_SPECS:
+            self.assertTrue(spec.tool_name.startswith("mcp__plugin_serena_serena__"))
+
+    def test_plugin_namespaced_call_matches_the_tool_arm(self) -> None:
+        matches = find_probe_calls(FIXTURES / "probe_session_plugin_names.jsonl")
+        arm = matches["01"]
+        self.assertIsNotNone(arm.tool, "plugin-namespaced serena call must match")
+        assert arm.tool is not None
+        self.assertEqual(arm.tool.name, "mcp__plugin_serena_serena__find_file")
+        self.assertTrue(arm.tool_isolable)
+
+    def test_plugin_namespaced_session_yields_unseeded_row(self) -> None:
+        matches = find_probe_calls(FIXTURES / "probe_session_plugin_names.jsonl")
+        row = {r.probe_id: r for r in build_comparison_table(matches)}["01"]
+        self.assertFalse(row.tool_seeded)
+        self.assertFalse(row.bash_seeded)
+        self.assertEqual(row.tool_usage_tokens, 11)
+        self.assertEqual(row.bash_usage_tokens, 7)
+
+
+class ContaminationGuardTests(unittest.TestCase):
+    """A call that *mentions* a sentinel is not a call that *performs* the probe."""
+
+    def setUp(self) -> None:
+        self.matches = find_probe_calls(FIXTURES / "probe_session_contaminated.jsonl")
+
+    def test_multi_sentinel_grep_is_not_an_arm(self) -> None:
+        for probe_id in ("01", "02"):
+            arm = self.matches[probe_id]
+            self.assertIsNone(arm.tool, f"probe {probe_id} tool arm matched a grep")
+            self.assertIsNone(arm.bash, f"probe {probe_id} bash arm matched a grep")
+
+    def test_single_sentinel_grep_over_transcripts_is_not_an_arm(self) -> None:
+        self.assertIsNone(self.matches["03"].bash, "grep over ~/.claude/projects scored as an arm")
+
+    def test_read_of_probe_source_is_not_an_arm(self) -> None:
+        self.assertIsNone(self.matches["04"].tool)
+
+    def test_contaminated_session_produces_a_fully_seeded_table(self) -> None:
+        rows = build_comparison_table(self.matches)
+        self.assertTrue(all(r.tool_seeded and r.bash_seeded for r in rows))
+
+
+class SeededReportRefusalTests(unittest.TestCase):
+    """A table with zero measurements must not render as a report."""
+
+    def test_render_raises_when_every_arm_is_seeded(self) -> None:
+        rows = build_comparison_table({})
+        with self.assertRaises(SeededReportError):
+            render_report(rows)
+
+    def test_render_allows_fully_seeded_only_when_explicit(self) -> None:
+        rows = build_comparison_table({})
+        self.assertIn("Active probe comparison", render_report(rows, allow_seeded=True))
+
+    def test_partially_seeded_table_still_renders(self) -> None:
+        matches = find_probe_calls(FIXTURES / "probe_session.jsonl")
+        rows = build_comparison_table(matches)
+        self.assertIn("Active probe comparison", render_report(rows))
+
+    def test_main_refuses_to_write_a_fully_seeded_report(self) -> None:
+        from toolbench.probe import main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = Path(tmp) / "reports" / "x.md"
+            with self.assertRaises(SeededReportError):
+                main(["--out", str(out_path)])
+            self.assertFalse(out_path.exists(), "refused report must not be written")
 
 
 if __name__ == "__main__":
