@@ -26,7 +26,8 @@ from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
-from toolbench.sources import NonTranscriptExport
+from toolbench.adapters import SessionAdapter
+from toolbench.sources import NonTranscriptExport, SessionRef
 from toolbench.transcript import ParseResult, ToolCall, result_len
 
 # Session ids arrive from AgentsView namespaced by agent; the archive stores them bare.
@@ -182,3 +183,24 @@ def parse_hermes_session(
             )
 
     return ParseResult(calls=calls, malformed=malformed)
+
+
+class HermesAdapter(SessionAdapter):
+    """Hermes is keyed on source, not content: it is a SQLite read, not a transcript.
+
+    It has no lines, so it implements `SessionAdapter` directly rather than being
+    forced through the loader/parser pipe. Yielding synthetic JSON lines so a
+    `HermesParser` could re-decode them buys symmetry and nothing else.
+    """
+
+    def claims(self, ref: SessionRef) -> bool:
+        # `agentsview session export` returns rc=0 and the whole default-profile
+        # database for these (kenn-io/agentsview#1047), so read the archive
+        # directly. A hermes ref that DOES carry a path is a real transcript and
+        # belongs to the composed adapter.
+        return ref.agent == "hermes" and ref.path is None
+
+    def parse(self, ref: SessionRef) -> ParseResult:
+        return parse_hermes_session(
+            ref.session_id, agent=ref.agent, source=ref.source, project=ref.project
+        )

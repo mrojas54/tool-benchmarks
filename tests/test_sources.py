@@ -7,8 +7,13 @@ from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import pytest
+
 from toolbench.sources import (
+    AgentsViewLoader,
     NonTranscriptExport,
+    RawFileLoader,
+    SessionLoader,
     SessionRef,
     _run_agentsview,
     iter_agentsview_sessions,
@@ -324,6 +329,61 @@ class NonTranscriptExportTests(unittest.TestCase):
         runner = FakeRunner([_completed(stdout='{"note": "caf�"}\n')])
         ref = SessionRef(agent="claude", source="agentsview", project="p", session_id="s1", path=None)
         self.assertEqual(len(list(open_session_jsonl(ref, runner=runner))), 1)
+
+
+# --- TB-13: SessionLoader splits acquisition out of open_session_jsonl ---------
+
+
+def _ok(stdout: str) -> "subprocess.CompletedProcess[str]":
+    return subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr="")
+
+
+def test_raw_file_loader_yields_lines(tmp_path):
+    p = tmp_path / "s.jsonl"
+    p.write_text('{"a":1}\n{"b":2}\n', encoding="utf-8")
+    ref = SessionRef(agent="claude", source="raw", project="p", session_id="s", path=str(p))
+    assert list(RawFileLoader().lines(ref)) == ['{"a":1}\n', '{"b":2}\n']
+
+
+def test_raw_file_loader_rejects_binary_before_any_parse(tmp_path):
+    p = tmp_path / "s.db"
+    p.write_bytes(b"SQLite format 3\x00rest")
+    ref = SessionRef(agent="hermes", source="raw", project="p", session_id="s", path=str(p))
+    with pytest.raises(NonTranscriptExport):
+        list(RawFileLoader().lines(ref))
+
+
+def test_raw_file_loader_decodes_leniently(tmp_path):
+    p = tmp_path / "s.jsonl"
+    p.write_bytes(b'{"a":"\xa0"}\n')  # stray non-UTF-8 byte
+    ref = SessionRef(agent="claude", source="raw", project="p", session_id="s", path=str(p))
+    assert list(RawFileLoader().lines(ref)) == ['{"a":"�"}\n']
+
+
+def test_agentsview_loader_yields_lines():
+    ref = SessionRef(agent="codex", source="agentsview", project="p", session_id="c:1", path=None)
+    loader = AgentsViewLoader(runner=lambda argv: _ok('{"a":1}\n{"b":2}\n'))
+    assert list(loader.lines(ref)) == ['{"a":1}\n', '{"b":2}\n']
+
+
+def test_agentsview_loader_rejects_binary_payload():
+    ref = SessionRef(agent="hermes", source="agentsview", project="p", session_id="h:1", path=None)
+    loader = AgentsViewLoader(runner=lambda argv: _ok("SQLite format 3\x00junk"))
+    with pytest.raises(NonTranscriptExport):
+        list(loader.lines(ref))
+
+
+def test_agentsview_loader_raises_on_nonzero_returncode():
+    ref = SessionRef(agent="codex", source="agentsview", project="p", session_id="c:1", path=None)
+    bad = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="boom")
+    loader = AgentsViewLoader(runner=lambda argv: bad)
+    with pytest.raises(RuntimeError, match="boom"):
+        list(loader.lines(ref))
+
+
+def test_loaders_are_session_loaders():
+    assert issubclass(RawFileLoader, SessionLoader)
+    assert issubclass(AgentsViewLoader, SessionLoader)
 
 
 if __name__ == "__main__":

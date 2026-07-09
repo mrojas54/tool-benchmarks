@@ -41,7 +41,11 @@ slow / retry-churn feed the inefficiency callouts only.
 ```
 raw roots + AgentsView exports
           │
- source adapters (transcript.py + sources.py)
+   loaders (sources.py)  ── acquisition: bytes → lines
+          │
+   parsers (parsers.py)  ── interpretation: lines → ToolCall
+          │
+   adapters (adapters.py + registry.py)  ── SessionRef → ParseResult
           │
      ┌────┴─────┐
  passive.py   probe.py
@@ -49,16 +53,49 @@ raw roots + AgentsView exports
    reports/YYYY-MM-DD-tool-usage.md
 ```
 
-- **`transcript.py`** — parses a session's JSONL, joining each assistant
-  `tool_use` block to its result by id, and normalizes payloads to a
-  character length. Malformed lines are counted and skipped, never fatal.
-  Stray non-UTF-8 bytes decode with `errors="replace"` so one bad byte never
-  aborts the session.
-- **`sources.py`** — multi-agent discovery. Either scans raw local transcript
-  roots or pages the AgentsView CLI (`--index-source auto | agentsview |
-  raw`). `auto` tries AgentsView first and falls back to raw scanning,
-  recording the reason. Exports that are not JSONL (e.g. a SQLite dump with
-  a NUL in the header) raise `NonTranscriptExport` and are skipped by name.
+### Three layers, one seam (TB-13)
+
+Acquisition and interpretation are orthogonal, so they are separate ABCs:
+
+- A **`SessionLoader`** turns a `SessionRef` into lines. It owns the NUL sniff,
+  which therefore runs *before* schema detection — a SQLite dump has no first
+  JSON line to detect.
+- A **`TranscriptParser`** interprets already-acquired lines. It never opens a
+  file and never decides which schema it is looking at.
+- A **`SessionAdapter`** composes the two. `registry.pick_adapter` walks an
+  ordered list of `claims(ref)` predicates and returns the first match.
+
+**Hermes is keyed on source; everything else is keyed on content.** Hermes is a
+SQLite read, not a transcript, so it claims by `agent == "hermes" and path is
+None`. Every other session is content-sniffed over a bounded 100-line window,
+because schema is a property of the payload, not of the producer: `cowork` emits
+Claude's exact schema and parses correctly with zero registry entries of its own.
+
+**No parser is the default.** An unrecognized transcript raises `UnknownSchema`
+(a `RuntimeError`, so `passive.main`'s existing per-session guard demotes it to
+`skipped_roots`). Previously such a session fell through to the Claude parser,
+matched nothing, and reported a healthy zero. `codex` and `cursor` land in
+`skipped_roots` today, pending a `CodexParser` in TB-12.
+
+- **`transcript.py`** — the schema-neutral records: `ToolCall`, `ParseResult`,
+  and `result_len`, which normalizes a payload to a character length.
+  `parse_session` remains as a compat shim over `ClaudeParser`. Stray
+  non-UTF-8 bytes decode with `errors="replace"` so one bad byte never aborts
+  the session (TB-10).
+- **`parsers.py`** — one class per schema. `ClaudeParser` joins each assistant
+  `tool_use` block to its result by id. Malformed lines are counted and
+  skipped, never fatal.
+- **`adapters.py`** — `detect_parser`, `UnknownSchema`, `AmbiguousSchema`, and
+  `ComposedAdapter` (the terminal fallback).
+- **`registry.py`** — the ordered adapter list and `pick_adapter`. Exists to
+  break the `hermes.py` ↔ `adapters.py` import cycle. Adding an agent means
+  adding an entry here, never editing a dispatcher.
+- **`sources.py`** — multi-agent discovery plus the loaders. Either scans raw
+  local transcript roots or pages the AgentsView CLI (`--index-source auto |
+  agentsview | raw`). `auto` tries AgentsView first and falls back to raw
+  scanning, recording the reason. Exports that are not JSONL (e.g. a SQLite
+  dump with a NUL in the header) raise `NonTranscriptExport` and are skipped
+  by name (TB-10).
 - **`hermes.py`** — direct read-only SQLite adapter for Hermes sessions
   (TB-11). Discovery still comes from AgentsView; only the read is redirected
   because `session export` returns the whole default-profile database.
@@ -97,14 +134,14 @@ inputs.
 multi-agent source layer, the passive analyzer, and the active probes.
 Post-merge hardening covers **TB-8** (subagent `--project` filter), **TB-9**
 (callout denominators), **TB-10** (non-UTF-8 / non-transcript exports),
-**TB-11** (Hermes SQLite direct read — discovery still via AgentsView), and
-probe isolability (**S26** / TB-14–16). The strict gate (`ruff`,
-`mypy --strict`, `unittest`) is green — **176** tests passing (1 skipped
-when the live hermes archive is absent).
+**TB-11** (Hermes SQLite direct read — discovery still via AgentsView),
+probe isolability (**S26** / TB-14–16), and schema dispatch (**S27–S28** /
+TB-13). The strict gate (`ruff`, `mypy --strict`, `unittest`) is green —
+**213** tests passing (1 skipped when the live hermes archive is absent).
 
 Source-of-truth documents:
 
-- [`SPEC.md`](SPEC.md) — 26 numbered acceptance criteria (S1–S26).
+- [`SPEC.md`](SPEC.md) — 28 numbered acceptance criteria (S1–S28).
 - [`EVALUATION.md`](EVALUATION.md) — verification map for every criterion.
 - [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the T1–T6 tickets.
 - [`docs/2026-07-07-tool-benchmarks-design.md`](docs/2026-07-07-tool-benchmarks-design.md)
@@ -232,6 +269,7 @@ zero count omits the top-offender clause.
 | Empty selection message | No sessions matched filters, or all matched sessions were skipped | Check `--project` / `--since` / `--date-*`, and the skipped-roots suffix on the message. |
 | `toolbench.probe` without `--session` refuses to write | Seeded-only report is blocked (`SeededReportError`) | Pass `--session PATH`, or `--allow-seeded` for the baseline table only. |
 | Probe usage column shows `—` but context tokens are real | Arm matched, but the API response was not isolable (prose, thinking, or batched `tool_use` — S26) | Re-run from [`protocols/probe-run-sheet.md`](protocols/probe-run-sheet.md); one tool call per turn, no surrounding prose. |
+| `codex` / `cursor` sessions appear only in Skipped roots | No parser claims their schema yet (`UnknownSchema`, S28) | Expected until TB-12 lands a `CodexParser`. They must not appear as healthy zero-call agents. |
 
 ## Quality gate
 
