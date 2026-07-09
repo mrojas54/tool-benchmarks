@@ -23,10 +23,10 @@ exercised across the log-spaced size spread. The bash arm for every probe
 uses plain `Bash` (`grep`/`find` over the same corpus file).
 
 Only the **bash** sentinel is required to appear in a call. The tool sentinel
-is retained as a rejection token (see S20): a tool arm may name its own
+is retained as a rejection token (see S17): a tool arm may name its own
 sentinel, but must never name another probe's.
 
-## Tool naming (S19)
+## Tool naming (S17)
 
 Claude Code namespaces an MCP tool by how its server was installed. Serena
 reaches this machine as the `serena` plugin's `serena` server, so calls are
@@ -40,7 +40,7 @@ which appears **zero** times as a `tool_use` name anywhere in the transcript
 corpus. The serena arm was therefore unmatchable and every serena cell in
 every report was seeded.
 
-## How each arm is identified (S20)
+## How each arm is identified (S17)
 
 The two arms carry different evidence, so they are matched differently.
 
@@ -68,7 +68,40 @@ The fixtures concealed this by inventing parameters serena does not accept
 (`name_path`, `comment`). `ToolArmSchemaTests` now fails if any fixture uses a
 parameter outside serena's real schema.
 
-## Performing vs. mentioning a probe (S19)
+## What an arm's usage may include (S26)
+
+Identifying an arm is not the same as pricing it. `output_tokens` is reported
+per **API response**, and Claude Code writes one response as several JSONL
+entries — a `thinking` block, a `text` block, and one entry per `tool_use` —
+each stamped with the *same* `usage` figure and a *different* timestamp.
+
+The turn is therefore the `requestId`, not the timestamp. An arm's usage is
+attributable only when its response emitted that one `tool_use` block and
+nothing else. Prose, reasoning, and a second batched call are all billed to the
+same number, and none of them are the cost of the tool call.
+
+A non-isolable arm still matches — the matcher cannot see, and does not care,
+what else the response emitted. Context-token columns keep the real joined
+payload size; the usage column shows `—`. The arm is **not** re-seeded: `*`
+marks only an *absent* arm (S18). The run therefore reads as visibly incomplete
+on usage rather than quietly wrong on context cost. Only a fresh session can
+recover the usage number.
+
+This defect shipped for three revisions because isolability was keyed on the
+timestamp, which no real response shares across its entries. Measured over 400
+session files: **no** assistant record holds two `tool_use` blocks, while **245**
+`requestId`s do. The check for batched calls had never once fired on real data.
+
+The fixtures hid it. All four put every block of a response in a single record —
+a shape the runtime never emits — because they were authored from the same
+mental model as the matcher they were meant to test. Fixtures written that way
+supply confirmation, not verification. It is the third time this family of bug
+has surfaced here (see S17 arm identification, and the `name_path`/`comment`
+parameters serena never accepted), and the lesson has not changed: **pin
+fixtures to a shape observed in a real transcript, not to the one the code
+expects.**
+
+## Performing vs. mentioning a probe (S17)
 
 A sentinel is a bare string, so a call that *greps for* `TB_PROBE_01_BASH_V2`
 looks exactly like the call that *performs* probe 01's bash arm.
@@ -94,8 +127,8 @@ JSONL.** Do not score a session in which the probes were discussed, edited,
 or searched for.
 
 Each arm must be alone in its turn: `_usage_output_tokens` attributes real
-usage only when the turn holds exactly one `tool_use` block. Ten arms means
-ten turns. Do not batch them.
+usage only when the turn holds exactly one `tool_use` block and no non-tool
+output (S26). Ten arms means ten turns. Do not batch them.
 
 ## Seeded baselines are not measurements
 

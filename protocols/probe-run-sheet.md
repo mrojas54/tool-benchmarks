@@ -9,9 +9,11 @@ Everything you need is below. Copy each call exactly.
 
 ## The rules that make the run scoreable
 
-1. **One tool call per turn.** Ten arms, ten turns. `_usage_output_tokens`
-   attributes real usage only when a turn holds exactly one `tool_use` block.
-   If you batch two calls into one turn, both arms lose their usage numbers.
+1. **One tool call per turn.** Ten arms, ten turns. A *turn* here is one API
+   response — one `requestId` — not one JSONL record. `_usage_output_tokens`
+   attributes real usage only when that response emitted exactly one `tool_use`
+   block. If you batch two calls into one turn, both arms lose their usage
+   numbers.
 2. **Never type a sentinel except in the one bash command that owns it.** Do not
    echo one, do not grep for one, do not paste this sheet into a shell. A call
    naming two sentinels is discarded; a call naming one is *indistinguishable
@@ -19,6 +21,25 @@ Everything you need is below. Copy each call exactly.
 3. **Do not touch the corpus files with any other tool** during the run.
 4. **Say nothing to the user mid-run that requires a tool call.** Prose between
    turns is free; tool calls are not.
+5. **An arm turn carries the tool call and nothing else.** `output_tokens` is
+   billed against the whole API response, so a sentence of prose or a block of
+   reasoning emitted alongside the call is charged to the arm. Write your prose
+   in the turns *between* arms, where it costs the run nothing. Rule 4 says
+   prose between turns is free — this is the other half of that: prose *inside*
+   an arm turn is not.
+
+   The prose that kills an arm is rarely a paragraph. It is the transition
+   sentence — "precondition green, starting the ten arms now" — emitted in the
+   same response as turn 1's call, because announcing yourself feels natural at
+   exactly that boundary. **Your last prose of the run comes before turn 0, not
+   after it.** Once turn 0 passes, say nothing until turn 10 has returned. If
+   turn 0 fails, you may speak while you fix it; the run has not started.
+
+Rules 1 and 5 are enforced (S26). A non-isolable arm still matches and keeps its
+real context-token columns; only the usage cell shows `—`. It is **not**
+re-seeded — `*` marks an absent arm, not a contaminated one (S18). The run is
+not silently wrong, it is visibly incomplete on usage. Do not reach for
+`--allow-seeded` to hide it.
 
 Sentinels appear only in the bash arms. The tool arms carry none — serena's
 schemas have no field to put one in, and the matcher identifies them
@@ -53,6 +74,12 @@ end-to-end and matches nothing.
 
 Turn 0 is not an arm, carries no sentinel, and touches no corpus file. It does
 not count against the ten turns.
+
+It is not an invitation to narrate, either. Turn 0 passing is the *quietest*
+moment of the run, not a checkpoint to report: turn 1 follows immediately, and
+a word of acknowledgement between them lands inside turn 1's response and
+costs probe 01 its usage number (rule 5). Go straight from turn 0's result to
+turn 1's call.
 
 ## The ten turns
 
@@ -167,6 +194,13 @@ uv run python -m toolbench.probe --session <that path>
 Expect ten unseeded cells and no `*` in the table. If any cell is seeded, an arm
 did not match — do not paper over it with `--allow-seeded`. A fully-seeded table
 raises `SeededReportError` by design.
+
+Check the two usage columns as well. A `—` there means the arm matched but its
+response was not isolable: it batched a second call, or carried prose or
+reasoning (rules 1 and 5). The context-token columns are still good; the usage
+number for that arm is gone, and only a fresh session can recover it. An arm is
+spent once its call is in the transcript — re-running it adds a second match
+rather than replacing the first, which is the same reason turn 0 exists.
 
 ## Deviation from `active-probes.md`
 

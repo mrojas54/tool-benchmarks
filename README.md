@@ -66,8 +66,11 @@ raw roots + AgentsView exports
   per-tool reducers only, never a whole-corpus `list[ToolCall]`), then emits
   a five-section report: agent breakdown, tool leaderboard, model breakdown,
   inefficiency callouts, summary.
-- **`probe.py`** — runs matched tool-vs-Bash probe pairs over the vendored
-  corpus and emits a context-token comparison table under `reports/`.
+- **`probe.py`** — scores matched tool-vs-Bash probe pairs from a dedicated
+  session JSONL and emits a context-token + usage comparison table under
+  `reports/`. Tool arms match structurally (name + corpus target); bash arms
+  match by sentinel. Usage is attributed only when the API response is
+  isolable (one `tool_use`, no prose/reasoning — S26).
 
 ## Probe corpus
 
@@ -93,20 +96,23 @@ inputs.
 [`BUILDPLAN.md`](BUILDPLAN.md): the scaffold, the transcript parser, the
 multi-agent source layer, the passive analyzer, and the active probes.
 Post-merge hardening covers **TB-8** (subagent `--project` filter), **TB-9**
-(callout denominators), **TB-10** (non-UTF-8 / non-transcript exports), and
-**TB-11** (Hermes SQLite direct read — discovery still via AgentsView).
-The strict gate (`ruff`, `mypy --strict`, `unittest`) is green — **167**
-tests passing (1 skipped when `~/.hermes` is absent).
+(callout denominators), **TB-10** (non-UTF-8 / non-transcript exports),
+**TB-11** (Hermes SQLite direct read — discovery still via AgentsView), and
+probe isolability (**S26** / TB-14–16). The strict gate (`ruff`,
+`mypy --strict`, `unittest`) is green — **176** tests passing (1 skipped
+when the live hermes archive is absent).
 
 Source-of-truth documents:
 
-- [`SPEC.md`](SPEC.md) — 25 numbered acceptance criteria (S1–S25).
+- [`SPEC.md`](SPEC.md) — 26 numbered acceptance criteria (S1–S26).
 - [`EVALUATION.md`](EVALUATION.md) — verification map for every criterion.
 - [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the T1–T6 tickets.
 - [`docs/2026-07-07-tool-benchmarks-design.md`](docs/2026-07-07-tool-benchmarks-design.md)
   — full v2 design spec.
 - [`protocols/active-probes.md`](protocols/active-probes.md) — probe corpus,
-  sentinels, and the seeded `#8376` baseline table.
+  arm matching (S17), isolability (S26), and the seeded `#8376` baseline table.
+- [`protocols/probe-run-sheet.md`](protocols/probe-run-sheet.md) — executable
+  ten-turn operator run sheet for scoring a fresh probe session.
 
 ## Agents / targets
 
@@ -155,12 +161,24 @@ uv run python -m toolbench.passive --all --exclude-subagents --out reports/2026-
 
 # Active tool-vs-Bash probes. Score a dedicated probe session; without
 # --session every arm is seeded and the report is refused (SeededReportError).
+# Operator run sheet: protocols/probe-run-sheet.md (ten arms, ten turns).
 uv run python -m toolbench.probe --session /path/to/probe-session.jsonl --out reports/active-probe-comparison.md
 uv run python -m toolbench.probe --allow-seeded   # baseline table only; measures nothing
 
 # Tests
 uv run python -m unittest discover tests
 ```
+
+### Probe scoring pitfalls
+
+- **Fresh session only.** Mentions of sentinels, the run sheet, or
+  `toolbench/probe.py` are discarded as contamination (`MENTION_MARKERS`).
+- **One tool call per API response.** Usage is keyed by `requestId` (S26).
+  Batching, prose, or reasoning in an arm turn blanks the usage column (`—`)
+  while keeping real context tokens — it does **not** re-seed the cell.
+- **Turn 0 before arms.** Confirm serena has an active project with a
+  non-corpus target (`pyproject.toml`) so a failed arm call is not scored as
+  a successful match.
 
 ### `--index-source` policy
 
@@ -213,6 +231,7 @@ zero count omits the top-offender clause.
 | `Malformed lines` explodes into the hundreds of thousands | Binary export absorbed as text (would happen without the NUL sniff) | Should not occur on current code — binary payloads are rejected before parse. |
 | Empty selection message | No sessions matched filters, or all matched sessions were skipped | Check `--project` / `--since` / `--date-*`, and the skipped-roots suffix on the message. |
 | `toolbench.probe` without `--session` refuses to write | Seeded-only report is blocked (`SeededReportError`) | Pass `--session PATH`, or `--allow-seeded` for the baseline table only. |
+| Probe usage column shows `—` but context tokens are real | Arm matched, but the API response was not isolable (prose, thinking, or batched `tool_use` — S26) | Re-run from [`protocols/probe-run-sheet.md`](protocols/probe-run-sheet.md); one tool call per turn, no surrounding prose. |
 
 ## Quality gate
 

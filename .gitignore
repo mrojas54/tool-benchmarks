@@ -33,3 +33,6 @@ reports/
 # Lattice: the board is committed state. Ignore only machine-local runtime.
 .lattice/locks/
 .lattice/tmp-prompts/
+
+# Serena: per-machine project cache, memories, and local config.
+.serena/
