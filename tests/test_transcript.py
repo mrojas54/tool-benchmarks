@@ -2,10 +2,11 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+# S1/S2 join and payload-resolution moved to `parsers.py` in TB-13. The
+# assertions below are unchanged: only the import site moved.
+from toolbench.parsers import _result_id, _result_payload
 from toolbench.transcript import (
     ToolCall,
-    _result_id,
-    _result_payload,
     parse_session,
     result_len,
 )
