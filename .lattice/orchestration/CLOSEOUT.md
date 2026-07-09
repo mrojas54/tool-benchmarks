@@ -212,7 +212,8 @@ Violated **S13** and **S15**. Fixed in `tb-8-subagent-project-filter` (RED → G
 
    One binary (v0.36.1), one archive, an 8.9× disagreement between two of its own
    subsystems. The dropped sessions follow no source rule (701 cron, 18 tui, 5 cli).
-   `session list` is losing sessions, not curating them. Filed upstream.
+   `session list` is losing sessions, not curating them. Filed upstream as
+   kenn-io/agentsview#1048; the export bug is #1047.
 
    The decision survived the correction; only its justification changed. That is the
    tell — a rationale you would not have discovered to be false by re-reading your own

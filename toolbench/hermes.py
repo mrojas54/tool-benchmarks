@@ -13,7 +13,8 @@ and only routes the *read* through this module.
 
 Hermes is consequently under-sampled: `session list --agent hermes` returns 89 sessions
 where `agentsview stats --agent hermes` counts 789 from the same archive. That is an
-upstream defect, filed, and not one to route around here.
+upstream defect (kenn-io/agentsview#1048), not one to route around here. The export bug
+this module exists for is kenn-io/agentsview#1047.
 """
 
 from __future__ import annotations

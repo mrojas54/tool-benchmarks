@@ -121,9 +121,12 @@ would redefine the corpus for a single agent and skew every cross-agent rate.
 
 **Known limitation.** Hermes is under-sampled. `agentsview session list --agent
 hermes` reports 89 sessions while `agentsview stats --agent hermes` reports 789
-from the same archive — one binary, two subsystems, an 8.9× disagreement.
-That is an upstream defect ([TB-11](.lattice/plans/), filed against AgentsView),
-not a curation we should work around by forking discovery into one adapter.
+from the same archive — one binary, two subsystems, an 8.9× disagreement. That
+is an upstream defect
+([kenn-io/agentsview#1048](https://github.com/kenn-io/agentsview/issues/1048)),
+not a curation to work around by forking discovery into one adapter. The export
+bug this adapter exists for is
+[#1047](https://github.com/kenn-io/agentsview/issues/1047).
 
 ## Usage
 
