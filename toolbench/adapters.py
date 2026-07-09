@@ -10,10 +10,19 @@ seen, so detection is explicit and failure is loud.
 from __future__ import annotations
 
 import json
+from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from itertools import chain
 
 from toolbench.parsers import ClaudeParser, TranscriptParser
+from toolbench.sources import (
+    AgentsViewLoader,
+    RawFileLoader,
+    Runner,
+    SessionLoader,
+    SessionRef,
+)
+from toolbench.transcript import ParseResult
 
 # Ordered by nothing in particular: detection asserts exactly one parser claims a
 # line, so order cannot silently decide a tie. `CodexParser` joins here in TB-12.
@@ -76,3 +85,39 @@ def detect_parser(
     raise UnknownSchema(
         f"no registered parser claimed any of the first {seen} decodable lines"
     )
+
+
+class SessionAdapter(ABC):
+    """The single seam `passive.py` sees: a SessionRef becomes a ParseResult."""
+
+    @abstractmethod
+    def claims(self, ref: SessionRef) -> bool:
+        """True if this adapter is responsible for `ref`."""
+
+    @abstractmethod
+    def parse(self, ref: SessionRef) -> ParseResult: ...
+
+
+class ComposedAdapter(SessionAdapter):
+    """A loader and a content-detected parser, composed. The terminal fallback.
+
+    `claims` is unconditionally True: this adapter is last in the registry, and a
+    ref it cannot handle surfaces as `UnknownSchema` from `detect_parser` rather
+    than as a silent zero.
+    """
+
+    def __init__(self, runner: Runner | None = None) -> None:
+        self._runner = runner
+
+    def claims(self, ref: SessionRef) -> bool:
+        return True
+
+    def _loader(self, ref: SessionRef) -> SessionLoader:
+        if ref.path is not None:
+            return RawFileLoader()
+        return AgentsViewLoader(self._runner) if self._runner else AgentsViewLoader()
+
+    def parse(self, ref: SessionRef) -> ParseResult:
+        lines = self._loader(ref).lines(ref)
+        parser, replayed = detect_parser(lines)
+        return parser.parse(replayed, agent=ref.agent, source=ref.source, project=ref.project)
