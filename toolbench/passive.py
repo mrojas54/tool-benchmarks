@@ -9,24 +9,19 @@ corpus-wide `list[ToolCall]` is ever retained.
 from __future__ import annotations
 
 import argparse
-import os
 import sys
-import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
+from toolbench.registry import pick_adapter
 from toolbench.sources import (
     IndexSource,
-    NonTranscriptExport,
     Runner,
     SessionRef,
-    path_looks_binary,
     iter_sessions,
-    open_session_jsonl,
 )
-from toolbench.hermes import parse_hermes_session
-from toolbench.transcript import ParseResult, parse_session
+from toolbench.transcript import ParseResult
 
 OVERSIZED_OUTPUT_TOKENS = 5000
 SUBAGENT_TOOL_NAMES = frozenset({"Agent", "Task"})
@@ -92,8 +87,8 @@ class Reducer:
     def absorb(self, agent: str, result: ParseResult) -> None:
         """Fold one parsed session's calls into the running counters.
 
-        `result.calls` is a per-session list already produced by
-        `parse_session`; it is only ever iterated here and never retained.
+        `result.calls` is a per-session list already produced by the ref's
+        adapter; it is only ever iterated here and never retained.
         """
         self.sessions_scanned += 1
         self.malformed_total += result.malformed
@@ -307,32 +302,15 @@ def _discover_refs(
 
 
 def _parse_ref(ref: SessionRef, runner: Runner | None) -> ParseResult:
-    """Uniformly parse a raw or AgentsView-sourced session (S11 wiring)."""
-    if ref.agent == "hermes" and ref.path is None:
-        # `agentsview session export` returns rc=0 and the whole default-profile
-        # database for these, so read the archive directly instead (TB-11).
-        return parse_hermes_session(
-            ref.session_id, agent=ref.agent, source=ref.source, project=ref.project
-        )
+    """Uniformly parse any session (S11 wiring).
 
-    if ref.path is not None:
-        if path_looks_binary(ref.path):
-            raise NonTranscriptExport(f"non-transcript payload (binary content): {ref.path}")
-        return parse_session(ref.path, agent=ref.agent, source=ref.source, project=ref.project)
-
-    lines = open_session_jsonl(ref, runner=runner) if runner is not None else open_session_jsonl(ref)
-    # `lines` is a generator that may raise on first advance (bad returncode, binary
-    # payload). Bind tmp_path before writing so the delete=False file is always
-    # reclaimed, rather than stranded by an exception mid-loop.
-    tmp = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8")
-    tmp_path = tmp.name
-    try:
-        with tmp:
-            for line in lines:
-                tmp.write(line)
-        return parse_session(tmp_path, agent=ref.agent, source=ref.source, project=ref.project)
-    finally:
-        os.unlink(tmp_path)
+    Every branch this function used to own now lives in the registry: hermes
+    claims by source, everything else is content-detected. An unrecognized
+    schema raises `UnknownSchema` (a RuntimeError), which `main`'s per-session
+    guard demotes to `skipped_roots` -- so an unparseable agent is named in the
+    Summary instead of reported as an agent that did no tool work (TB-12).
+    """
+    return pick_adapter(ref, runner).parse(ref)
 
 
 def render_report(
