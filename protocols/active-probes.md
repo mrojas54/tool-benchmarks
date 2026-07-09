@@ -68,6 +68,36 @@ The fixtures concealed this by inventing parameters serena does not accept
 (`name_path`, `comment`). `ToolArmSchemaTests` now fails if any fixture uses a
 parameter outside serena's real schema.
 
+## What an arm's usage may include (S26)
+
+Identifying an arm is not the same as pricing it. `output_tokens` is reported
+per **API response**, and Claude Code writes one response as several JSONL
+entries — a `thinking` block, a `text` block, and one entry per `tool_use` —
+each stamped with the *same* `usage` figure and a *different* timestamp.
+
+The turn is therefore the `requestId`, not the timestamp. An arm's usage is
+attributable only when its response emitted that one `tool_use` block and
+nothing else. Prose, reasoning, and a second batched call are all billed to the
+same number, and none of them are the cost of the tool call.
+
+A contaminated arm still matches — the matcher cannot see, and does not care,
+what else the response emitted. It reports no usage instead: the cell falls back
+to the seeded baseline and is marked, so the run reads as visibly incomplete
+rather than quietly wrong. Only a fresh session can recover the number.
+
+This defect shipped for three revisions because isolability was keyed on the
+timestamp, which no real response shares across its entries. Measured over 400
+session files: **no** assistant record holds two `tool_use` blocks, while **245**
+`requestId`s do. The check for batched calls had never once fired on real data.
+
+The fixtures hid it. All four put every block of a response in a single record —
+a shape the runtime never emits — because they were authored from the same
+mental model as the matcher they were meant to test. Fixtures written that way
+supply confirmation, not verification. It is the third time this family of bug
+has surfaced here (see S20, and the `name_path`/`comment` parameters serena
+never accepted), and the lesson has not changed: **pin fixtures to a shape
+observed in a real transcript, not to the one the code expects.**
+
 ## Performing vs. mentioning a probe (S19)
 
 A sentinel is a bare string, so a call that *greps for* `TB_PROBE_01_BASH_V2`
