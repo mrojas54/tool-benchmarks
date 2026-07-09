@@ -131,3 +131,12 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   `--all --limit 200 --verbose` completes without unbounded memory;
   `--index-source auto --limit 20` completes via AgentsView or falls back to
   raw and states the reason.
+
+## Schema dispatch (TB-13)
+
+- **S26 — schema dispatch.** `detect_parser` sniffs up to 100 non-empty lines
+  and returns the single parser whose `claims_line` matches. Two matches raise
+  `AmbiguousSchema`; zero matches raise `UnknownSchema`. Both subclass
+  `RuntimeError`, so `passive.main` demotes the session to `skipped_roots`.
+- **S27 — no parser is the default.** An unrecognized transcript is never parsed
+  by `ClaudeParser`, and never reported as an agent with zero tool calls.

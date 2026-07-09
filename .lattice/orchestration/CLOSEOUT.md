@@ -289,6 +289,50 @@ machinery" (rejected) — the old helper collapsed both to `None`.
 requires a dedicated session, and any session that discussed or edited the probes —
 including the one that produced this fix — is disqualified by the S19 rule.
 
+## TB-13 — the schema-dispatch seam
+
+`parse_session` was the unnamed default for every transcript that was not hermes.
+A codex session flowed into it, matched nothing, and returned
+`ParseResult(calls=[], malformed=0)`. The report then printed `codex | 60 | 0` —
+a zero that meant "I could not read this" rendered identically to a zero that
+meant "this agent used no tools." That is TB-12's whole bug class, and no codex
+parser fixes it: the defect is that an unrecognized schema had a fallback at all.
+
+Three layers now, two of them orthogonal: `SessionLoader` (acquisition) and
+`TranscriptParser` (schema), composed behind `SessionAdapter`. Dispatch is by
+**content, not by producer** — `cowork` emits Claude's exact schema and parses
+today with zero registry entries of its own; an agent-keyed registry would need an
+entry for every present and future agent that happens to speak a schema we already
+handle. Hermes is the deliberate exception: it is a SQLite read with no lines, so
+it claims by source. An unrecognized transcript raises `UnknownSchema`, a
+`RuntimeError`, which `passive.main`'s existing guard demotes to `skipped_roots` —
+no edit to that guard.
+
+The `NamedTemporaryFile` round-trip in `_parse_ref` is gone. It existed only
+because `parse_session` demanded a *path*; what the code needed was one line of
+lookahead, which `itertools.chain` supplies. `_parse_ref` is now one line.
+
+**Acceptance, on a frozen corpus** (`--date-to 2026-07-08`, both binaries, same
+closed window — an open window drifts, because the archive grows during the run):
+
+| agent | before | after |
+|---|---|---|
+| claude | 1347 sessions, 3303 calls | **identical** |
+| cowork | 355 sessions, 17914 calls | **identical** |
+| hermes | 94 sessions, 1373 calls | **identical** |
+| codex | 60 sessions, **0 calls** | row gone → 60 in `skipped_roots` |
+| cursor | 47 sessions, **0 calls** | row gone → 47 in `skipped_roots` |
+
+`Sessions scanned` 1903 → 1796 (exactly the 107 skipped); `Tool calls joined`
+unchanged at 22590, because the dropped sessions were contributing nothing. The
+zero did not disappear — it got attributed.
+
+213 tests, ruff clean, mypy --strict clean. Three plan defects were caught in
+execution and recorded in the design doc's "Corrections found while executing":
+`test_transcript.py` could not stay untouched, S24/S25 were already taken, and the
+measured claim depth is 1 rather than 0. TB-12 now shrinks to: add `CodexParser`,
+register it in `PARSERS`, delete the fixture test that pins codex as unknown.
+
 ## Config decisions (see run-state.md decision log)
 - Delegators Sonnet; Result Validator downgraded Opus→Sonnet at 76% weekly usage.
 - Leave-at-review (no auto-merge). One delegate pane (well under surface cap).
