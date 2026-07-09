@@ -35,9 +35,11 @@ Everything you need is below. Copy each call exactly.
    after it.** Once turn 0 passes, say nothing until turn 10 has returned. If
    turn 0 fails, you may speak while you fix it; the run has not started.
 
-Rules 1 and 5 are enforced (S26). A contaminated arm still matches, but reports
-no usage: its cell shows the seeded baseline, marked. The run is not silently
-wrong, it is visibly incomplete. Do not reach for `--allow-seeded` to hide it.
+Rules 1 and 5 are enforced (S26). A non-isolable arm still matches and keeps its
+real context-token columns; only the usage cell shows `—`. It is **not**
+re-seeded — `*` marks an absent arm, not a contaminated one (S18). The run is
+not silently wrong, it is visibly incomplete on usage. Do not reach for
+`--allow-seeded` to hide it.
 
 Sentinels appear only in the bash arms. The tool arms carry none — serena's
 schemas have no field to put one in, and the matcher identifies them

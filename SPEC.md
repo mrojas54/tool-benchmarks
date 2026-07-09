@@ -30,8 +30,9 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 
 - **S7 — raw discovery.** `iter_session_files(root="~/.claude/projects",
   project=None, since=None)` yields Claude Code JSONL paths, filtered by
-  parent-dir-name substring (`project`) and file mtime (`since`, ISO-8601);
-  raises `FileNotFoundError` if `root` is missing.
+  owning-project-dir substring (`project in rel.parts[0]`, so
+  `<project>/subagents/*.jsonl` still matches — TB-8) and file mtime
+  (`since`, ISO-8601); raises `FileNotFoundError` if `root` is missing.
 - **S8 — AgentsView listing.** `iter_agentsview_sessions(agent="all", …)`
   pages `agentsview session list --json --limit 500` with **cursor
   pagination** and yields `SessionRef(agent, source, project, session_id,
@@ -94,13 +95,25 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   five relative paths, and each probe is a matched tool-vs-Bash pair over one
   of them. Probe *output* (the comparison table, token measurements) is
   written under `reports/`, never mixed with inputs.
-- **S17 — sentinels.** Globally unique per arm (`TB_PROBE_*_V2`), none a
-  substring of another; `find_probe_calls` verifies both the sentinel and
-  the expected tool name.
-- **S18 — comparison table.** Emits context-tokens per matched arm plus real
-  `usage` tokens when the turn is isolable; seeded with #8376 baselines
-  (`search` 723 serena / 794 Bash; `find` 68 serena / 89 Bash) when an arm
-  is absent.
+- **S17 — arm identification.** Globally unique per-arm sentinels
+  (`TB_PROBE_*_V2`), none a substring of another. The two arms leave
+  different evidence, so they match differently (TB-15):
+  - **Tool arm** — structurally: an accepted tool name
+    (`mcp__plugin_serena_serena__…` or bare `mcp__serena__…`) plus the
+    corpus *target* basename in the call input. Serena's schemas have no
+    inert free-text field, so a tool arm carries no required sentinel.
+  - **Bash arm** — by its own bash sentinel in the command text.
+  A call is discarded when it trips `MENTION_MARKERS` (transcript corpus /
+  probe source / run sheet), names more than one sentinel, or (for a tool
+  arm) carries some *other* probe's sentinel. Matching an arm is not the
+  same as pricing it — see S26.
+- **S18 — comparison table.** Emits context-tokens per matched arm plus
+  real `usage.output_tokens` when the turn is isolable (S26). An absent
+  arm is seeded with #8376 baselines (`search` 723 serena / 794 Bash;
+  `find` 68 serena / 89 Bash) and marked `*`. A matched but non-isolable
+  arm keeps its real context tokens and shows `—` for usage — it is **not**
+  re-seeded. A fully-seeded table raises `SeededReportError` unless
+  `--allow-seeded`.
 
 ## Metrics, quality, errors
 
@@ -127,16 +140,33 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   block-list, a **block-local `content`** payload, an interrupted (no-result)
   call, and a malformed line. `test_sources.py` uses a **fake `agentsview`
   runner** so pagination + arg construction are tested without the daemon.
+  Probe fixtures must pin shapes observed in real transcripts (multi-entry
+  `requestId` responses, real serena parameter schemas) — not the shape the
+  matcher expects.
 - **S25 — acceptance smoke.** A `--project` slice reports parsed counts;
   `--all --limit 200 --verbose` completes without unbounded memory;
   `--index-source auto --limit 20` completes via AgentsView or falls back to
   raw and states the reason.
+- **S26 — response-pooled isolability.** `output_tokens` is billed per API
+  response. Claude Code writes one response as several JSONL entries
+  (`thinking` / `text` / each `tool_use`) that share a `requestId` and a
+  single `usage` figure but carry distinct timestamps. A turn is therefore
+  the `requestId` (falling back to timestamp when absent). An arm's usage is
+  attributable only when that response emitted exactly one `tool_use` and no
+  non-empty `text` / `thinking` / `redacted_thinking` block. Batching,
+  prose, or reasoning in the arm turn keeps the match and the context-token
+  columns, and blanks usage (`—`). Only a fresh session recovers the number
+  (TB-16).
 
-## Schema dispatch (TB-13)
+## Schema dispatch — `toolbench/adapters.py` + `toolbench/registry.py`
 
-- **S26 — schema dispatch.** `detect_parser` sniffs up to 100 non-empty lines
+- **S27 — schema dispatch.** `detect_parser` sniffs up to 100 non-empty lines
   and returns the single parser whose `claims_line` matches. Two matches raise
   `AmbiguousSchema`; zero matches raise `UnknownSchema`. Both subclass
   `RuntimeError`, so `passive.main` demotes the session to `skipped_roots`.
-- **S27 — no parser is the default.** An unrecognized transcript is never parsed
-  by `ClaudeParser`, and never reported as an agent with zero tool calls.
+  Hermes claims by source (`agent == "hermes" and path is None`) because it is a
+  SQLite read with no lines; every other session is claimed by content, since
+  schema is a property of the payload, not of the producer (TB-13).
+- **S28 — no parser is the default.** An unrecognized transcript is never parsed
+  by `ClaudeParser`, and never reported as an agent with zero tool calls. `codex`
+  and `cursor` land in `skipped_roots` pending a `CodexParser` (TB-12).

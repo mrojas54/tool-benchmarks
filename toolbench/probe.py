@@ -1,4 +1,4 @@
-"""Active probes: tool-vs-Bash comparison over the vendored corpus (S16-S19)."""
+"""Active probes: tool-vs-Bash comparison over the vendored corpus (S16-S18, S26)."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def _spec(id_: str, corpus_path: str, task: str, serena_tool: str) -> ProbeSpec:
     recorded as `mcp__plugin_serena_serena__find_file`. A bare install would
     record `mcp__serena__find_file`. Both are accepted; matching stays exact.
 
-    `target` is the corpus basename. It is what identifies the tool arm (S20):
+    `target` is the corpus basename. It is what identifies the tool arm (S17):
     a tool arm cannot carry a sentinel, because serena's schemas have no inert
     free-text field to park one in.
     """
@@ -239,7 +239,7 @@ def find_probe_calls(
     """Join each arm of each probe to a `ToolCall`, by the evidence that arm can leave.
 
     The two arms are identified differently, because they can carry different
-    evidence (S20):
+    evidence (S17):
 
     * The **tool arm** is matched *structurally*: an accepted tool name plus the
       corpus target in the input. Serena's schemas (`find_file` takes exactly
@@ -263,8 +263,8 @@ def find_probe_calls(
     Matching an arm is separate from *pricing* it. An arm's `output_tokens` is
     attributable only when its whole API response emitted that one `tool_use`
     block and nothing else -- no second call, no prose, no reasoning (S26). A
-    contaminated arm still matches; it simply reports no usage, so the table
-    falls back to the seeded baseline and marks the cell.
+    non-isolable arm still matches and keeps its real context tokens; usage
+    renders as `—`. It is not re-seeded -- `*` marks only an absent arm.
     """
     scan = _scan_tool_use_blocks(path)
 

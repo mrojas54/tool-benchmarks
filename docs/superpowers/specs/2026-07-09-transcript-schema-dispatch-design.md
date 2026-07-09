@@ -272,10 +272,14 @@ should be amended to match this spec.
    both could not hold. The import site was repointed at `toolbench.parsers`; every
    assertion is unchanged, so the S1/S2 behavioural pin survives intact.
 
-8. **S24/S25 were already taken.** The plan directed new acceptance criteria to be
-   filed as S24 (schema dispatch) and S25 (no default parser). `SPEC.md` already
-   defines S24 (fixtures) and S25 (acceptance smoke). Filed as **S26/S27** instead;
-   following the plan literally would have overwritten two live criteria.
+8. **S24/S25 were already taken — and then S26 was too.** The plan directed new
+   acceptance criteria to be filed as S24 (schema dispatch) and S25 (no default
+   parser). `SPEC.md` already defines S24 (fixtures) and S25 (acceptance smoke), so
+   they were first written as S26/S27. While this branch was in flight, PR #17
+   merged TB-16's **S26** (response-pooled isolability) to `main`, colliding again.
+   Final numbers are **S27/S28**, resolved in the merge of `origin/main`. Acceptance
+   IDs are append-only and shared across concurrent branches; check `main` at merge
+   time, not just at plan time.
 
 9. **Claim depth is 1, not 0.** The plan's `DETECT_WINDOW` comment asserted a
    measured max depth of 0 across 40 sessions. Measured across all 2,142 loadable

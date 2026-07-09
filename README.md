@@ -94,10 +94,13 @@ matched nothing, and reported a healthy zero. `codex` and `cursor` land in
   scanning, recording the reason.
 - **`passive.py`** — streams and aggregates **incrementally** (per-agent /
   per-tool reducers only, never a whole-corpus `list[ToolCall]`), then emits
-  a four-section report: agent breakdown, tool leaderboard, inefficiency
-  callouts, summary.
-- **`probe.py`** — runs matched tool-vs-Bash probe pairs over the vendored
-  corpus and emits a context-token comparison table under `reports/`.
+  a five-section report: agent breakdown, tool leaderboard, model breakdown,
+  inefficiency callouts, summary.
+- **`probe.py`** — scores matched tool-vs-Bash probe pairs from a dedicated
+  session JSONL and emits a context-token + usage comparison table under
+  `reports/`. Tool arms match structurally (name + corpus target); bash arms
+  match by sentinel. Usage is attributed only when the API response is
+  isolable (one `tool_use`, no prose/reasoning — S26).
 
 ## Probe corpus
 
@@ -122,17 +125,20 @@ inputs.
 **Implemented.** `toolbench/` ships all of tickets **T1–T6** in
 [`BUILDPLAN.md`](BUILDPLAN.md): the scaffold, the transcript parser, the
 multi-agent source layer, the passive analyzer, and the active probes. The
-strict gate (`ruff`, `mypy --strict`, `unittest`) is green — 213 tests passing.
+strict gate (`ruff`, `mypy --strict`, `unittest`) is green — 213 tests
+passing (1 skipped when the live hermes archive is absent).
 
 Source-of-truth documents:
 
-- [`SPEC.md`](SPEC.md) — 25 numbered acceptance criteria (S1–S25).
+- [`SPEC.md`](SPEC.md) — 28 numbered acceptance criteria (S1–S28).
 - [`EVALUATION.md`](EVALUATION.md) — verification map for every criterion.
 - [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the T1–T6 tickets.
 - [`docs/2026-07-07-tool-benchmarks-design.md`](docs/2026-07-07-tool-benchmarks-design.md)
   — full v2 design spec.
 - [`protocols/active-probes.md`](protocols/active-probes.md) — probe corpus,
-  sentinels, and the seeded `#8376` baseline table.
+  arm matching (S17), isolability (S26), and the seeded `#8376` baseline table.
+- [`protocols/probe-run-sheet.md`](protocols/probe-run-sheet.md) — executable
+  ten-turn operator run sheet for scoring a fresh probe session.
 
 ## Agents / targets
 
@@ -181,12 +187,24 @@ uv run python -m toolbench.passive --all --exclude-subagents --out reports/2026-
 
 # Active tool-vs-Bash probes. Score a dedicated probe session; without
 # --session every arm is seeded and the report is refused (SeededReportError).
+# Operator run sheet: protocols/probe-run-sheet.md (ten arms, ten turns).
 uv run python -m toolbench.probe --session /path/to/probe-session.jsonl --out reports/active-probe-comparison.md
 uv run python -m toolbench.probe --allow-seeded   # baseline table only; measures nothing
 
 # Tests
 uv run python -m unittest discover tests
 ```
+
+### Probe scoring pitfalls
+
+- **Fresh session only.** Mentions of sentinels, the run sheet, or
+  `toolbench/probe.py` are discarded as contamination (`MENTION_MARKERS`).
+- **One tool call per API response.** Usage is keyed by `requestId` (S26).
+  Batching, prose, or reasoning in an arm turn blanks the usage column (`—`)
+  while keeping real context tokens — it does **not** re-seed the cell.
+- **Turn 0 before arms.** Confirm serena has an active project with a
+  non-corpus target (`pyproject.toml`) so a failed arm call is not scored as
+  a successful match.
 
 ### `--index-source` policy
 

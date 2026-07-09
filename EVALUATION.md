@@ -41,8 +41,8 @@ One row per SPEC criterion, each tagged by how it is verified:
 | S14 | five report sections present (incl. per-model breakdown) | `autonomous` | `test` (report string) |
 | S15 | report provenance fields present | `autonomous` | `test` (report string) |
 | S16 | exact 5 corpus paths listed | `operator-assisted` | inspect `active-probes.md` vs real dir |
-| S17 | sentinel + tool-name verification | `autonomous` | `test` (probe fixture) |
-| S18 | comparison table + seeded fallback | `autonomous` | `test` |
+| S17 | structural tool-arm match + bash sentinel; contamination guards | `autonomous` | `test` (probe fixtures) |
+| S18 | comparison table + seeded fallback + SeededReportError | `autonomous` | `test` |
 | S19 | context-cost ranking; cache caveat-only | `autonomous` | `test` |
 | S20 | stdlib runtime; uv project shape | `autonomous` | `test` + import-scan + `pyproject.toml` |
 | S21 | entry points run | `autonomous` | smoke via `uv run python -m …` |
@@ -50,6 +50,7 @@ One row per SPEC criterion, each tagged by how it is verified:
 | S23 | exit-code contract | `autonomous` | `test` (argv, tmp roots) |
 | S24 | fixtures + fake runner present | `autonomous` | `test` |
 | S25 | acceptance smoke completes | `operator-assisted` / `external-oracle` | `test:full` |
+| S26 | requestId-keyed isolability; prose/thinking/batch blank usage | `autonomous` | `test` (prose + pooled fixtures) |
 
 ## Operator post-merge smoke checkpoints (human-driven)
 
@@ -61,5 +62,9 @@ One row per SPEC criterion, each tagged by how it is verified:
    `--index-source auto --limit 20`; then stop the daemon and confirm the
    fallback-to-raw path and that the report names the reason.
 3. **Scale (S11).** `--all --limit 200 --verbose` completes with flat memory.
-4. **Report reads well (`felt`).** The four-section report is scannable and
+4. **Report reads well (`felt`).** The five-section report is scannable and
    the inefficiency callouts are actionable, not noise.
+5. **Probe isolability (S26).** Score a dedicated probe session with
+   `toolbench.probe --session …`. Expect ten unseeded context-token cells and
+   real usage numbers (not `—`). A `—` in usage with unseeded context tokens
+   means the arm matched but its response was not isolable.

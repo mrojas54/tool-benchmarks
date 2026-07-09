@@ -54,7 +54,7 @@ parallel (T2, T3), then the two consumers (T4, T5), then docs + gate (T6).
 2. **Substrate (T2 ∥ T3)** — parser joins both key/payload shapes; sources
    page AgentsView via the fake runner. The **join-key on real data**
    (operator checkpoint #1) is de-risked here by the block-local fixture.
-3. **Consumers (T4 ∥ T5)** — passive emits the four-section report from a
+3. **Consumers (T4 ∥ T5)** — passive emits the five-section report from a
    streamed reducer; probe scores the seeded table.
 4. **Gate (T6)** — strict gate green, README written, PRs opened.
 
