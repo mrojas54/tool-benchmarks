@@ -15,6 +15,12 @@ from typing import ClassVar
 
 from toolbench.transcript import ParseResult, ToolCall, UsageProvenance, result_len
 
+# `hermes sessions export --format trace` stamps this on every record. It is a
+# positive producer declaration, not an inference from a missing field: verified
+# on every trace record, and absent as a top-level `version` from all 4,061 real
+# claude transcripts in the local archive.
+HERMES_TRACE_VERSION = "hermes-agent"
+
 
 @dataclass
 class _PendingCall:
@@ -81,7 +87,12 @@ class ClaudeParser(TranscriptParser):
         # `tool_use` itself is NOT a usable discriminator: line 0 is a
         # `last-prompt` / `mode` record, and a session that used no tools has
         # no `tool_use` block anywhere.
-        return "sessionId" in entry
+        #
+        # `version` excludes hermes trace exports, which are claude-SHAPED but
+        # have a different producer and different guarantees. Detection asserts
+        # exactly one parser claims a line, so this predicate must not overlap
+        # HermesTraceParser's.
+        return "sessionId" in entry and entry.get("version") != HERMES_TRACE_VERSION
 
     @classmethod
     def _provenance(cls, usage: object) -> UsageProvenance:
@@ -215,3 +226,29 @@ class ClaudeParser(TranscriptParser):
             )
 
         return ParseResult(calls=calls, malformed=malformed)
+
+
+class HermesTraceParser(ClaudeParser):
+    """`hermes sessions export --format trace`: the claude schema, a different producer.
+
+    Inherits the entire parse path -- the export really is claude-shaped, which is
+    why a lone ClaudeParser once swallowed it silently (TB-18). What differs is the
+    guarantee: the trace serializer drops `message.usage` and `requestId`, so every
+    call it yields has an unmeasurable usage channel. Because the producer declares
+    itself in `version`, this parser can name the cause rather than merely observe
+    the absence.
+
+    `requestId` is likewise absent. That is `probe.py`'s problem, not this parser's;
+    see S30.
+    """
+
+    schema_tag: ClassVar[str] = "hermes-trace"
+
+    @classmethod
+    def claims_line(cls, entry: dict[str, object]) -> bool:
+        return "sessionId" in entry and entry.get("version") == HERMES_TRACE_VERSION
+
+    @classmethod
+    def _provenance(cls, usage: object) -> UsageProvenance:
+        # Unconditional: trace never carries usage, so this must not consult the value.
+        return UsageProvenance.ABSENT_BY_EXPORT

@@ -56,7 +56,7 @@ def test_claude_parser_is_a_transcript_parser():
     assert ClaudeParser.schema_tag == "claude"
 
 
-def test_hermes_trace_parses_cleanly_and_stamps_absent_by_export():
+def test_hermes_trace_parses_cleanly_and_stamps_absent_by_export() -> None:
     """The hazard: it parses, raises nothing, reports 0 malformed -- and has no usage."""
     lines = (FIXTURES / "schema_hermes_trace.jsonl").read_text(encoding="utf-8").splitlines(
         keepends=True
@@ -70,7 +70,7 @@ def test_hermes_trace_parses_cleanly_and_stamps_absent_by_export():
     assert call.usage_provenance is UsageProvenance.ABSENT_BY_EXPORT
 
 
-def test_hermes_trace_provenance_ignores_a_usage_dict_entirely():
+def test_hermes_trace_provenance_ignores_a_usage_dict_entirely() -> None:
     """Unconditional: trace never carries usage, so the arm cannot depend on the value."""
     assert HermesTraceParser._provenance({"input_tokens": 5}) is UsageProvenance.ABSENT_BY_EXPORT
     assert HermesTraceParser._provenance(None) is UsageProvenance.ABSENT_BY_EXPORT

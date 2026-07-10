@@ -114,29 +114,29 @@ def test_golden_cowork_fixture_drains_its_unmatched_call():
     assert result.calls[0].no_result is True  # S6
 
 
-def test_hermes_trace_fixture_detects_as_hermes_trace_not_claude():
+def test_hermes_trace_fixture_detects_as_hermes_trace_not_claude() -> None:
     parser, _ = detect_parser(_lines("schema_hermes_trace.jsonl"))
     assert type(parser) is HermesTraceParser
 
 
-def test_claude_and_hermes_trace_predicates_partition():
+def test_claude_and_hermes_trace_predicates_partition() -> None:
     """detect_parser raises AmbiguousSchema if two parsers claim one line, so these
     two predicates must never overlap. Verified against the whole local archive:
     0 of 4,061 real transcripts carry a top-level version of "hermes-agent"."""
-    claude_line = {"sessionId": "s1", "version": "2.1.205"}
-    trace_line = {"sessionId": "s1", "version": "hermes-agent"}
+    claude_line: dict[str, object] = {"sessionId": "s1", "version": "2.1.205"}
+    trace_line: dict[str, object] = {"sessionId": "s1", "version": "hermes-agent"}
     assert ClaudeParser.claims_line(claude_line)
     assert not HermesTraceParser.claims_line(claude_line)
     assert HermesTraceParser.claims_line(trace_line)
     assert not ClaudeParser.claims_line(trace_line)
 
 
-def test_claude_claims_a_line_with_no_version_field():
+def test_claude_claims_a_line_with_no_version_field() -> None:
     """Real transcripts open with a preamble record that carries no `version`.
     Measured: 400 of 400 sampled transcripts have no `version` on line 1, and
     detect_parser decides on the first line a single parser claims."""
     assert ClaudeParser.claims_line({"sessionId": "s1"})
 
 
-def test_hermes_trace_needs_session_id_too():
+def test_hermes_trace_needs_session_id_too() -> None:
     assert not HermesTraceParser.claims_line({"version": "hermes-agent"})
