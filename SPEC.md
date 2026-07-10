@@ -231,17 +231,41 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 - **S33 — the codex schema is parsed, not skipped.** `CodexParser` claims a line
   whose top-level `type` is one of codex's record kinds (`session_meta`,
   `response_item`, `event_msg`, `turn_context`, `compacted`) and whose `payload`
-  is an object. It joins `function_call` → `function_call_output` and
-  `custom_tool_call` → `custom_tool_call_output` on `payload.call_id` — never
-  `tool_use_id`. `input_chars` is read from `arguments` for `function_call` and
-  from `input` for `custom_tool_call`; the two shapes differ in that field alone.
-  `session_id` is lifted from `session_meta` and `model` from the most recent
-  preceding `turn_context`, since neither appears on the call record. Every
-  resulting `ToolCall` carries `usage=None` with `UsageProvenance.ABSENT_BY_SCHEMA`:
-  codex reports tokens as per-turn `token_count` events, and a turn holds many
-  calls, so no per-call attribution exists to read (S29). `error` is always `None` —
-  codex encodes exit status in the output text and reports `status: completed`
-  even for a failed tool, so no error flag is inferred from prose. Unmatched calls
-  at EOF keep S6's `no_result` semantics. The claim predicate is disjoint from
-  `ClaudeParser`'s and `HermesTraceParser`'s, so `AmbiguousSchema` never fires
-  between them (TB-12).
+  is an object. It joins **three** paired call shapes on `payload.call_id` — never
+  `tool_use_id`. The shapes agree on the join key and on nothing else, so each
+  declares its own input field, output field, and name source:
+
+  | call | input field | output record | output field | name |
+  |---|---|---|---|---|
+  | `function_call` | `arguments` (JSON string) | `function_call_output` | `output` | `payload.name` |
+  | `custom_tool_call` | `input` (string) | `custom_tool_call_output` | `output` | `payload.name` |
+  | `tool_search_call` | `arguments` (object) | `tool_search_output` | `tools` | *none* → `ToolSearch` |
+
+  Reading `arguments` for `custom_tool_call` would zero every `apply_patch`'s
+  input size; requiring `payload.name` would skip `tool_search_call`, which has
+  no name field, silently dropping it and understating the deferral tax (S19)
+  that `Reducer` keys on the literal name `ToolSearch`.
+
+  A session is identified by the first `session_meta`'s **`id`** — the rollout's
+  own identity. Not `payload.session_id`, which is absent from older rollouts and
+  names the *parent* thread in a subagent rollout; keying on it would stamp calls
+  with an empty identifier and collapse subagent rollouts into their parents.
+  `model` comes from the most recent preceding `turn_context`, since it appears on
+  no call record and may change between turns.
+
+  Every resulting `ToolCall` carries `usage=None` with
+  `UsageProvenance.ABSENT_BY_SCHEMA`: codex reports tokens as per-turn
+  `token_count` events, and a turn holds many calls, so no per-call attribution
+  exists to read (S29). `error` is always `None` — codex encodes exit status in the
+  output text and reports `status: completed` even for a failed tool, so no error
+  flag is inferred from prose. Unmatched calls at EOF keep S6's `no_result`
+  semantics. `SUBAGENT_TOOL_NAMES` includes codex's fan-out primitive
+  `spawn_agent` (but not `wait_agent`, which awaits an already-spawned subagent),
+  so the fan-out callout is no longer measured with its most relevant agent absent.
+
+  `web_search_call` is **not** claimed: it carries no `call_id` and has no matching
+  output record, so this parser's join key cannot reach it. It is a real tool call
+  that codex reporting omits, tracked as TB-24 rather than papered over.
+
+  The claim predicate is disjoint from `ClaudeParser`'s and `HermesTraceParser`'s,
+  so `AmbiguousSchema` never fires between them (TB-12).

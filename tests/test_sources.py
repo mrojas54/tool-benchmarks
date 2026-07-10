@@ -338,14 +338,14 @@ def _ok(stdout: str) -> "subprocess.CompletedProcess[str]":
     return subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr="")
 
 
-def test_raw_file_loader_yields_lines(tmp_path):
+def test_raw_file_loader_yields_lines(tmp_path: Path) -> None:
     p = tmp_path / "s.jsonl"
     p.write_text('{"a":1}\n{"b":2}\n', encoding="utf-8")
     ref = SessionRef(agent="claude", source="raw", project="p", session_id="s", path=str(p))
     assert list(RawFileLoader().lines(ref)) == ['{"a":1}\n', '{"b":2}\n']
 
 
-def test_raw_file_loader_rejects_binary_before_any_parse(tmp_path):
+def test_raw_file_loader_rejects_binary_before_any_parse(tmp_path: Path) -> None:
     p = tmp_path / "s.db"
     p.write_bytes(b"SQLite format 3\x00rest")
     ref = SessionRef(agent="hermes", source="raw", project="p", session_id="s", path=str(p))
@@ -353,27 +353,27 @@ def test_raw_file_loader_rejects_binary_before_any_parse(tmp_path):
         list(RawFileLoader().lines(ref))
 
 
-def test_raw_file_loader_decodes_leniently(tmp_path):
+def test_raw_file_loader_decodes_leniently(tmp_path: Path) -> None:
     p = tmp_path / "s.jsonl"
     p.write_bytes(b'{"a":"\xa0"}\n')  # stray non-UTF-8 byte
     ref = SessionRef(agent="claude", source="raw", project="p", session_id="s", path=str(p))
     assert list(RawFileLoader().lines(ref)) == ['{"a":"�"}\n']
 
 
-def test_agentsview_loader_yields_lines():
+def test_agentsview_loader_yields_lines() -> None:
     ref = SessionRef(agent="codex", source="agentsview", project="p", session_id="c:1", path=None)
     loader = AgentsViewLoader(runner=lambda argv: _ok('{"a":1}\n{"b":2}\n'))
     assert list(loader.lines(ref)) == ['{"a":1}\n', '{"b":2}\n']
 
 
-def test_agentsview_loader_rejects_binary_payload():
+def test_agentsview_loader_rejects_binary_payload() -> None:
     ref = SessionRef(agent="hermes", source="agentsview", project="p", session_id="h:1", path=None)
     loader = AgentsViewLoader(runner=lambda argv: _ok("SQLite format 3\x00junk"))
     with pytest.raises(NonTranscriptExport):
         list(loader.lines(ref))
 
 
-def test_agentsview_loader_raises_on_nonzero_returncode():
+def test_agentsview_loader_raises_on_nonzero_returncode() -> None:
     ref = SessionRef(agent="codex", source="agentsview", project="p", session_id="c:1", path=None)
     bad = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="boom")
     loader = AgentsViewLoader(runner=lambda argv: bad)
@@ -381,7 +381,7 @@ def test_agentsview_loader_raises_on_nonzero_returncode():
         list(loader.lines(ref))
 
 
-def test_loaders_are_session_loaders():
+def test_loaders_are_session_loaders() -> None:
     assert issubclass(RawFileLoader, SessionLoader)
     assert issubclass(AgentsViewLoader, SessionLoader)
 

@@ -1,4 +1,4 @@
-{"type":"session_meta","timestamp":"t0","payload":{"session_id":"c1","id":"c1","cli_version":"0.9.1","model_provider":"openai"}}
+{"type":"session_meta","timestamp":"t0","payload":{"id":"c1","session_id":"parent1","parent_thread_id":"parent1","cli_version":"0.9.1","model_provider":"openai"}}
 {"type":"event_msg","timestamp":"t1","payload":{"type":"agent_message"}}
 {"type":"turn_context","timestamp":"t2","payload":{"turn_id":"turn_1","model":"gpt-5.5","cwd":"/repo"}}
 {"type":"response_item","timestamp":"t3","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"hi"}]}}
@@ -7,4 +7,6 @@
 {"type":"event_msg","timestamp":"t6","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":25640,"output_tokens":457}}}}
 {"type":"response_item","timestamp":"t7","payload":{"type":"custom_tool_call","id":"ctc_01","status":"completed","call_id":"call_beta","name":"apply_patch","input":"*** Begin Patch"}}
 {"type":"response_item","timestamp":"t8","payload":{"type":"custom_tool_call_output","call_id":"call_beta","output":"Success."}}
-{"type":"response_item","timestamp":"t9","payload":{"type":"function_call","id":"fc_02","name":"write_stdin","arguments":"{}","call_id":"call_orphan"}}
+{"type":"response_item","timestamp":"t9","payload":{"type":"tool_search_call","call_id":"call_gamma","status":"completed","execution":"client","arguments":{"query":"github pr","limit":8}}}
+{"type":"response_item","timestamp":"t10","payload":{"type":"tool_search_output","call_id":"call_gamma","status":"completed","execution":"client","tools":[{"type":"function","name":"_create_pull_request"}]}}
+{"type":"response_item","timestamp":"t11","payload":{"type":"function_call","id":"fc_02","name":"write_stdin","arguments":"{}","call_id":"call_orphan"}}

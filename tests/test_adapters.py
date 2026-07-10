@@ -1,5 +1,6 @@
 """Schema detection over a bounded window (TB-13, Task 2)."""
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -14,11 +15,11 @@ from toolbench.parsers import ClaudeParser, CodexParser, HermesTraceParser
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
-def _lines(name: str):
+def _lines(name: str) -> Iterator[str]:
     return iter((FIXTURES / name).read_text(encoding="utf-8").splitlines(keepends=True))
 
 
-def test_detect_returns_claude_parser_and_replays_every_line():
+def test_detect_returns_claude_parser_and_replays_every_line() -> None:
     lines = iter(['{"sessionId":"s1","type":"last-prompt"}\n', '{"sessionId":"s1"}\n'])
     parser, replayed = detect_parser(lines)
     # not a subclass: HermesTraceParser is-a ClaudeParser, so isinstance is too weak
@@ -26,7 +27,7 @@ def test_detect_returns_claude_parser_and_replays_every_line():
     assert len(list(replayed)) == 2  # the sniffed line is chained back
 
 
-def test_detect_skips_preamble_before_the_discriminating_line():
+def test_detect_skips_preamble_before_the_discriminating_line() -> None:
     lines = iter(["\n", "not json\n", '{"unknown":1}\n', '{"sessionId":"s1"}\n'])
     parser, replayed = detect_parser(lines)
     # not a subclass: HermesTraceParser is-a ClaudeParser, so isinstance is too weak
@@ -34,7 +35,7 @@ def test_detect_skips_preamble_before_the_discriminating_line():
     assert len(list(replayed)) == 4  # nothing is consumed away
 
 
-def test_detect_claims_a_codex_line():
+def test_detect_claims_a_codex_line() -> None:
     """Was `..._raises_unknown_schema_on_a_codex_line`. TB-12 registered the parser;
     `..._on_a_cursor_line` below still guards the UnknownSchema path."""
     lines = iter(['{"type":"session_meta","payload":{},"timestamp":"t"}\n'])
@@ -42,24 +43,26 @@ def test_detect_claims_a_codex_line():
     assert type(parser) is CodexParser
 
 
-def test_detect_raises_unknown_schema_on_a_cursor_line():
+def test_detect_raises_unknown_schema_on_a_cursor_line() -> None:
     lines = iter(['{"role":"user","message":{}}\n'])
     with pytest.raises(UnknownSchema):
         detect_parser(lines)
 
 
-def test_detect_is_bounded_and_does_not_read_past_the_window():
+def test_detect_is_bounded_and_does_not_read_past_the_window() -> None:
     lines = iter(['{"filler":1}\n'] * 500)
     with pytest.raises(UnknownSchema):
         detect_parser(lines, window=100)
 
 
-def test_detect_raises_unknown_schema_on_empty_input():
+def test_detect_raises_unknown_schema_on_empty_input() -> None:
     with pytest.raises(UnknownSchema):
         detect_parser(iter([]))
 
 
-def test_detect_raises_ambiguous_when_two_parsers_claim_one_line(monkeypatch):
+def test_detect_raises_ambiguous_when_two_parsers_claim_one_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class Greedy(ClaudeParser):
         schema_tag = "greedy"
 
@@ -68,7 +71,7 @@ def test_detect_raises_ambiguous_when_two_parsers_claim_one_line(monkeypatch):
         detect_parser(iter(['{"sessionId":"s1"}\n']))
 
 
-def test_unknown_and_ambiguous_are_runtime_errors():
+def test_unknown_and_ambiguous_are_runtime_errors() -> None:
     # passive.main's guard catches RuntimeError; this is why no guard edit is needed.
     assert issubclass(UnknownSchema, RuntimeError)
     assert issubclass(AmbiguousSchema, RuntimeError)
@@ -77,36 +80,36 @@ def test_unknown_and_ambiguous_are_runtime_errors():
 # --- TB-13 Task 6: golden fixtures pinning the four observed line-0 shapes -----
 
 
-def test_claude_fixture_detects_as_claude_despite_control_preamble():
+def test_claude_fixture_detects_as_claude_despite_control_preamble() -> None:
     parser, _ = detect_parser(_lines("schema_claude.jsonl"))
     # not a subclass: HermesTraceParser is-a ClaudeParser, so isinstance is too weak
     assert type(parser) is ClaudeParser
 
 
-def test_cowork_fixture_detects_as_claude_with_no_registry_entry_of_its_own():
+def test_cowork_fixture_detects_as_claude_with_no_registry_entry_of_its_own() -> None:
     parser, _ = detect_parser(_lines("schema_cowork.jsonl"))
     # not a subclass: HermesTraceParser is-a ClaudeParser, so isinstance is too weak
     assert type(parser) is ClaudeParser
 
 
-def test_codex_fixture_detects_as_codex():
+def test_codex_fixture_detects_as_codex() -> None:
     """Was `..._raises_unknown_schema_until_tb_12`. TB-12 registered the parser."""
     parser, _ = detect_parser(_lines("schema_codex.jsonl"))
     assert type(parser) is CodexParser
 
 
-def test_claude_fixture_still_detects_as_claude_with_codex_registered():
+def test_claude_fixture_still_detects_as_claude_with_codex_registered() -> None:
     """Guards the AmbiguousSchema invariant: adding a parser must not steal claude's lines."""
     parser, _ = detect_parser(_lines("schema_claude.jsonl"))
     assert type(parser) is ClaudeParser
 
 
-def test_cursor_fixture_raises_unknown_schema():
+def test_cursor_fixture_raises_unknown_schema() -> None:
     with pytest.raises(UnknownSchema):
         detect_parser(_lines("schema_cursor.jsonl"))
 
 
-def test_golden_claude_fixture_parses_to_exactly_one_joined_call():
+def test_golden_claude_fixture_parses_to_exactly_one_joined_call() -> None:
     parser, replayed = detect_parser(_lines("schema_claude.jsonl"))
     result = parser.parse(replayed, agent="claude", source="raw", project="p")
     assert result.malformed == 0
@@ -116,7 +119,7 @@ def test_golden_claude_fixture_parses_to_exactly_one_joined_call():
     assert call.result_source == "block_local"
 
 
-def test_golden_cowork_fixture_drains_its_unmatched_call():
+def test_golden_cowork_fixture_drains_its_unmatched_call() -> None:
     parser, replayed = detect_parser(_lines("schema_cowork.jsonl"))
     result = parser.parse(replayed, agent="cowork", source="agentsview", project="p")
     assert len(result.calls) == 1

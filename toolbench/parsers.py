@@ -231,17 +231,24 @@ class ClaudeParser(TranscriptParser):
 class CodexParser(TranscriptParser):
     """codex JSONL: `response_item` records joined on `payload.call_id` (TB-12).
 
-    A well-formed schema that shares nothing with claude's. Two calls shapes join
-    to two output shapes on `call_id` -- never `tool_use_id`, which is why a
+    A well-formed schema that shares nothing with claude's. Three call shapes join
+    to three output shapes on `call_id` -- never `tool_use_id`, which is why a
     claude-only parser once read 60 codex sessions as 2089 dropped calls and a
-    healthy zero.
+    healthy zero. See `CALL_SHAPES`: the shapes agree on `call_id` and on nothing
+    else, so each needs its own input field and its own name source.
 
     Two fields are session-scoped rather than call-scoped and must be carried
     forward as the transcript streams:
 
-      * `session_id` is stamped once on `session_meta`, not on every record.
+      * `session_id` comes from the first `session_meta`'s `id` -- the rollout's
+        own identity. NOT `payload.session_id`, which is absent from older
+        rollouts and names the parent thread in a subagent rollout.
       * `model` lives on `turn_context` and may change between turns, so a call
         is attributed to the last `turn_context` that preceded it.
+
+    `web_search_call` is deliberately unclaimed: it carries no `call_id` and has
+    no matching output record, so it cannot be joined by this parser's key. It is
+    a real tool call that this parser does not report, tracked separately.
 
     codex reports token usage as per-TURN `token_count` events. A turn routinely
     contains several tool calls, so those totals cannot be divided across calls
@@ -262,16 +269,27 @@ class CodexParser(TranscriptParser):
         {"session_meta", "response_item", "event_msg", "turn_context", "compacted"}
     )
 
-    # Call shape -> the payload field holding its serialized input. The two shapes
-    # differ in that field alone: `function_call` says `arguments`, `custom_tool_call`
-    # says `input`. Reading `arguments` on both silently zeroes apply_patch's size.
-    CALL_INPUT_FIELD: ClassVar[dict[str, str]] = {
-        "function_call": "arguments",
-        "custom_tool_call": "input",
+    # The three paired call shapes, which agree on `call_id` and on nothing else.
+    # Each row is (payload field holding the input, fixed name or None to read
+    # `payload.name`). Collapsing these into one rule drops data every time:
+    #   * reading `arguments` for custom_tool_call zeroes every apply_patch's size
+    #   * requiring `payload.name` skips tool_search_call, which has no name field
+    CALL_SHAPES: ClassVar[dict[str, tuple[str, str | None]]] = {
+        "function_call": ("arguments", None),
+        "custom_tool_call": ("input", None),
+        # `ToolSearch` is the literal name `passive.Reducer` keys the deferral tax
+        # on. codex names this record only by its payload type, so the parser must
+        # supply the name or the metric never sees a codex deferral.
+        "tool_search_call": ("arguments", "ToolSearch"),
     }
-    OUTPUT_TYPES: ClassVar[frozenset[str]] = frozenset(
-        {"function_call_output", "custom_tool_call_output"}
-    )
+
+    # Output shape -> the payload field holding the result. tool_search returns a
+    # `tools` list; the other two return an `output` string.
+    OUTPUT_FIELDS: ClassVar[dict[str, str]] = {
+        "function_call_output": "output",
+        "custom_tool_call_output": "output",
+        "tool_search_output": "tools",
+    }
 
     @classmethod
     def claims_line(cls, entry: dict[str, object]) -> bool:
@@ -315,9 +333,15 @@ class CodexParser(TranscriptParser):
             kind = entry.get("type")
 
             if kind == "session_meta":
-                found_id = payload.get("session_id")
-                if isinstance(found_id, str):
-                    session_id = found_id
+                # `payload.id` is the rollout's own identity. `payload.session_id` is
+                # absent from older rollouts (118 of 183 in the local archive) and, in
+                # a subagent rollout, names the PARENT thread -- keying on it collapses
+                # subagents into their parent. Only the first record establishes
+                # identity; a `compacted` session emits a second one.
+                if not session_id:
+                    found_id = payload.get("id") or payload.get("session_id")
+                    if isinstance(found_id, str):
+                        session_id = found_id
                 continue
 
             if kind == "turn_context":
@@ -336,11 +360,11 @@ class CodexParser(TranscriptParser):
             if not isinstance(call_id, str):
                 continue
 
-            if payload_type in self.CALL_INPUT_FIELD:
-                name = payload.get("name")
+            if payload_type in self.CALL_SHAPES:
+                input_field, fixed_name = self.CALL_SHAPES[payload_type]
+                name = fixed_name if fixed_name is not None else payload.get("name")
                 if not isinstance(name, str):
                     continue
-                input_field = self.CALL_INPUT_FIELD[payload_type]
                 pending[call_id] = _PendingCall(
                     name=name,
                     input_chars=result_len(payload.get(input_field)),
@@ -350,7 +374,8 @@ class CodexParser(TranscriptParser):
                     usage_provenance=UsageProvenance.ABSENT_BY_SCHEMA,
                     model=model,
                 )
-            elif payload_type in self.OUTPUT_TYPES and call_id in pending:
+            elif payload_type in self.OUTPUT_FIELDS and call_id in pending:
+                output_field = self.OUTPUT_FIELDS[payload_type]
                 pending_call = pending.pop(call_id)
                 calls.append(
                     ToolCall(
@@ -359,7 +384,7 @@ class CodexParser(TranscriptParser):
                         project=project,
                         name=pending_call.name,
                         input_chars=pending_call.input_chars,
-                        output_chars=result_len(payload.get("output")),
+                        output_chars=result_len(payload.get(output_field)),
                         session_id=pending_call.session_id,
                         ts=pending_call.ts,
                         usage=pending_call.usage,

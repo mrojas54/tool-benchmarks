@@ -1,5 +1,6 @@
 """pick_adapter ordering: hermes claims by source, everything else by content (TB-13, Task 4)."""
 
+from pathlib import Path
 import subprocess
 
 import pytest
@@ -14,26 +15,26 @@ def _ok(stdout: str) -> "subprocess.CompletedProcess[str]":
     return subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr="")
 
 
-def test_hermes_ref_picks_the_hermes_adapter():
+def test_hermes_ref_picks_the_hermes_adapter() -> None:
     ref = SessionRef(
         agent="hermes", source="agentsview", project="h", session_id="hermes:1", path=None
     )
     assert isinstance(pick_adapter(ref), HermesAdapter)
 
 
-def test_hermes_with_a_path_is_not_claimed_by_hermes_adapter(tmp_path):
+def test_hermes_with_a_path_is_not_claimed_by_hermes_adapter(tmp_path: Path) -> None:
     p = tmp_path / "s.jsonl"
     p.write_text('{"sessionId":"s1"}\n', encoding="utf-8")
     ref = SessionRef(agent="hermes", source="raw", project="h", session_id="s1", path=str(p))
     assert isinstance(pick_adapter(ref), ComposedAdapter)
 
 
-def test_claude_ref_picks_the_composed_adapter():
+def test_claude_ref_picks_the_composed_adapter() -> None:
     ref = SessionRef(agent="claude", source="agentsview", project="p", session_id="c:1", path=None)
     assert isinstance(pick_adapter(ref), ComposedAdapter)
 
 
-def test_composed_adapter_parses_a_raw_claude_session(tmp_path):
+def test_composed_adapter_parses_a_raw_claude_session(tmp_path: Path) -> None:
     p = tmp_path / "s.jsonl"
     p.write_text(
         '{"sessionId":"s1","timestamp":"t0","message":{"content":'
@@ -50,7 +51,7 @@ def test_composed_adapter_parses_a_raw_claude_session(tmp_path):
     assert result.calls[0].project == "p"
 
 
-def test_composed_adapter_parses_codex_end_to_end():
+def test_composed_adapter_parses_codex_end_to_end() -> None:
     """Was `..._raises_unknown_schema_for_codex`. TB-12: the seam now carries codex."""
     ref = SessionRef(
         agent="codex", source="agentsview", project="p", session_id="codex:1", path=None
@@ -70,7 +71,7 @@ def test_composed_adapter_parses_codex_end_to_end():
     assert result.calls[0].session_id == "c1"  # lifted from session_meta
 
 
-def test_composed_adapter_still_raises_unknown_schema_for_an_unregistered_schema():
+def test_composed_adapter_still_raises_unknown_schema_for_an_unregistered_schema() -> None:
     """cursor remains unregistered; the terminal fallback must stay loud."""
     ref = SessionRef(
         agent="cursor", source="agentsview", project="p", session_id="cursor:1", path=None
@@ -80,5 +81,5 @@ def test_composed_adapter_still_raises_unknown_schema_for_an_unregistered_schema
         adapter.parse(ref)
 
 
-def test_unknown_schema_is_a_runtime_error_so_passive_demotes_it():
+def test_unknown_schema_is_a_runtime_error_so_passive_demotes_it() -> None:
     assert issubclass(UnknownSchema, RuntimeError)

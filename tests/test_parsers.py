@@ -8,20 +8,20 @@ from toolbench.parsers import (
     HermesTraceParser,
     TranscriptParser,
 )
-from toolbench.transcript import UsageProvenance
+from toolbench.transcript import ParseResult, UsageProvenance
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
-def test_claude_parser_claims_a_line_carrying_session_id():
+def test_claude_parser_claims_a_line_carrying_session_id() -> None:
     assert ClaudeParser.claims_line({"type": "last-prompt", "sessionId": "s1"}) is True
 
 
-def test_claude_parser_does_not_claim_a_codex_line():
+def test_claude_parser_does_not_claim_a_codex_line() -> None:
     assert ClaudeParser.claims_line({"type": "session_meta", "payload": {}}) is False
 
 
-def test_claude_parser_joins_tool_use_to_tool_result_from_lines():
+def test_claude_parser_joins_tool_use_to_tool_result_from_lines() -> None:
     lines = [
         '{"sessionId":"s1","timestamp":"t0","message":{"model":"m","content":'
         '[{"type":"tool_use","id":"u1","name":"Bash","input":{"command":"ls"}}]}}\n',
@@ -38,7 +38,7 @@ def test_claude_parser_joins_tool_use_to_tool_result_from_lines():
     assert result.malformed == 0
 
 
-def test_claude_parser_drains_unmatched_call_at_eof():
+def test_claude_parser_drains_unmatched_call_at_eof() -> None:
     lines = [
         '{"sessionId":"s1","timestamp":"t0","message":{"content":'
         '[{"type":"tool_use","id":"u1","name":"Read","input":{}}]}}\n',
@@ -49,14 +49,14 @@ def test_claude_parser_drains_unmatched_call_at_eof():
     assert result.calls[0].output_chars == 0
 
 
-def test_claude_parser_counts_malformed_lines_without_raising():
+def test_claude_parser_counts_malformed_lines_without_raising() -> None:
     lines = ['{"sessionId":"s1"}\n', "not json\n", "\n"]
     result = ClaudeParser().parse(lines, agent="claude", source="raw", project="p")
     assert result.malformed == 1
     assert result.calls == []
 
 
-def test_claude_parser_is_a_transcript_parser():
+def test_claude_parser_is_a_transcript_parser() -> None:
     assert issubclass(ClaudeParser, TranscriptParser)
     assert ClaudeParser.schema_tag == "claude"
 
@@ -91,7 +91,7 @@ def test_hermes_trace_provenance_ignores_a_usage_dict_entirely() -> None:
 # --- CodexParser (TB-12) ---------------------------------------------------
 
 
-def _codex_calls():
+def _codex_calls() -> ParseResult:
     lines = (
         (FIXTURES / "schema_codex.jsonl")
         .read_text(encoding="utf-8")
@@ -102,21 +102,21 @@ def _codex_calls():
     )
 
 
-def test_codex_parser_is_a_transcript_parser():
+def test_codex_parser_is_a_transcript_parser() -> None:
     assert issubclass(CodexParser, TranscriptParser)
     assert CodexParser.schema_tag == "codex"
 
 
-def test_codex_parser_claims_a_session_meta_line():
+def test_codex_parser_claims_a_session_meta_line() -> None:
     assert CodexParser.claims_line({"type": "session_meta", "payload": {}}) is True
 
 
-def test_codex_parser_does_not_claim_a_claude_line():
+def test_codex_parser_does_not_claim_a_claude_line() -> None:
     """Detection asserts exactly one parser claims a line; overlap raises AmbiguousSchema."""
     assert CodexParser.claims_line({"type": "last-prompt", "sessionId": "s1"}) is False
 
 
-def test_codex_parser_joins_function_call_to_output_on_call_id():
+def test_codex_parser_joins_function_call_to_output_on_call_id() -> None:
     """The defect: join key is `payload.call_id`, never `tool_use_id`."""
     call = _codex_calls().calls[0]
     assert call.name == "exec_command"
@@ -127,7 +127,7 @@ def test_codex_parser_joins_function_call_to_output_on_call_id():
     assert call.result_source == "payload"
 
 
-def test_codex_parser_joins_custom_tool_call_reading_input_not_arguments():
+def test_codex_parser_joins_custom_tool_call_reading_input_not_arguments() -> None:
     """`custom_tool_call` carries `input`; `function_call` carries `arguments`."""
     call = _codex_calls().calls[1]
     assert call.name == "apply_patch"
@@ -135,50 +135,100 @@ def test_codex_parser_joins_custom_tool_call_reading_input_not_arguments():
     assert call.output_chars == 8  # len("Success.")
 
 
-def test_codex_parser_drains_unmatched_call_at_eof():
-    """S6: an unmatched call at EOF is kept with no_result, never dropped."""
+def test_codex_parser_joins_tool_search_call_to_its_output() -> None:
+    """A third paired call shape. Ignoring it recreates the silent zero this ticket
+    exists to kill -- 19 pairs sit in the live archive."""
     call = _codex_calls().calls[2]
+    assert call.no_result is False
+    assert call.output_chars == 52  # the `tools` list, not an `output` string
+
+
+def test_codex_parser_names_tool_search_so_the_deferral_metric_sees_it() -> None:
+    """`passive.Reducer` keys the ToolSearch/deferral tax on the literal name
+    `ToolSearch`. codex's record carries no `name` field at all."""
+    assert _codex_calls().calls[2].name == "ToolSearch"
+
+
+def test_codex_parser_reads_tool_search_arguments_as_a_dict_not_a_json_string() -> None:
+    """`function_call.arguments` is a serialized string; `tool_search_call.arguments`
+    is a live object. `result_len` normalizes both, but only if we pass the object."""
+    assert _codex_calls().calls[2].input_chars == 34
+
+
+def test_codex_parser_drains_unmatched_call_at_eof() -> None:
+    """S6: an unmatched call at EOF is kept with no_result, never dropped."""
+    call = _codex_calls().calls[3]
     assert call.name == "write_stdin"
     assert call.no_result is True
     assert call.output_chars == 0
 
 
-def test_codex_parser_yields_exactly_the_three_paired_calls():
+def test_codex_parser_yields_exactly_the_four_paired_calls() -> None:
     result = _codex_calls()
-    assert len(result.calls) == 3
+    assert len(result.calls) == 4
     assert result.malformed == 0
 
 
-def test_codex_parser_lifts_session_id_from_session_meta_onto_every_call():
-    """Unlike claude, codex stamps `session_id` once on `session_meta`, not per line."""
-    assert [c.session_id for c in _codex_calls().calls] == ["c1", "c1", "c1"]
+def test_codex_parser_identifies_a_session_by_rollout_id_not_session_id() -> None:
+    """`session_meta.payload.id` is the unique rollout ID. `session_id` is absent from
+    older records and names the PARENT in a subagent rollout, which would collapse a
+    subagent into its parent. The fixture's session_meta has both, and they differ."""
+    assert [c.session_id for c in _codex_calls().calls] == ["c1"] * 4
 
 
-def test_codex_parser_takes_model_from_the_governing_turn_context():
+def test_codex_parser_takes_model_from_the_governing_turn_context() -> None:
     """`model` lives on `turn_context`, not on the call record."""
-    assert [c.model for c in _codex_calls().calls] == ["gpt-5.5"] * 3
+    assert [c.model for c in _codex_calls().calls] == ["gpt-5.5"] * 4
 
 
-def test_codex_parser_stamps_absent_by_schema_for_usage():
+def test_codex_parser_stamps_absent_by_schema_for_usage() -> None:
     """codex emits per-TURN `token_count` events; it has no per-call usage channel (S29)."""
     calls = _codex_calls().calls
-    assert len(calls) == 3  # guard: a `for` over an empty list asserts nothing
+    assert len(calls) == 4  # guard: a `for` over an empty list asserts nothing
     for call in calls:
         assert call.usage is None
         assert call.usage_provenance is UsageProvenance.ABSENT_BY_SCHEMA
 
 
-def test_codex_parser_reports_no_per_call_error_channel():
+def test_codex_parser_reports_no_per_call_error_channel() -> None:
     """codex encodes exit status inside the output TEXT; there is no `is_error` flag."""
-    assert [c.error for c in _codex_calls().calls] == [None, None, None]
+    assert [c.error for c in _codex_calls().calls] == [None] * 4
 
 
-def test_codex_parser_counts_malformed_lines_without_raising():
+def test_codex_parser_counts_malformed_lines_without_raising() -> None:
     lines = [
-        '{"type":"session_meta","payload":{"session_id":"c1"}}\n',
+        '{"type":"session_meta","payload":{"id":"c1"}}\n',
         "not json\n",
         "\n",
     ]
     result = CodexParser().parse(iter(lines), agent="codex", source="raw", project="p")
     assert result.malformed == 1
     assert result.calls == []
+
+
+def test_codex_parser_identifies_older_rollouts_that_carry_no_session_id() -> None:
+    """118 of 183 session_meta records in the live archive have no `session_id` at all.
+    Keying on it stamps 2086 calls with an empty session identifier."""
+    lines = [
+        '{"type":"session_meta","payload":{"id":"c9"}}\n',
+        '{"type":"response_item","timestamp":"t","payload":'
+        '{"type":"function_call","name":"exec_command","arguments":"{}","call_id":"k"}}\n',
+        '{"type":"response_item","timestamp":"t","payload":'
+        '{"type":"function_call_output","call_id":"k","output":"ok"}}\n',
+    ]
+    result = CodexParser().parse(iter(lines), agent="codex", source="raw", project="p")
+    assert [c.session_id for c in result.calls] == ["c9"]
+
+
+def test_codex_parser_joins_a_minimal_tool_search_pair() -> None:
+    """The reviewer's repro: a bare pair must not parse to a healthy zero."""
+    lines = [
+        '{"type":"response_item","timestamp":"t","payload":'
+        '{"type":"tool_search_call","call_id":"k","arguments":{"query":"x"}}}\n',
+        '{"type":"response_item","timestamp":"t","payload":'
+        '{"type":"tool_search_output","call_id":"k","tools":[]}}\n',
+    ]
+    result = CodexParser().parse(iter(lines), agent="codex", source="raw", project="p")
+    assert len(result.calls) == 1
+    assert result.calls[0].name == "ToolSearch"
+    assert result.malformed == 0
