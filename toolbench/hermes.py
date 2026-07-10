@@ -28,7 +28,7 @@ from pathlib import Path
 
 from toolbench.adapters import SessionAdapter
 from toolbench.sources import NonTranscriptExport, SessionRef
-from toolbench.transcript import ParseResult, ToolCall, result_len
+from toolbench.transcript import ParseResult, ToolCall, UsageProvenance, result_len
 
 # Session ids arrive from AgentsView namespaced by agent; the archive stores them bare.
 _ID_PREFIX = "hermes:"
@@ -136,8 +136,13 @@ def parse_hermes_session(
     dropped. A `tool_calls` blob that will not parse is counted as malformed and
     skipped, never fatal (S5).
 
-    `usage` is always None: hermes records `token_count` per message, not per tool
-    call, so there is no honest per-call usage record to report.
+    `usage` is always None: hermes carries usage on the *session* row
+    (input_tokens, output_tokens, cache_read_tokens, cache_write_tokens), not per
+    tool call. `messages.token_count` exists in the schema but is NULL on all
+    10,177 rows across every archive database, so there is no honest per-call
+    usage record to report. The granularity gap is session -> call, not
+    message -> call. Stamped ABSENT_BY_SCHEMA, never ABSENT_UNEXPECTED: the
+    producer knows why it has nothing to say (S29).
     """
     db = resolve_session(session_id, home)
     if db is None:
@@ -197,6 +202,7 @@ def parse_hermes_session(
                     session_id=bare,
                     ts=_iso(timestamp),
                     usage=None,
+                    usage_provenance=UsageProvenance.ABSENT_BY_SCHEMA,
                     duration_ms=None,
                     error=_error_of(payload) if found else None,
                     model=model,

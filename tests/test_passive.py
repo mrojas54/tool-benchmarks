@@ -25,7 +25,7 @@ from toolbench.passive import (
     render_report,
 )
 from toolbench.sources import SessionRef
-from toolbench.transcript import ParseResult, ToolCall
+from toolbench.transcript import ParseResult, ToolCall, UsageProvenance
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -69,6 +69,13 @@ def make_call(**overrides: object) -> ToolCall:
         "model": "claude-opus-4-8",
     }
     fields.update(overrides)
+    # Mirrors ClaudeParser._provenance so existing tests keep their meaning.
+    fields.setdefault(
+        "usage_provenance",
+        UsageProvenance.PRESENT
+        if fields["usage"] is not None
+        else UsageProvenance.ABSENT_UNEXPECTED,
+    )
     return ToolCall(**fields)  # type: ignore[arg-type]
 
 

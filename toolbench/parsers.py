@@ -13,7 +13,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import ClassVar
 
-from toolbench.transcript import ParseResult, ToolCall, result_len
+from toolbench.transcript import ParseResult, ToolCall, UsageProvenance, result_len
 
 
 @dataclass
@@ -25,6 +25,7 @@ class _PendingCall:
     session_id: str
     ts: str
     usage: dict[str, object] | None
+    usage_provenance: UsageProvenance
     model: str | None
 
 
@@ -82,6 +83,20 @@ class ClaudeParser(TranscriptParser):
         # no `tool_use` block anywhere.
         return "sessionId" in entry
 
+    @classmethod
+    def _provenance(cls, usage: object) -> UsageProvenance:
+        """Overridden by producers that know why usage is absent (S29).
+
+        A classmethod, not a ClassVar: a ClassVar would need a `None` sentinel on
+        ClaudeParser meaning "infer per row", reintroducing a null with two
+        meanings inside the design meant to eliminate one.
+        """
+        return (
+            UsageProvenance.PRESENT
+            if isinstance(usage, dict)
+            else UsageProvenance.ABSENT_UNEXPECTED
+        )
+
     def parse(
         self, lines: Iterable[str], *, agent: str, source: str, project: str
     ) -> ParseResult:
@@ -135,6 +150,7 @@ class ClaudeParser(TranscriptParser):
                         session_id=session_id_str,
                         ts=ts_str,
                         usage=usage if isinstance(usage, dict) else None,
+                        usage_provenance=self._provenance(usage),
                         model=model if isinstance(model, str) else None,
                     )
 
@@ -168,6 +184,7 @@ class ClaudeParser(TranscriptParser):
                         session_id=pending_call.session_id,
                         ts=pending_call.ts,
                         usage=pending_call.usage,
+                        usage_provenance=pending_call.usage_provenance,
                         duration_ms=None,
                         error=error,
                         model=pending_call.model,
@@ -188,6 +205,7 @@ class ClaudeParser(TranscriptParser):
                     session_id=pending_call.session_id,
                     ts=pending_call.ts,
                     usage=pending_call.usage,
+                    usage_provenance=pending_call.usage_provenance,
                     duration_ms=None,
                     error=None,
                     model=pending_call.model,
