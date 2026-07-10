@@ -1317,3 +1317,16 @@ git push
 **Type consistency.** `UsageProvenance` is defined in `toolbench.transcript` (Task 1) and imported by `parsers.py`, `hermes.py`, `passive.py`, and three test modules — never redefined. `_provenance(usage: object) -> UsageProvenance` has the same signature on `ClaudeParser` and `HermesTraceParser`. `usage_missing` is spelled identically in `ToolStats`, `absorb`, and the render rule. `_turn_key` loses its `ts` parameter in Task 5 and its only caller is updated in the same step. `NonIsolableTurns` is defined once and imported by tests.
 
 **Placeholder scan.** No TBDs. Every code step carries the literal code. Every command carries its expected output. Expected test counts are cumulative and stated per task (217 → 225 → 231 → 239 → 246); if yours drift, report the real number rather than editing the plan to match.
+
+## Plan-Review Cycle 1 Resolutions (AUTHORITATIVE — overrides earlier text on conflict)
+
+Run-2 delegator validated this plan against the live branch (`chore/add-hermes-cli-export-plan` @ `cf8ded9`, `origin/main` @ `28b6187`) before starting Tasks 3–6. Findings, all mechanical:
+
+1. **Concern:** Task 6 Step 1 instructs appending S29/S30 to `SPEC.md`.
+   **Resolution:** Already landed — commit `305d7d8` ("Add S29/S30 to the build contract (TB-18)") added both rows to `SPEC.md:184-199` during Run-2 Phase 0 intake, ahead of Task 0. `EVALUATION.md:60-61,80` also already carries S29/S30 rows. Content matches this plan's Task 6 Step 1 text (plus an `(TB-18)` tag and "amending S26" clause not in the original draft — both consistent with the design, not contradictory). **Task 6 Step 1 is a no-op; skip it.**
+2. **Concern:** Task 6 Step 4's expected baseline (`246 passed`) assumes the task-by-task cumulative count in this plan's self-review (217 → 225 → 231 → 239 → 246).
+   **Resolution:** Actual count after Task 2, before Task 3, is `232 passed, 1 skipped` (not `231 passed`) — commit `5baeca1` ("Make the fast suite hermetic," Phase 0 gap fix, predates this plan) added a skip guard plus a test between Task 2 and this validation. Per the plan's own placeholder-scan rule ("if yours drift, report the real number rather than editing the plan to match"), Tasks 3–6 report actual counts at each gate rather than the stated cumulative figures.
+3. **Concern:** Task 6 Step 3's correction comment on TB-18.
+   **Resolution:** Confirmed NOT yet posted — checked ticket event log, no prior comment states the 3-token/270-call correction. Step 3 proceeds as written.
+
+No architectural drift found. Tasks 3, 4, 5 verified against current source (`toolbench/passive.py`, `toolbench/probe.py`, `tests/fixtures/probe_session*.jsonl`) line-for-line consistent with the plan's stated current state — no further amendment needed there. Proceeding to implement Tasks 3–6 as planned, with the two skips/adjustments above.
