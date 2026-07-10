@@ -101,6 +101,45 @@ parameters serena never accepted), and the lesson has not changed: **pin
 fixtures to a shape observed in a real transcript, not to the one the code
 expects.**
 
+## Usage columns are not yet comparable (TB-17)
+
+Even when both usage cells are populated (isolable arms, S26), the two numbers
+are **not** a fair tool-vs-Bash comparison today.
+
+`output_tokens` is billed against the whole emitted `tool_use` block — tool
+name plus serialized input. The bash arm is structurally required to carry a
+sentinel comment (`  # TB_PROBE_<NN>_BASH_V2`, ~23 chars / ~10–12 BPE tokens)
+that the tool arm cannot carry: serena's schemas have no free-text field
+(TB-15), which is why the matcher identifies tool arms structurally. Operators
+also often supply Bash's optional `description` (~8–10 tokens). Together that
+is ~20 tokens of instrumentation charged only to the bash arm.
+
+Measured on the first fully-isolable ten-arm run (session `ca1a80df`): mean
+bash penalty **14.6** output tokens, and the instrumentation exceeds the gap
+in 5/5 probes. "MCP is cheaper on output tokens" is therefore not established
+by this data; removing the tax could flip the sign.
+
+**Not a confound:** Serena's long MCP-namespaced tool name (~10 tok/call vs
+Bash's 4) is a real cost of MCP namespacing and belongs in the comparison.
+
+**Unaffected:** the context-token columns (`tool tokens` / `bash tokens`)
+measure the returned `tool_result`, never the emitted call. They remain the
+trustworthy half of the table.
+
+TB-17 tracks the fix (stated correction, symmetric dead-weight, drop the
+columns, or reconstruct analytically). Until one lands, read usage as
+non-comparable and rank arms on context tokens.
+
+## What `probe.py` will refuse (S30)
+
+Score a **native Claude Code** session JSONL. `hermes sessions export
+--format trace` is valid input to `passive.py` (claimed by
+`HermesTraceParser`, usage stamped `ABSENT_BY_EXPORT`) but invalid input to
+`probe.py`: the export drops `requestId`, and turns are keyed solely by that
+field. `find_probe_calls` raises `NonIsolableTurns` at the door rather than
+falling back to timestamps (the TB-16 defect class). There is no
+partial-corpus mode.
+
 ## Performing vs. mentioning a probe (S17)
 
 A sentinel is a bare string, so a call that *greps for* `TB_PROBE_01_BASH_V2`

@@ -2,7 +2,7 @@
 
 Date: 2026-07-08
 Ticket: TB-11
-Status: approved
+Status: shipped (PR #13, merged 2026-07-09)
 
 ## Problem
 

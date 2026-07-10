@@ -28,7 +28,9 @@ Non-obvious notes for this environment:
 - **Running the active probe:** `toolbench.probe` refuses to write a report
   (`SeededReportError`) unless you pass `--session <probe.jsonl>` (or
   `--allow-seeded` for the baseline-only table). Fixture sessions under
-  `tests/fixtures/*.jsonl` are valid inputs for a quick real run.
+  `tests/fixtures/*.jsonl` are valid inputs for a quick real run. A hermes
+  `--format trace` export raises `NonIsolableTurns` (S30) — use a native
+  Claude Code transcript for probes.
 - **Generated output:** reports land in `reports/`, which is gitignored.
 - **Optional external dependencies are not present here and are not needed for the
   gate:** the `agentsview` CLI, real `~/.claude`/Codex transcript roots, and the

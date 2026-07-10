@@ -118,7 +118,12 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   `find` 68 serena / 89 Bash) and marked `*`. A matched but non-isolable
   arm keeps its real context tokens and shows `—` for usage — it is **not**
   re-seeded. A fully-seeded table raises `SeededReportError` unless
-  `--allow-seeded`.
+  `--allow-seeded`. **Open defect (TB-17):** when both usage cells are
+  populated, they are not yet comparable — the bash arm's required sentinel
+  (and optional `description`) inflate bash `output_tokens` by ~15–20 tokens
+  of instrumentation the tool arm cannot carry. Context-token columns remain
+  the trustworthy ranking until TB-17 lands a stated correction or drops the
+  usage pair.
 
 ## Metrics, quality, errors
 

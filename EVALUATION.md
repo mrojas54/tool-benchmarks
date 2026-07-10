@@ -81,7 +81,10 @@ One row per SPEC criterion, each tagged by how it is verified:
 5. **Probe isolability (S26).** Score a dedicated probe session with
    `toolbench.probe --session …`. Expect ten unseeded context-token cells and
    real usage numbers (not `—`). A `—` in usage with unseeded context tokens
-   means the arm matched but its response was not isolable.
+   means the arm matched but its response was not isolable. When both usage
+   cells are filled, do **not** rank arms on them — bash usage includes a
+   sentinel (+ optional `description`) tax the tool arm cannot carry (TB-17);
+   compare context tokens instead.
 6. **Live trace export (S29/S30, `external-oracle`).** Export a real session
    with `hermes sessions export --format trace <dir>` (positional dir, not
    `--output-dir`). Confirm `passive` reports its calls with a `n/a` cache

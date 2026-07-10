@@ -9,7 +9,11 @@ Source of truth for behavior is `SPEC.md`; source of the step-by-step is
 ```
 raw roots + AgentsView exports
           │
- source adapters (transcript.py + sources.py)
+   loaders (sources.py)  ── acquisition: bytes → lines
+          │
+   parsers (parsers.py)  ── interpretation: lines → ToolCall
+          │
+   adapters (adapters.py + registry.py)  ── SessionRef → ParseResult
           │
      ┌────┴─────┐
  passive.py   probe.py
@@ -22,9 +26,20 @@ raw roots + AgentsView exports
   `ruff`/`mypy`/`pytest`; runtime deps empty.
 - **Parser deviation (decided):** `parse_session` returns
   `ParseResult(calls, malformed)` — additive, so the malformed count reaches
-  the report footer.
+  the report footer. After TB-13 it is a compat shim over `ClaudeParser`;
+  dispatch is `registry.pick_adapter` → `SessionAdapter.parse`.
 - **Reducer (decided):** passive keeps only per-agent/per-tool counters
   globally; it never accumulates a whole-corpus `list[ToolCall]`.
+- **Schema dispatch (TB-13, shipped):** acquisition (`SessionLoader`) and
+  interpretation (`TranscriptParser`) are orthogonal ABCs. Hermes SQLite
+  claims by source; every other session is content-sniffed (including
+  hermes-trace via `HermesTraceParser`, S29). Unrecognized schemas raise
+  `UnknownSchema` and land in `skipped_roots` (S27–S28).
+- **Usage provenance (TB-18 / TB-20, shipped):** every `ToolCall` carries
+  `UsageProvenance`; cache flags render `n/a` / `n/a*` when unmeasurable
+  (S29). `probe.py` keys turns only by `requestId` and refuses hermes-trace
+  (S30). Hermes session-row `cache_read_tokens` surfaces as an Agent
+  Breakdown caveat, never a per-call rate (S32).
 
 ## Test split
 
@@ -45,7 +60,7 @@ parallel (T2, T3), then the two consumers (T4, T5), then docs + gate (T6).
 | **T1 — scaffold + `ToolCall` + `result_len`** | uv init, `pyproject.toml`, empty `toolbench/`, the record type + normalizer, first tests | S3, S4, S20, S21 | — |
 | **T2 — `parse_session` id-join** | `ParseResult`, `_result_id`/`_result_payload`, block-local `content`, malformed + interrupted handling; fixtures | S1, S2, S5, S6, S24 | T1 |
 | **T3 — `sources.py` multi-agent discovery** | `SessionRef`, `iter_session_files`, `iter_agentsview_sessions` (cursor pagination), `open_session_jsonl`, index-source policy; fake-runner tests | S7, S8, S9, S10, S24 | T1 |
-| **T4 — `passive.py` reducer + report + CLI** | incremental reducer, four report sections + provenance, full CLI, error/exit contract | S11, S12, S13, S14, S15, S19, S23 | T2, T3 |
+| **T4 — `passive.py` reducer + report + CLI** | incremental reducer, five report sections + provenance, full CLI, error/exit contract | S11, S12, S13, S14, S15, S19, S23 | T2, T3 |
 | **T5 — `probe.py` + `active-probes.md`** | 5-file corpus under `tools/` (done), `_V2` sentinels + tool-name verify, comparison table + #8376 seeds → `reports/` | S16, S17, S18 | T2 |
 | **T6 — README + strict gate** | README (agents/targets/run/index/metrics), then ruff + mypy --strict + full suite green; PR | S22 | T4, T5 |
 | **T7 — schema dispatch seam** (lattice `TB-13`) | `detect_parser`, `PARSERS` registry, `UnknownSchema` / `AmbiguousSchema`; no default parser | S27, S28 | T2 |
@@ -100,14 +115,15 @@ only defers — `codex` and `cursor` land in `skipped_roots` until it exists.
   depends on a healthy daemon. The live daemon path stays `external-oracle`:
   only `test:full` / the S25 acceptance-smoke touches the real CLI, and that
   is operator-run post-merge, never in the delegators' loop.
-- **G3 — Codex/Hermes adapters. [RESOLVED — deferred, coverage confirmed via
-  AgentsView.]** The AgentsView daemon already indexes all three named targets
-  (Claude Code `~/.claude/projects`; Codex `~/.codex/sessions` +
-  `~/.codex/archived_sessions`; Hermes `~/.hermes/profiles/aphrodite-mood`,
-  `…/light-mood`, `~/.hermes`) plus ~35 other agents, so `--index-source
-  agentsview` gives cross-agent coverage with **no per-agent raw adapter**.
-  Raw adapters are needed only for the raw-fallback path (S10) and stay
-  deferred; the raw scanner (S7) remains Claude-Code-only (`~/.claude/projects`).
-  Note for any future adapter work: Codex and Hermes are **multi-root**
-  (Codex 2 roots incl. archived; Hermes 3 profile roots), unlike Claude Code's
-  single root.
+- **G3 — Codex/Hermes adapters. [PARTIALLY RESOLVED.]** Hermes now has a
+  direct SQLite reader (`hermes.py`, TB-11) because AgentsView `session
+  export` returns the whole profile database rather than a transcript
+  (#1047). Discovery for hermes still goes through AgentsView `session
+  list` (S9b) — under-sampling vs `stats` is #1048, not forked here.
+  Schema dispatch (TB-13 / S27–S28) landed so unrecognized transcripts
+  skip loudly instead of reporting healthy zeros. **Codex** still needs a
+  `CodexParser` (TB-12); until then codex/cursor sessions land in
+  `skipped_roots`. The raw scanner (S7) remains Claude-Code-only
+  (`~/.claude/projects`). Note for any future raw adapter work: Codex and
+  Hermes are **multi-root** (Codex 2 roots incl. archived; Hermes 3
+  profile roots), unlike Claude Code's single root.

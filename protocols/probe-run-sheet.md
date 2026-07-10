@@ -34,6 +34,10 @@ Everything you need is below. Copy each call exactly.
    exactly that boundary. **Your last prose of the run comes before turn 0, not
    after it.** Once turn 0 passes, say nothing until turn 10 has returned. If
    turn 0 fails, you may speak while you fix it; the run has not started.
+6. **Score the Claude Code session this run produces.** Do not feed a
+   `hermes sessions export --format trace` file to `toolbench.probe` — it
+   raises `NonIsolableTurns` (no `requestId`). Trace exports are for
+   `passive` only.
 
 Rules 1 and 5 are enforced (S26). A non-isolable arm still matches and keeps its
 real context-token columns; only the usage cell shows `—`. It is **not**
@@ -201,6 +205,12 @@ reasoning (rules 1 and 5). The context-token columns are still good; the usage
 number for that arm is gone, and only a fresh session can recover it. An arm is
 spent once its call is in the transcript — re-running it adds a second match
 rather than replacing the first, which is the same reason turn 0 exists.
+
+When both usage cells *are* filled, do **not** treat them as a fair comparison.
+The bash arm's sentinel (and any Bash `description` you typed) is billed into
+bash `output_tokens` only — roughly 15–20 tokens of instrumentation that the
+tool arm cannot carry (TB-17). Prefer the context-token columns for ranking
+until that ticket lands a stated correction.
 
 ## Deviation from `active-probes.md`
 

@@ -2,7 +2,7 @@
 
 Date: 2026-07-09
 Ticket: TB-13
-Status: proposed
+Status: shipped (PR #19, merged 2026-07-09)
 Supersedes: the design sketch in TB-13's own description (see "Corrections to the ticket")
 
 ## Problem
