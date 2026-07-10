@@ -1,17 +1,24 @@
 {
   "assigned_to": null,
-  "branch_links": [],
+  "branch_links": [
+    {
+      "branch": "feat/tb-24-unjoinable-web-search",
+      "linked_at": "2026-07-10T22:16:04Z",
+      "linked_by": "agent:claude",
+      "repo": null
+    }
+  ],
   "comment_count": 0,
   "complexity": null,
   "created_at": "2026-07-10T15:17:53Z",
   "created_by": "agent:claude",
   "custom_fields": {},
   "description": "Found during TB-12 review. The live codex archive (114 rollouts) contains 138 `web_search_call` response_item records.\n\nUnlike the three shapes CodexParser joins, web_search_call:\n  - carries NO `call_id` (verified: has_call_id={False} across all 138)\n  - has NO matching `web_search_output` record at all\n\nSo it cannot be joined on payload.call_id, which is CodexParser's only key. Claiming it would either fabricate a join key or emit 138 permanent no_result orphans; both are worse than reporting none. S33 documents the omission explicitly.\n\nIMPACT: codex's reported call count understates its true tool usage by 138 calls (~4%). Web search is invisible in the corpus for codex.\n\nDECIDE: either (a) emit them as zero-output calls with a new provenance/no_result meaning, or (b) leave unclaimed and note the gap in the report Summary so it is not silently absent. (b) is cheaper and matches the project's no-silent-zeros stance.\n\nRELATED: TB-21 (Summary misreports corpus size) \u2014 the right home for surfacing 'calls a parser saw but could not join'.",
-  "done_at": null,
+  "done_at": "2026-07-10T22:17:09Z",
   "evidence_refs": [],
   "id": "task_01KX69PJW5PSZVD1N573AWQWYV",
-  "last_event_id": "ev_01KX69PK1SN1C99FF8CAQ8001K",
-  "last_status_changed_at": "2026-07-10T15:17:53Z",
+  "last_event_id": "ev_01KX71PH6324THWEJ7XY82TDRA",
+  "last_status_changed_at": "2026-07-10T22:17:09Z",
   "priority": "medium",
   "relationships_out": [
     {
@@ -25,10 +32,10 @@
   "reopened_count": 0,
   "schema_version": 1,
   "short_id": "TB-24",
-  "status": "backlog",
+  "status": "done",
   "tags": null,
   "title": "codex web_search_call has no call_id and no output record, so CodexParser cannot join it",
   "type": "bug",
-  "updated_at": "2026-07-10T15:17:53Z",
+  "updated_at": "2026-07-10T22:17:17Z",
   "urgency": null
 }
