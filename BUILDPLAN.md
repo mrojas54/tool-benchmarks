@@ -46,12 +46,21 @@ parallel (T2, T3), then the two consumers (T4, T5), then docs + gate (T6).
 | **T4 — `passive.py` reducer + report + CLI** | incremental reducer, four report sections + provenance, full CLI, error/exit contract | S11, S12, S13, S14, S15, S19, S23 | T2, T3 |
 | **T5 — `probe.py` + `active-probes.md`** | 5-file corpus under `tools/` (done), `_V2` sentinels + tool-name verify, comparison table + #8376 seeds → `reports/` | S16, S17, S18 | T2 |
 | **T6 — README + strict gate** | README (agents/targets/run/index/metrics), then ruff + mypy --strict + full suite green; PR | S22 | T4, T5 |
-| **T7 — usage provenance + probe refusal** (lattice `TB-18`) | `UsageProvenance` enum, `HermesTraceParser` split on `version`, four-case cache render, `NonIsolableTurns` refusal, WAL read-only repair | S29, S30 | T4, T5 |
+| **T7 — schema dispatch seam** (lattice `TB-13`) | `detect_parser`, `PARSERS` registry, `UnknownSchema` / `AmbiguousSchema`; no default parser | S27, S28 | T2 |
+| **T8 — requestId-keyed arm isolability** (lattice `TB-16`) | turn key is the `requestId`, not the timestamp; response-pooled usage attribution | S26 | T5 |
+| **T9 — usage provenance + probe refusal** (lattice `TB-18`) | `UsageProvenance` enum, `HermesTraceParser` split on `version`, four-case cache render, `NonIsolableTurns` refusal, WAL read-only repair | S29, S30 | T4, T5, T7, T8 |
 
-`T1`–`T6` are the v2 build-contract tickets and predate the lattice board.
-`T7` is the first row minted as a lattice ticket; its board ID is `TB-18` and
-its step-by-step lives in `docs/superpowers/plans/2026-07-09-tb-18-usage-provenance.md`.
-Future rows should carry both IDs.
+`T1`–`T6` are the original v2 build-contract tickets (board `TB-2`–`TB-7`) and
+predate the lattice board's use as the source of truth. `T7`–`T9` are recorded
+retroactively: the work landed as lattice tickets first, and the criteria they
+deliver — S26, S27, S28 — were previously claimed by no row here at all.
+
+Rows are listed in dependency order, not in the order they were minted. Every
+future row carries both IDs; `T9`'s step-by-step lives in
+`docs/superpowers/plans/2026-07-09-tb-18-usage-provenance.md`.
+
+Still unclaimed by any row: the `CodexParser` itself (board `TB-12`), which S28
+only defers — `codex` and `cursor` land in `skipped_roots` until it exists.
 
 ## Checkpoint sequence
 

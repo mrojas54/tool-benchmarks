@@ -1,0 +1,38 @@
+{
+  "assigned_to": null,
+  "branch_links": [],
+  "comment_count": 0,
+  "complexity": "medium",
+  "created_at": "2026-07-10T05:34:16Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "description": "Filed out of TB-18, which named this as an out-of-scope opportunity. Distinct from TB-18: that ticket makes the absent per-call usage channel *legible* (renders `n/a` instead of `no`). This ticket asks whether a real, populated cache signal at session grain should be used at all.\n\n`_is_cache_hit(usage)` (passive.py:174) consults only per-call `message.usage`. hermes has none \u2014 not in the SQLite adapter (ABSENT_BY_SCHEMA) and not in `--format trace` (ABSENT_BY_EXPORT). So every hermes call counts as a cache MISS today, from both paths.\n\nBut hermes does record cache data, at SESSION grain.\n\nMEASURED against the live archive (2026-07-10, read-only, all four databases \u2014 including `aphrodite-mood`, which was unreadable until the WAL fix in TB-18 Task 0 landed):\n\n  profile              sessions  cache_read>0   messages  token_count non-null\n  .hermes                   795           721       6781                     0\n  aphrodite-mood             34            29       2006                     0\n  light-mood                 28            20        746                     0\n  tech-interviewing           6             6        644                     0\n  TOTAL                     863           776      10177                     0\n\n776 / 863 sessions (90%) carry `cache_read_tokens > 0`. `messages.token_count` is null in all 10,177 rows, confirming the grain is session, not message.\n\nTHE HARD PART is attribution, not availability. A session-grain figure cannot be attributed to an individual tool call without inventing a denominator. Do NOT divide by tool_call_count and report a per-call rate \u2014 that fabricates precision the data does not have, which is the same class of error TB-18 exists to fix.\n\nCANDIDATE SHAPES (not chosen):\n  a. Report cache as a session-grain caveat line for hermes, alongside the per-call flag for claude, and never mix the two in one column.\n  b. Extend UsageProvenance with a PRESENT_AT_SESSION_GRAIN member so the render rule can say \"measured, but not at this grain\".\n  c. Leave `n/a` (TB-18 outcome) and document that hermes cache data exists but is out-of-grain for a per-call report.\n\nDepends on TB-18 landing first: UsageProvenance and the four-case render rule are the seam this would extend.\n\nACCEPTANCE. Either hermes cache data reaches the report at a grain it actually has, or the report states that session-grain cache data exists and is deliberately not attributed per call. What must not survive: a report implying hermes achieved a 0% cache-hit rate.",
+  "done_at": null,
+  "evidence_refs": [],
+  "id": "task_01KX589YMJHVTTMA5YYBA9227D",
+  "last_event_id": "ev_01KX58ADGZQJX2TCFC6GV3G7HZ",
+  "last_status_changed_at": "2026-07-10T05:34:16Z",
+  "priority": "medium",
+  "relationships_out": [
+    {
+      "created_at": "2026-07-10T05:34:31Z",
+      "created_by": "agent:claude",
+      "note": "TB-18 introduces UsageProvenance and the four-case render rule; TB-20 extends that seam to session-grain cache data. TB-18 lands first.",
+      "target_task_id": "task_01KX4257MZSQMKY01KMG0E1G29",
+      "type": "related_to"
+    }
+  ],
+  "reopened_count": 0,
+  "schema_version": 1,
+  "short_id": "TB-20",
+  "status": "backlog",
+  "tags": [
+    "hermes",
+    "integrity",
+    "metrics"
+  ],
+  "title": "hermes sessions report 100% cache-miss: session-grain cache_read_tokens is never consulted",
+  "type": "bug",
+  "updated_at": "2026-07-10T05:34:31Z",
+  "urgency": null
+}
