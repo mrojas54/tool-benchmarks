@@ -26,6 +26,7 @@ from toolbench.passive import (
     main,
     parse_args,
     render_report,
+    session_signature,
 )
 from toolbench.passive import (
     _discover_refs,
@@ -1287,6 +1288,16 @@ class CorpusFingerprintTests(unittest.TestCase):
     def test_empty_and_populated_differ(self) -> None:
         self.assertNotEqual(corpus_fingerprint([]).digest, corpus_fingerprint(["a"]).digest)
 
+    def test_a_grown_session_moves_the_digest_with_the_same_ids(self) -> None:
+        # The live session appends a call between runs: same id set, different
+        # content. The fingerprint must move -- an id-only digest would falsely
+        # match and let a reader attribute the delta to code (the "must not
+        # survive" outcome). session_signature folds the call count to catch it.
+        before = corpus_fingerprint([session_signature("live", 10), session_signature("s2", 3)])
+        after = corpus_fingerprint([session_signature("live", 11), session_signature("s2", 3)])
+        self.assertNotEqual(before.digest, after.digest)
+        self.assertEqual(before.count, after.count)  # same number of sessions
+
 
 class CorpusFingerprintRenderTests(unittest.TestCase):
     """S36: the Summary carries the fingerprint line so a reader can compare inputs."""
@@ -1376,6 +1387,35 @@ class CorpusFingerprintMainTests(unittest.TestCase):
         self.assertNotEqual(self._fingerprint_line(outs[0]), self._fingerprint_line(outs[1]))
         self.assertIn("(2 sessions scanned)", self._fingerprint_line(outs[0]))
         self.assertIn("(1 sessions scanned)", self._fingerprint_line(outs[1]))
+
+    def test_a_grown_session_moves_the_fingerprint_with_the_same_id_set(self) -> None:
+        # Same discovered ids both runs, but good-1's append-only transcript grows
+        # by a call. Scanned count is unchanged (2 sessions), yet the fingerprint
+        # must move so the two reports are not falsely declared comparable.
+        good = (FIXTURES / "sample.jsonl").read_text()
+        extra = (
+            '{"type":"assistant","sessionId":"sess-001","timestamp":"2026-07-08T10:00:09Z",'
+            '"message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_009",'
+            '"name":"Bash","input":{"command":"pwd"}}],"usage":{"input_tokens":5,'
+            '"output_tokens":1},"model":"claude-opus-4-8"}}\n'
+        )
+        grown = good + extra
+        r1 = FakeRunner(
+            [_completed(stdout=self._payload()), _completed(stdout=good), _completed(stdout=good)]
+        )
+        r2 = FakeRunner(
+            [_completed(stdout=self._payload()), _completed(stdout=grown), _completed(stdout=good)]
+        )
+        outs = []
+        for runner in (r1, r2):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                main(["--index-source", "agentsview"], runner=runner)
+            outs.append(out.getvalue())
+        self.assertNotEqual(self._fingerprint_line(outs[0]), self._fingerprint_line(outs[1]))
+        # both still scanned 2 sessions -- the move is content, not membership
+        self.assertIn("(2 sessions scanned)", self._fingerprint_line(outs[0]))
+        self.assertIn("(2 sessions scanned)", self._fingerprint_line(outs[1]))
 
 
 class CorpusFreezeMainTests(unittest.TestCase):

@@ -9,6 +9,7 @@ corpus-wide `list[ToolCall]` is ever retained.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import sys
 from collections import Counter
 from collections.abc import Iterable
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import cast
 
 from toolbench.adapters import UnknownSchema
+from toolbench.freeze import read_manifest, write_manifest
 from toolbench.registry import pick_adapter
 from toolbench.sources import (
     IndexSource,
@@ -177,6 +179,58 @@ class Reducer:
             prev_bad = is_bad
 
 
+@dataclass(frozen=True)
+class CorpusFingerprint:
+    """Identity of the scanned corpus (TB-22, S36).
+
+    A `digest` over a per-session *signature* for every scanned session -- the
+    sessions that actually produced the report's numbers -- plus their `count`.
+    Two runs whose fingerprints match scanned the same sessions with the same
+    content, so a numeric delta between their reports is attributable to code,
+    not to the corpus moving underneath.
+
+    The signature carries both mechanisms the corpus drifts by (see the ticket):
+    a session's identity catches the sliding-window TAIL DELETION (a transcript
+    ages out and its id leaves the set), and its call count catches the live
+    session's APPEND (transcripts are append-only, so the count is an exact proxy
+    for content growth). An id-only digest would match across an append and
+    falsely reassure a reader diffing the two reports -- the one outcome the
+    ticket says must not survive.
+
+    The scanned set, not the discovered set, is the basis: a discovered-set
+    digest could match while transcripts slid scanned->skipped. The count travels
+    alongside so a hash collision cannot hide a size change.
+    """
+
+    digest: str
+    count: int
+
+
+def corpus_fingerprint(signatures: Iterable[str]) -> CorpusFingerprint:
+    """Order-independent fingerprint of a set of per-session signatures (S36).
+
+    Sorted before hashing so discovery/paging order can never move the digest --
+    only the membership or content of the scanned set can. `session_signature`
+    builds the per-session strings; this stays a pure set-hash so its callers
+    decide what a signature contains (the manifest freezes identity alone).
+    """
+    items = sorted(signatures)
+    h = hashlib.sha256()
+    for sig in items:
+        h.update(sig.encode("utf-8"))
+        h.update(b"\n")
+    return CorpusFingerprint(digest=h.hexdigest()[:16], count=len(items))
+
+
+def session_signature(session_id: str, call_count: int) -> str:
+    """One scanned session's fingerprint contribution: identity + content (S36).
+
+    Tab-joined so a session that grows by a call moves the corpus fingerprint even
+    though its id is unchanged (append-only transcripts -> count is exact).
+    """
+    return f"{session_id}\t{call_count}"
+
+
 def _bump(counter: dict[str, int], tool: str) -> None:
     counter[tool] = counter.get(tool, 0) + 1
 
@@ -288,6 +342,7 @@ class CliArgs:
     exclude_subagents: bool
     index_source: str
     verbose: bool
+    freeze: str | None
 
 
 def parse_args(argv: list[str] | None) -> CliArgs:
@@ -304,6 +359,13 @@ def parse_args(argv: list[str] | None) -> CliArgs:
     parser.add_argument("--exclude-subagents", action="store_true", default=False)
     parser.add_argument("--index-source", choices=("auto", "agentsview", "raw"), default="auto")
     parser.add_argument("--verbose", action="store_true", default=False)
+    parser.add_argument(
+        "--freeze",
+        default=None,
+        metavar="MANIFEST",
+        help="Pin the discovered corpus: write the ref list once, replay it on "
+        "later runs, and name refs that have since vanished (TB-22).",
+    )
     ns = parser.parse_args(argv)
     return CliArgs(
         agent=cast(str, ns.agent),
@@ -317,6 +379,7 @@ def parse_args(argv: list[str] | None) -> CliArgs:
         exclude_subagents=cast(bool, ns.exclude_subagents),
         index_source=cast(str, ns.index_source),
         verbose=cast(bool, ns.verbose),
+        freeze=cast("str | None", ns.freeze),
     )
 
 
@@ -392,6 +455,8 @@ def render_report(
     include_subagents: bool,
     since_note: str | None,
     verbose: bool = False,
+    fingerprint: CorpusFingerprint | None = None,
+    freeze_note: str | None = None,
 ) -> str:
     """Render the five-section report (S14) with provenance (S15)."""
     lines: list[str] = ["# Tool Usage Report", ""]
@@ -498,6 +563,15 @@ def render_report(
     lines.append(
         f"- Sessions discovered: {scanned + skipped} / scanned: {scanned} / skipped: {skipped}"
     )
+    if fingerprint is not None:
+        # Identity of the set that produced the numbers above: two reports whose
+        # fingerprints match are diffable; a delta between them is code, not the
+        # corpus moving underneath (TB-22, S36).
+        lines.append(
+            f"- Corpus fingerprint: {fingerprint.digest} ({fingerprint.count} sessions scanned)"
+        )
+    if freeze_note is not None:
+        lines.append(f"- {freeze_note}")
     if skips:
         # Keyed on the typed SkipReason (S34), not a substring scan of prose. A dead
         # index entry (missing_source) and a parser gap (unknown_schema) are counted
@@ -540,16 +614,36 @@ def main(
     root: str = "~/.claude/projects",
 ) -> int:
     args = parse_args(argv)
-    try:
-        refs, fallback_reason, skips = _discover_refs(args, root, runner)
-    except (FileNotFoundError, RuntimeError) as exc:
-        print(f"toolbench.passive: fatal source error: {exc}", file=sys.stderr)
-        return 1
+
+    # `--freeze` pins the discovered set: absent manifest -> discover and write it
+    # once; present manifest -> replay it, bypassing live discovery so the input
+    # set cannot drift between runs (TB-22, S37).
+    freeze_path = args.freeze
+    replaying = freeze_path is not None and Path(freeze_path).expanduser().exists()
+
+    refs: list[SessionRef]
+    fallback_reason: str | None
+    skips: list[SkipRecord]
+    if replaying:
+        assert freeze_path is not None
+        manifest = read_manifest(freeze_path)
+        refs, fallback_reason, skips = manifest.refs, None, []
+    else:
+        try:
+            refs, fallback_reason, skips = _discover_refs(args, root, runner)
+        except (FileNotFoundError, RuntimeError) as exc:
+            print(f"toolbench.passive: fatal source error: {exc}", file=sys.stderr)
+            return 1
+        if freeze_path is not None:
+            write_manifest(
+                freeze_path, refs, corpus_fingerprint(r.session_id for r in refs).digest
+            )
 
     if args.exclude_subagents:
         refs = filter_subagents(refs)
 
     reducer = Reducer()
+    scanned_sigs: list[str] = []
     for ref in refs:
         if args.verbose:
             print(f"scanning {ref.session_id} ({ref.source})", file=sys.stderr)
@@ -565,6 +659,24 @@ def main(
             continue
         filtered = _apply_date_range(result, args.date_from, args.date_to)
         reducer.absorb(ref.agent, filtered)
+        # Signature after date filtering: the report counts these calls, so the
+        # fingerprint must fold the same post-filter count (S36).
+        scanned_sigs.append(session_signature(ref.session_id, len(filtered.calls)))
+
+    fingerprint = corpus_fingerprint(scanned_sigs)
+
+    freeze_note: str | None = None
+    if freeze_path is not None:
+        if replaying:
+            # A frozen ref that no longer loads (missing_source) has vanished from
+            # disk since the freeze -- name the count so a shrinking scanned set is
+            # never mistaken for a code effect (TB-22).
+            vanished = sum(1 for s in skips if s.reason is SkipReason.MISSING_SOURCE)
+            freeze_note = (
+                f"Replaying frozen corpus: {freeze_path} ({vanished} vanished since freeze)"
+            )
+        else:
+            freeze_note = f"Corpus frozen to: {freeze_path}"
 
     if reducer.calls_joined == 0:
         if skips:
@@ -583,6 +695,8 @@ def main(
         include_subagents=not args.exclude_subagents,
         since_note=args.since,
         verbose=args.verbose,
+        fingerprint=fingerprint,
+        freeze_note=freeze_note,
     )
     if args.out:
         Path(args.out).write_text(report)
