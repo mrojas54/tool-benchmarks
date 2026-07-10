@@ -1,0 +1,21 @@
+{
+  "created_at": "2026-07-10T16:33:46Z",
+  "created_by": "agent:claude",
+  "custom_fields": {
+    "url": "https://github.com/mrojas54/tool-benchmarks/pull/27"
+  },
+  "id": "art_01KX6E1GNS0P4BFZVG3EWMPDC2",
+  "model": null,
+  "payload": {
+    "content_type": null,
+    "file": null,
+    "size_bytes": null
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": "TB-23: type the skip from raise site to report",
+  "tags": [],
+  "title": "PR #27",
+  "token_usage": null,
+  "type": "reference"
+}

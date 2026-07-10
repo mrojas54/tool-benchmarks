@@ -65,6 +65,21 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   first and falls back to raw scanning (recording the reason) if the CLI is
   missing or exits nonzero; `agentsview` is strict and errors clearly;
   `raw` uses the filesystem only.
+- **S34 — skips carry a typed reason, not stringified prose.** Every skipped
+  session is a `SkipRecord(session_id, agent, reason: SkipReason, detail)`, where
+  `SkipReason` is a `StrEnum` — `MISSING_SOURCE` / `UNKNOWN_SCHEMA` /
+  `NON_TRANSCRIPT` / `DECODE_ERROR` / `EXPORT_FAILED`. The reason is decided where
+  the evidence lives, not by regex on the report: `AgentsViewLoader.lines` raises a
+  distinct `MissingSourceExport` (a flat `RuntimeError` sibling of
+  `NonTranscriptExport`, **not** a subclass — a gone file and a binary file are
+  different diagnoses) when export stderr matches `source file not found`; every
+  other non-zero export stays a plain `RuntimeError` → `EXPORT_FAILED`.
+  `classify_skip` maps each caught exception type to its `SkipReason` one frame
+  after the raise, before the type information is lost; `skip_record_for` stamps it
+  with the ref's identity; `tally_skips` answers "how many sessions have no parser?"
+  as `tally[UNKNOWN_SCHEMA]` with no prose parsing. Mirrors `UsageProvenance` (S29):
+  type the absence rather than stringify it. `detail` preserves the original message
+  for `--verbose`/sidecar output but is never parsed to recover `reason` (TB-23).
 
 ## Passive analyzer — `toolbench/passive.py`
 
@@ -86,8 +101,9 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 - **S15 — report provenance.** The report states the index source used,
   sessions scanned, tool calls joined, malformed-line count, whether
   subagents were included, any AgentsView fallback reason, and skipped
-  roots (including per-session `NonTranscriptExport` / decode failures); it
-  notes `--since` is file-mtime based.
+  roots (including per-session `NonTranscriptExport` / decode failures, each
+  now carrying a typed `SkipReason` — S34); it notes `--since` is file-mtime
+  based.
 
 ## Active probes — `toolbench/probe.py` + `protocols/active-probes.md`
 

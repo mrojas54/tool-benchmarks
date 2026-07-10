@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
@@ -18,6 +19,11 @@ Runner = Callable[[list[str]], "subprocess.CompletedProcess[str]"]
 # JSONL transcript, so it is a sound discriminator rather than a heuristic.
 SNIFF_LEN = 8192
 
+# `agentsview session export` writes this to stderr when it lists a session whose
+# transcript is no longer on disk. Matched to raise a typed MissingSourceExport so
+# the reason is decided where the evidence lives, not by regex on the report (TB-23).
+_MISSING_SOURCE_MARKER = "source file not found"
+
 
 class NonTranscriptExport(RuntimeError):
     """A session payload is not a JSONL transcript (e.g. `agentsview session export`
@@ -27,6 +33,46 @@ class NonTranscriptExport(RuntimeError):
     via its existing per-session guard, instead of absorbing megabytes of binary as
     'malformed lines'.
     """
+
+
+class MissingSourceExport(RuntimeError):
+    """AgentsView lists a session whose transcript no longer exists on disk.
+
+    A DEAD INDEX ENTRY, not a data error in this repo: driven by external retention
+    (TB-22). Subclasses RuntimeError so `passive.main`'s per-session guard demotes it,
+    but deliberately NOT `NonTranscriptExport` -- "the file is gone" and "the file is
+    binary" are different diagnoses, and flat siblings keep `classify_skip` (TB-23)
+    unambiguous.
+    """
+
+
+class SkipReason(StrEnum):
+    """Why a discovered session never reached the reducer (TB-23).
+
+    Typed at the raise site so `passive` can answer "how many sessions have no
+    parser?" without a regex over its own rendered prose. Mirrors the
+    `UsageProvenance` enum (S29): type the absence rather than stringify it.
+    """
+
+    MISSING_SOURCE = "missing_source"  # dead index entry; transcript gone from disk (TB-22)
+    UNKNOWN_SCHEMA = "unknown_schema"  # no registered parser claimed it (S28) -- the actionable bucket
+    NON_TRANSCRIPT = "non_transcript"  # NUL-sniff rejected a binary/SQLite export (TB-10)
+    DECODE_ERROR = "decode_error"      # a strict-decode runner hit invalid UTF-8
+    EXPORT_FAILED = "export_failed"    # `export` returned non-zero for some other reason
+
+
+@dataclass(frozen=True)
+class SkipRecord:
+    """A skipped session, tagged with its identity and a machine-readable reason.
+
+    `detail` preserves the original message for `--verbose` / sidecar output (TB-21);
+    it is never parsed to recover `reason` -- that is what `reason` is for.
+    """
+
+    session_id: str
+    agent: str
+    reason: SkipReason
+    detail: str
 
 
 def _looks_binary(sample: str) -> bool:
@@ -162,9 +208,10 @@ class AgentsViewLoader(SessionLoader):
     def lines(self, ref: SessionRef) -> Iterator[str]:
         result = self._runner(["agentsview", "session", "export", ref.session_id])
         if result.returncode != 0:
-            raise RuntimeError(
-                f"agentsview session export failed ({result.returncode}): {result.stderr.strip()}"
-            )
+            detail = f"agentsview session export failed ({result.returncode}): {result.stderr.strip()}"
+            if _MISSING_SOURCE_MARKER in result.stderr:
+                raise MissingSourceExport(detail)
+            raise RuntimeError(detail)
         if _looks_binary(result.stdout[:SNIFF_LEN]):
             # No session id here: callers that record this already prefix it.
             raise NonTranscriptExport(
