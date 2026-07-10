@@ -201,6 +201,20 @@ class ReducerAbsorbTests(unittest.TestCase):
         reducer.absorb("claude-code", ParseResult(calls=calls, malformed=0))
         self.assertEqual(reducer.inefficiency.subagent_fanout, 1)
 
+    def test_subagent_fanout_counts_codex_spawn_agent(self) -> None:
+        """codex is the only agent in the corpus that spawns subagents, and the
+        fan-out callout was measured with its data absent (TB-12). `wait_agent`
+        awaits an existing subagent and is not a fan-out."""
+        reducer = Reducer()
+        calls = [
+            make_call(name="spawn_agent"),
+            make_call(name="wait_agent"),
+            make_call(name="exec_command"),
+        ]
+        reducer.absorb("codex", ParseResult(calls=calls, malformed=0))
+        self.assertEqual(reducer.inefficiency.subagent_fanout, 1)
+        self.assertEqual(reducer.inefficiency.subagent_by_tool, {"spawn_agent": 1})
+
     def test_churn_counts_consecutive_same_tool_bad_repeats(self) -> None:
         reducer = Reducer()
         calls = [
@@ -809,7 +823,7 @@ def _ok_export(stdout: str) -> "subprocess.CompletedProcess[str]":
     return subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr="")
 
 
-def test_parse_ref_parses_an_agentsview_claude_session_without_a_temp_file():
+def test_parse_ref_parses_an_agentsview_claude_session_without_a_temp_file() -> None:
     ref = SessionRef(agent="claude", source="agentsview", project="p", session_id="c:1", path=None)
     body = (
         '{"sessionId":"s1","timestamp":"t0","message":{"content":'
@@ -822,22 +836,46 @@ def test_parse_ref_parses_an_agentsview_claude_session_without_a_temp_file():
     assert result.calls[0].name == "Grep"
 
 
-def test_parse_ref_raises_unknown_schema_for_codex_instead_of_returning_zero():
+def test_parse_ref_returns_codex_calls_instead_of_a_healthy_zero() -> None:
+    """Was `..._raises_unknown_schema_for_codex_instead_of_returning_zero`.
+
+    The ticket's whole arc in one test: codex went silent-zero (TB-12 filed) ->
+    loud UnknownSchema (TB-13 seam) -> parsed (TB-12 fixed).
+    """
     ref = SessionRef(
         agent="codex", source="agentsview", project="p", session_id="codex:1", path=None
     )
-    body = '{"type":"session_meta","payload":{},"timestamp":"t"}\n'
+    body = (
+        '{"type":"session_meta","payload":{"session_id":"c1"},"timestamp":"t"}\n'
+        '{"type":"response_item","timestamp":"t","payload":'
+        '{"type":"function_call","name":"exec_command","arguments":"{}","call_id":"k1"}}\n'
+        '{"type":"response_item","timestamp":"t","payload":'
+        '{"type":"function_call_output","call_id":"k1","output":"ok"}}\n'
+    )
+    result = _parse_ref(ref, runner=lambda argv: _ok_export(body))
+    assert len(result.calls) == 1
+    assert result.calls[0].name == "exec_command"
+    assert result.malformed == 0
+
+
+def test_parse_ref_still_raises_unknown_schema_for_an_unregistered_schema() -> None:
+    """Registering codex must not weaken the guarantee TB-13 bought: an unrecognized
+    schema raises rather than returning a healthy zero. cursor is still unregistered."""
+    ref = SessionRef(
+        agent="cursor", source="agentsview", project="p", session_id="cursor:1", path=None
+    )
+    body = '{"role":"user","message":{}}\n'
     with pytest.raises(UnknownSchema):
         _parse_ref(ref, runner=lambda argv: _ok_export(body))
 
 
-def test_passive_no_longer_imports_tempfile():
+def test_passive_no_longer_imports_tempfile() -> None:
     import toolbench.passive as p
 
     assert not hasattr(p, "tempfile"), "the NamedTemporaryFile round-trip must be gone"
 
 
-def test_unknown_schema_lands_in_skipped_roots_not_as_a_zero_row():
+def test_unknown_schema_lands_in_skipped_roots_not_as_a_zero_row() -> None:
     # UnknownSchema is a RuntimeError, so main()'s existing guard demotes it.
     ref = SessionRef(
         agent="codex", source="agentsview", project="p", session_id="codex:1", path=None

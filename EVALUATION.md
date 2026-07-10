@@ -59,11 +59,12 @@ One row per SPEC criterion, each tagged by how it is verified:
 | S25 | acceptance smoke completes | `operator-assisted` / `external-oracle` | `test:full` |
 | S26 | requestId-keyed isolability; prose/thinking/batch blank usage | `autonomous` | `test` (prose + pooled fixtures) |
 | S27 | schema dispatch (`detect_parser`); UnknownSchema / AmbiguousSchema | `autonomous` | `test` (`test_adapters` / `test_registry`) |
-| S28 | no default parser; unrecognized schemas skip loudly | `autonomous` | `test` (codex/cursor → skipped_roots) |
+| S28 | no default parser; unrecognized schemas skip loudly | `autonomous` | `test` (cursor → skipped_roots; codex now parsed per S33) |
 | S29 | producer split on `version`; `UsageProvenance` stamped; four-case cache render | `autonomous` | `test` (`schema_hermes_trace.jsonl` fixture; `detect_parser` → `HermesTraceParser`; `n/a` / `n/a*` / `no` render) |
 | S30 | probe refuses trace at dispatch; `_turn_key` raises `NonIsolableTurns`; no timestamp fallback | `autonomous` | `test` (probe fixtures carry `requestId`; refusal on a stripped fixture) |
 | S31 | gate command collects every test (`TestCase` methods + module-level fns) | `autonomous` | `test` (`test_gate_completeness.py`) |
 | S32 | session-grain `cache_read_tokens` surfaced as an agent-level caveat, never fabricated per call, never mixed with the per-call `cache_assisted` column | `autonomous` / `operator-assisted` (live archive ratio) | `test` (`test_hermes.py` present/null/zero session-grain fixtures; `test_passive.py` Reducer counters + Agent Breakdown caveat render + Tool Leaderboard non-leakage) |
+| S33 | codex's three paired call shapes join on `payload.call_id`, each with its own input/output field and name source; `tool_search_call` named `ToolSearch` so the deferral tax sees it; session identified by `session_meta.id` (not `session_id`); `model` from `turn_context`; usage `ABSENT_BY_SCHEMA`; `error` never inferred; `spawn_agent` counted as fan-out; `web_search_call` unclaimed (TB-24); claim predicate disjoint from claude/hermes | `autonomous` / `operator-assisted` (live archive count) | `test` (`test_parsers.py` codex fixture: three joins, `input`-vs-`arguments`, dict-vs-string `arguments`, `tools`-vs-`output`, rollout-id identity incl. a subagent rollout and an older no-`session_id` rollout, EOF drain, provenance, no-error; `test_passive.py` `spawn_agent` fan-out; `test_adapters.py` detection + claude non-theft; `test_registry.py` / `test_passive.py` end-to-end, with cursor still raising `UnknownSchema`) |
 
 ## Operator post-merge smoke checkpoints (human-driven)
 

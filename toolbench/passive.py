@@ -24,7 +24,11 @@ from toolbench.sources import (
 from toolbench.transcript import ParseResult, UsageProvenance
 
 OVERSIZED_OUTPUT_TOKENS = 5000
-SUBAGENT_TOOL_NAMES = frozenset({"Agent", "Task"})
+# `spawn_agent` is codex's fan-out primitive (TB-12). codex is the only agent in
+# the corpus that spawns subagents, so before it was parsed the fan-out callout was
+# measured with its most relevant agent's data entirely absent. `wait_agent` awaits
+# an already-spawned subagent and is not itself a fan-out.
+SUBAGENT_TOOL_NAMES = frozenset({"Agent", "Task", "spawn_agent"})
 UNKNOWN_MODEL = "unknown"
 
 

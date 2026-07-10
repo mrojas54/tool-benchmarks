@@ -78,8 +78,12 @@ than letting `ClaudeParser` swallow a usage-less export as a measured zero.
 **No parser is the default.** An unrecognized transcript raises `UnknownSchema`
 (a `RuntimeError`, so `passive.main`'s existing per-session guard demotes it to
 `skipped_roots`). Previously such a session fell through to the Claude parser,
-matched nothing, and reported a healthy zero. `codex` and `cursor` land in
-`skipped_roots` today, pending a `CodexParser` in TB-12.
+matched nothing, and reported a healthy zero. `codex` is now claimed by
+`CodexParser`, which joins its three paired `response_item` shapes —
+`function_call`, `custom_tool_call`, and `tool_search_call` — on `payload.call_id`
+(S33 / TB-12). `cursor` still lands in `skipped_roots`, pending a parser of its own.
+codex's `web_search_call` has no `call_id` and no output record, so it is not
+joined and not reported (TB-24).
 
 - **`transcript.py`** — the schema-neutral records: `ToolCall` (with
   `UsageProvenance`), `ParseResult` (optional `session_cache_read_tokens`),
@@ -155,13 +159,19 @@ cannot key to the billing unit), the gate itself running every test
 (**S31** / TB-19: the documented command is `pytest`, not `unittest
 discover`, which silently missed 37 module-level tests), and session-grain
 Hermes cache surfacing (**S32** / TB-20: Agent Breakdown caveat, never
-folded into the per-call `cache_assisted` column). The strict gate
-(`ruff`, `mypy --strict`, `pytest`) is green — **262** tests passing
-(1 skipped when the live hermes archive is absent).
+folded into the per-call `cache_assisted` column), and the codex schema
+(**S33** / TB-12: `CodexParser` joins three paired `response_item` shapes on
+`payload.call_id`, recovering ~3,100 calls across 93 sessions that the
+Claude-only parser had reported as a healthy zero). The strict gate
+(`ruff check .`, `mypy --strict toolbench tests`, `pytest`) is green —
+**283** tests passing (1 skipped when the live hermes archive is absent).
+`mypy --strict` covers `tests` as well as `toolbench`, and passes on both:
+before TB-12 the `tests` tree carried 38 `no-untyped-def` errors, so the
+documented gate had never actually been green.
 
 Source-of-truth documents:
 
-- [`SPEC.md`](SPEC.md) — 32 numbered acceptance criteria (S1–S32).
+- [`SPEC.md`](SPEC.md) — 33 numbered acceptance criteria (S1–S33).
 - [`EVALUATION.md`](EVALUATION.md) — verification map for every criterion.
 - [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the T1–T6 tickets.
 - [`docs/2026-07-07-tool-benchmarks-design.md`](docs/2026-07-07-tool-benchmarks-design.md)
@@ -321,7 +331,10 @@ rate and never mixed into `cache_assisted`.
 | Bash usage looks ~15–20 tokens higher than the tool arm | Sentinel + optional Bash `description` are billed into bash `output_tokens` only (TB-17) | Expected until TB-17. Compare context-token columns; treat usage as non-comparable. |
 | `cache_assisted` shows `n/a` / `n/a*` for hermes (or hermes-trace) | Per-call usage is absent by schema or dropped by the trace export (S29) | Expected. Do not read `n/a` as "no cache hits". Session-grain cache, when present, appears as an Agent Breakdown caveat (S32), not in this column. |
 | `toolbench.probe` raises `NonIsolableTurns` on a hermes trace file | Trace export has no `requestId`; probe keys turns only by that field (S30) | Score a native Claude Code probe session instead. Trace remains valid input to `passive`. |
-| `codex` / `cursor` sessions appear only in Skipped roots | No parser claims their schema yet (`UnknownSchema`, S28) | Expected until TB-12 lands a `CodexParser`. They must not appear as healthy zero-call agents. |
+| `cursor` sessions appear only in Skipped roots | No parser claims cursor's schema yet (`UnknownSchema`, S28) | Expected until a `CursorParser` lands. It must not appear as a healthy zero-call agent. |
+| `cache_assisted` shows `n/a` for every `codex` tool | codex has no per-call usage channel; it bills per turn via `token_count` events (`ABSENT_BY_SCHEMA`, S33) | Expected. Do not read `n/a` as "no cache hits". |
+| `codex` reports 0 errors no matter what failed | codex encodes exit status in the output text and sets `status: completed` even for failed tools (S33) | Expected. `error` is never inferred from output prose. Use `output_chars` / the raw transcript to inspect failures. |
+| `codex` web searches never appear in the leaderboard | `web_search_call` carries no `call_id` and emits no output record, so it cannot be joined (S33 / TB-24) | Known gap. codex's reported call count understates its true tool usage. |
 
 ## Quality gate
 
