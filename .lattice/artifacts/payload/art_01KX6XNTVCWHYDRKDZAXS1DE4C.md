@@ -1,0 +1,1 @@
+Merged as PR #27 into main (commit 8126775). Types the skip from raise site to report via SkipReason/SkipRecord; SPEC S34 claimed. 301 tests pass, ruff clean, toolbench mypy --strict clean.

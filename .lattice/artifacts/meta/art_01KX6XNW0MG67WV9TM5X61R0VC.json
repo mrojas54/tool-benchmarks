@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-10T21:07:01Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "id": "art_01KX6XNW0MG67WV9TM5X61R0VC",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KX6XNW0MG67WV9TM5X61R0VC.md",
+    "size_bytes": 252
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": "Merged as PR #28 into main (commit d12a7de), stacked on TB-23. Summary now reconciles discovery (discovered/scanned/skipped) and renders skips as a typed per-reason histogram; SPEC S35 claimed. 301 te",
+  "tags": [],
+  "title": "Review findings",
+  "token_usage": null,
+  "type": "note"
+}

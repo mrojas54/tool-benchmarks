@@ -1,0 +1,1 @@
+Merged as PR #28 into main (commit d12a7de), stacked on TB-23. Summary now reconciles discovery (discovered/scanned/skipped) and renders skips as a typed per-reason histogram; SPEC S35 claimed. 301 tests pass, ruff clean, toolbench mypy --strict clean.

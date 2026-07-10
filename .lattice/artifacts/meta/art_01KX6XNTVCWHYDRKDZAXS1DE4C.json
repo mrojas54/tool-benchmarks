@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-10T21:07:00Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "id": "art_01KX6XNTVCWHYDRKDZAXS1DE4C",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KX6XNTVCWHYDRKDZAXS1DE4C.md",
+    "size_bytes": 189
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": "Merged as PR #27 into main (commit 8126775). Types the skip from raise site to report via SkipReason/SkipRecord; SPEC S34 claimed. 301 tests pass, ruff clean, toolbench mypy --strict clean.",
+  "tags": [],
+  "title": "Review findings",
+  "token_usage": null,
+  "type": "note"
+}
