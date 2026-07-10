@@ -46,6 +46,12 @@ parallel (T2, T3), then the two consumers (T4, T5), then docs + gate (T6).
 | **T4 — `passive.py` reducer + report + CLI** | incremental reducer, four report sections + provenance, full CLI, error/exit contract | S11, S12, S13, S14, S15, S19, S23 | T2, T3 |
 | **T5 — `probe.py` + `active-probes.md`** | 5-file corpus under `tools/` (done), `_V2` sentinels + tool-name verify, comparison table + #8376 seeds → `reports/` | S16, S17, S18 | T2 |
 | **T6 — README + strict gate** | README (agents/targets/run/index/metrics), then ruff + mypy --strict + full suite green; PR | S22 | T4, T5 |
+| **T7 — usage provenance + probe refusal** (lattice `TB-18`) | `UsageProvenance` enum, `HermesTraceParser` split on `version`, four-case cache render, `NonIsolableTurns` refusal, WAL read-only repair | S29, S30 | T4, T5 |
+
+`T1`–`T6` are the v2 build-contract tickets and predate the lattice board.
+`T7` is the first row minted as a lattice ticket; its board ID is `TB-18` and
+its step-by-step lives in `docs/superpowers/plans/2026-07-09-tb-18-usage-provenance.md`.
+Future rows should carry both IDs.
 
 ## Checkpoint sequence
 
