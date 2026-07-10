@@ -3,11 +3,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from toolbench import probe
 from toolbench.probe import (
     PROBE_SPECS,
     SEED_BASELINES,
     ArmMatch,
+    NonIsolableTurns,
     SeededReportError,
+    _scan_tool_use_blocks,
+    _turn_key,
     build_comparison_table,
     find_probe_calls,
     render_report,
@@ -420,6 +424,64 @@ class RecordLevelIsolabilityTests(unittest.TestCase):
             self.matches["02"].tool_isolable,
             "an empty/whitespace text block costs no output tokens",
         )
+
+
+class NonIsolableTurnsTests(unittest.TestCase):
+    def test_it_is_a_runtime_error_like_its_siblings(self) -> None:
+        self.assertTrue(issubclass(NonIsolableTurns, RuntimeError))
+
+    def test_turn_key_returns_the_request_id(self) -> None:
+        self.assertEqual(_turn_key({"requestId": "req_abc"}), "req:req_abc")
+
+    def test_turn_key_raises_without_a_request_id(self) -> None:
+        with self.assertRaises(NonIsolableTurns):
+            _turn_key({"timestamp": "2026-07-10T00:00:00Z"})
+
+    def test_turn_key_raises_on_an_empty_request_id(self) -> None:
+        with self.assertRaises(NonIsolableTurns):
+            _turn_key({"requestId": ""})
+
+    def test_no_timestamp_fallback_survives_anywhere(self) -> None:
+        """The `ts:` prefix was the TB-16 defect. It must not exist in the source."""
+        source = Path(probe.__file__).read_text(encoding="utf-8")
+        self.assertNotIn('f"ts:{', source)
+
+
+class ProbeRefusesTraceInput(unittest.TestCase):
+    FIXTURE = Path(__file__).parent / "fixtures" / "schema_hermes_trace.jsonl"
+
+    def test_scan_refuses_a_trace_export_at_dispatch(self) -> None:
+        with self.assertRaises(NonIsolableTurns) as ctx:
+            _scan_tool_use_blocks(self.FIXTURE)
+        self.assertIn("trace", str(ctx.exception).lower())
+
+    def test_the_invariant_guard_is_not_shadowed_by_the_schema_check(self) -> None:
+        """A claude-tagged corpus with requestId stripped must still raise.
+
+        Proves the two guards are independent: the door check is diagnostics,
+        the _turn_key check is the invariant.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "claude_no_request_id.jsonl"
+            path.write_text(
+                json.dumps(
+                    {
+                        "sessionId": "s1",
+                        "type": "assistant",
+                        "timestamp": "2026-07-10T00:00:00Z",
+                        "message": {
+                            "role": "assistant",
+                            "content": [
+                                {"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}
+                            ],
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(NonIsolableTurns):
+                _scan_tool_use_blocks(path)
 
 
 if __name__ == "__main__":
