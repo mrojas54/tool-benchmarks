@@ -10,15 +10,22 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
+from toolbench.adapters import UnknownSchema
 from toolbench.registry import pick_adapter
 from toolbench.sources import (
     IndexSource,
+    MissingSourceExport,
+    NonTranscriptExport,
     Runner,
     SessionRef,
+    SkipReason,
+    SkipRecord,
     iter_sessions,
 )
 from toolbench.transcript import ParseResult, UsageProvenance
@@ -232,6 +239,47 @@ def filter_subagents(refs: list[SessionRef]) -> list[SessionRef]:
     return [ref for ref in refs if not _is_subagent_path(ref)]
 
 
+def classify_skip(exc: BaseException) -> SkipReason:
+    """Map a caught skip exception to its typed reason (TB-23).
+
+    The type information exists at the raise site; this reads it one frame later
+    instead of destroying it into prose. `MissingSourceExport` and
+    `NonTranscriptExport` are flat siblings, so their order here is irrelevant --
+    only the bare-`RuntimeError`/`OSError` fallback must come last.
+    """
+    if isinstance(exc, MissingSourceExport):
+        return SkipReason.MISSING_SOURCE
+    if isinstance(exc, UnknownSchema):
+        return SkipReason.UNKNOWN_SCHEMA
+    if isinstance(exc, NonTranscriptExport):
+        return SkipReason.NON_TRANSCRIPT
+    if isinstance(exc, UnicodeDecodeError):
+        return SkipReason.DECODE_ERROR
+    return SkipReason.EXPORT_FAILED
+
+
+def skip_record_for(ref: SessionRef, exc: BaseException) -> SkipRecord:
+    """Stamp a skipped session with its identity and typed reason (TB-23)."""
+    return SkipRecord(
+        session_id=ref.session_id,
+        agent=ref.agent,
+        reason=classify_skip(exc),
+        detail=str(exc),
+    )
+
+
+def tally_skips(skips: Iterable[SkipRecord]) -> dict[SkipReason, int]:
+    """Count skips per reason. Answers "how many have no parser?" from typed data."""
+    return dict(Counter(s.reason for s in skips))
+
+
+def _skip_detail_line(skip: SkipRecord) -> str:
+    """Flatten one skip to the legacy `<id>: <detail>` prose (root-level skips
+    carry no id). Kept only for the current single-line render; TB-21 replaces it
+    with a per-reason histogram keyed on `skip.reason`."""
+    return f"{skip.session_id}: {skip.detail}" if skip.session_id else skip.detail
+
+
 @dataclass
 class CliArgs:
     """Parsed CLI flags (S12)."""
@@ -281,7 +329,7 @@ def parse_args(argv: list[str] | None) -> CliArgs:
 
 def _discover_refs(
     args: CliArgs, root: str, runner: Runner | None
-) -> tuple[list[SessionRef], str | None, list[str]]:
+) -> tuple[list[SessionRef], str | None, list[SkipRecord]]:
     """Resolve the index-source policy into a bounded list of refs (S10, S23)."""
     project = None if args.all_projects else args.project
     page_limit = args.limit if args.limit is not None else 500
@@ -307,7 +355,7 @@ def _discover_refs(
         )
 
     refs: list[SessionRef] = []
-    skipped_roots: list[str] = []
+    skips: list[SkipRecord] = []
     try:
         for ref in refs_iter:
             refs.append(ref)
@@ -315,10 +363,19 @@ def _discover_refs(
                 break
     except FileNotFoundError as exc:
         if args.index_source == "auto":
-            skipped_roots.append(str(exc))
+            # A root-level failure has no per-session ref; the absent raw fallback
+            # root is itself a missing source (TB-23).
+            skips.append(
+                SkipRecord(
+                    session_id="",
+                    agent=args.agent,
+                    reason=SkipReason.MISSING_SOURCE,
+                    detail=str(exc),
+                )
+            )
         else:
             raise
-    return refs, fallback_reason, skipped_roots
+    return refs, fallback_reason, skips
 
 
 def _parse_ref(ref: SessionRef, runner: Runner | None) -> ParseResult:
@@ -460,7 +517,7 @@ def main(
 ) -> int:
     args = parse_args(argv)
     try:
-        refs, fallback_reason, skipped_roots = _discover_refs(args, root, runner)
+        refs, fallback_reason, skips = _discover_refs(args, root, runner)
     except (FileNotFoundError, RuntimeError) as exc:
         print(f"toolbench.passive: fatal source error: {exc}", file=sys.stderr)
         return 1
@@ -478,14 +535,19 @@ def main(
             # UnicodeDecodeError subclasses ValueError, not OSError/RuntimeError.
             # In-tree readers now decode leniently, so this only fires for a caller
             # who injects a strict-decode `runner`; catching it keeps one bad
-            # session from taking the corpus down with it.
-            skipped_roots.append(f"{ref.session_id}: {exc}")
+            # session from taking the corpus down with it. The reason is typed at the
+            # raise site and read back here rather than stringified away (TB-23).
+            skips.append(skip_record_for(ref, exc))
             continue
         filtered = _apply_date_range(result, args.date_from, args.date_to)
         reducer.absorb(ref.agent, filtered)
 
     if reducer.calls_joined == 0:
-        suffix = f" (skipped roots: {'; '.join(skipped_roots)})" if skipped_roots else ""
+        suffix = (
+            f" (skipped roots: {'; '.join(_skip_detail_line(s) for s in skips)})"
+            if skips
+            else ""
+        )
         print(f"toolbench.passive: no sessions matched the given selection.{suffix}")
         return 0
 
@@ -493,7 +555,7 @@ def main(
         reducer,
         index_source=args.index_source,
         fallback_reason=fallback_reason,
-        skipped_roots=skipped_roots,
+        skipped_roots=[_skip_detail_line(s) for s in skips],
         include_subagents=not args.exclude_subagents,
         since_note=args.since,
     )
