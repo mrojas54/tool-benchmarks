@@ -308,7 +308,13 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   column (S29's four-case render), so the two signals are never mixed in one
   column (S19). `HermesTraceParser` output never populates this field: the
   trace export drops the cache channel entirely, so there is no session-grain
-  value there either (TB-20).
+  value there either (TB-20). Because the value is session-grain and not a
+  per-call quantity, `--date-from`/`--date-to` filtering (S12) narrows only
+  `calls` and leaves `session_cache_read_tokens` intact — even a session whose
+  every call falls outside the range still contributes its cache stat, since the
+  session was measured (TB-25). `_apply_date_range` reconstructs the
+  `ParseResult` with `dataclasses.replace(result, calls=kept)` so no
+  session-grain field can be silently dropped by a hand-listed reconstruction.
 - **S33 — the codex schema is parsed, not skipped.** `CodexParser` claims a line
   whose top-level `type` is one of codex's record kinds (`session_meta`,
   `response_item`, `event_msg`, `turn_context`, `compacted`) and whose `payload`
