@@ -1,6 +1,11 @@
 """ClaudeParser consumes lines, not a path (TB-13, Task 1)."""
 
-from toolbench.parsers import ClaudeParser, TranscriptParser
+from pathlib import Path
+
+from toolbench.parsers import ClaudeParser, HermesTraceParser, TranscriptParser
+from toolbench.transcript import UsageProvenance
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def test_claude_parser_claims_a_line_carrying_session_id():
@@ -49,3 +54,23 @@ def test_claude_parser_counts_malformed_lines_without_raising():
 def test_claude_parser_is_a_transcript_parser():
     assert issubclass(ClaudeParser, TranscriptParser)
     assert ClaudeParser.schema_tag == "claude"
+
+
+def test_hermes_trace_parses_cleanly_and_stamps_absent_by_export():
+    """The hazard: it parses, raises nothing, reports 0 malformed -- and has no usage."""
+    lines = (FIXTURES / "schema_hermes_trace.jsonl").read_text(encoding="utf-8").splitlines(
+        keepends=True
+    )
+    result = HermesTraceParser().parse(iter(lines), agent="claude-code", source="raw", project="p")
+    assert result.malformed == 0
+    assert len(result.calls) == 1
+    call = result.calls[0]
+    assert call.name == "read_file"
+    assert call.usage is None
+    assert call.usage_provenance is UsageProvenance.ABSENT_BY_EXPORT
+
+
+def test_hermes_trace_provenance_ignores_a_usage_dict_entirely():
+    """Unconditional: trace never carries usage, so the arm cannot depend on the value."""
+    assert HermesTraceParser._provenance({"input_tokens": 5}) is UsageProvenance.ABSENT_BY_EXPORT
+    assert HermesTraceParser._provenance(None) is UsageProvenance.ABSENT_BY_EXPORT

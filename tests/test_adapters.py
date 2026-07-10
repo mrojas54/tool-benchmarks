@@ -9,7 +9,7 @@ from toolbench.adapters import (
     UnknownSchema,
     detect_parser,
 )
-from toolbench.parsers import ClaudeParser
+from toolbench.parsers import ClaudeParser, HermesTraceParser
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -21,14 +21,16 @@ def _lines(name: str):
 def test_detect_returns_claude_parser_and_replays_every_line():
     lines = iter(['{"sessionId":"s1","type":"last-prompt"}\n', '{"sessionId":"s1"}\n'])
     parser, replayed = detect_parser(lines)
-    assert isinstance(parser, ClaudeParser)
+    # not a subclass: HermesTraceParser is-a ClaudeParser, so isinstance is too weak
+    assert type(parser) is ClaudeParser
     assert len(list(replayed)) == 2  # the sniffed line is chained back
 
 
 def test_detect_skips_preamble_before_the_discriminating_line():
     lines = iter(["\n", "not json\n", '{"unknown":1}\n', '{"sessionId":"s1"}\n'])
     parser, replayed = detect_parser(lines)
-    assert isinstance(parser, ClaudeParser)
+    # not a subclass: HermesTraceParser is-a ClaudeParser, so isinstance is too weak
+    assert type(parser) is ClaudeParser
     assert len(list(replayed)) == 4  # nothing is consumed away
 
 
@@ -75,12 +77,14 @@ def test_unknown_and_ambiguous_are_runtime_errors():
 
 def test_claude_fixture_detects_as_claude_despite_control_preamble():
     parser, _ = detect_parser(_lines("schema_claude.jsonl"))
-    assert isinstance(parser, ClaudeParser)
+    # not a subclass: HermesTraceParser is-a ClaudeParser, so isinstance is too weak
+    assert type(parser) is ClaudeParser
 
 
 def test_cowork_fixture_detects_as_claude_with_no_registry_entry_of_its_own():
     parser, _ = detect_parser(_lines("schema_cowork.jsonl"))
-    assert isinstance(parser, ClaudeParser)
+    # not a subclass: HermesTraceParser is-a ClaudeParser, so isinstance is too weak
+    assert type(parser) is ClaudeParser
 
 
 def test_codex_fixture_raises_unknown_schema_until_tb_12():
@@ -108,3 +112,31 @@ def test_golden_cowork_fixture_drains_its_unmatched_call():
     result = parser.parse(replayed, agent="cowork", source="agentsview", project="p")
     assert len(result.calls) == 1
     assert result.calls[0].no_result is True  # S6
+
+
+def test_hermes_trace_fixture_detects_as_hermes_trace_not_claude():
+    parser, _ = detect_parser(_lines("schema_hermes_trace.jsonl"))
+    assert type(parser) is HermesTraceParser
+
+
+def test_claude_and_hermes_trace_predicates_partition():
+    """detect_parser raises AmbiguousSchema if two parsers claim one line, so these
+    two predicates must never overlap. Verified against the whole local archive:
+    0 of 4,061 real transcripts carry a top-level version of "hermes-agent"."""
+    claude_line = {"sessionId": "s1", "version": "2.1.205"}
+    trace_line = {"sessionId": "s1", "version": "hermes-agent"}
+    assert ClaudeParser.claims_line(claude_line)
+    assert not HermesTraceParser.claims_line(claude_line)
+    assert HermesTraceParser.claims_line(trace_line)
+    assert not ClaudeParser.claims_line(trace_line)
+
+
+def test_claude_claims_a_line_with_no_version_field():
+    """Real transcripts open with a preamble record that carries no `version`.
+    Measured: 400 of 400 sampled transcripts have no `version` on line 1, and
+    detect_parser decides on the first line a single parser claims."""
+    assert ClaudeParser.claims_line({"sessionId": "s1"})
+
+
+def test_hermes_trace_needs_session_id_too():
+    assert not HermesTraceParser.claims_line({"version": "hermes-agent"})
