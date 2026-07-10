@@ -143,6 +143,13 @@ def parse_hermes_session(
     usage record to report. The granularity gap is session -> call, not
     message -> call. Stamped ABSENT_BY_SCHEMA, never ABSENT_UNEXPECTED: the
     producer knows why it has nothing to say (S29).
+
+    The session row's own `cache_read_tokens` IS read here and threaded onto
+    `ParseResult.session_cache_read_tokens` (S32/TB-20) -- session-grain, never
+    attributed to any one call. Dividing it by `tool_call_count` to fabricate a
+    per-call rate is exactly the class of error S29 exists to eliminate, so this
+    function does not do it; `passive.py` reports the session-grain figure as an
+    agent-level caveat instead.
     """
     db = resolve_session(session_id, home)
     if db is None:
@@ -150,8 +157,11 @@ def parse_hermes_session(
     bare = _bare_id(session_id)
 
     with closing(_connect(db)) as conn:
-        row = conn.execute("SELECT model FROM sessions WHERE id = ?", (bare,)).fetchone()
+        row = conn.execute(
+            "SELECT model, cache_read_tokens FROM sessions WHERE id = ?", (bare,)
+        ).fetchone()
         model = row[0] if row else None
+        session_cache_read_tokens = row[1] if row else None
 
         results: dict[str, str | None] = {
             call_id: content
@@ -211,7 +221,9 @@ def parse_hermes_session(
                 )
             )
 
-    return ParseResult(calls=calls, malformed=malformed)
+    return ParseResult(
+        calls=calls, malformed=malformed, session_cache_read_tokens=session_cache_read_tokens
+    )
 
 
 class HermesAdapter(SessionAdapter):
