@@ -8,7 +8,7 @@
       "repo": null
     }
   ],
-  "comment_count": 1,
+  "comment_count": 2,
   "complexity": "medium",
   "created_at": "2026-07-09T04:29:58Z",
   "created_by": "agent:claude",
@@ -23,7 +23,7 @@
     }
   ],
   "id": "task_01KX2J7FRXTT5X595X4VP7CYKV",
-  "last_event_id": "ev_01KX6851HZE94AZ42R116HDDV3",
+  "last_event_id": "ev_01KX69T29QSZC5ESKZ9YGVMMEY",
   "last_status_changed_at": "2026-07-10T14:50:42Z",
   "priority": "high",
   "relationships_out": [
@@ -49,6 +49,6 @@
   ],
   "title": "toolbench parses only Claude's tool_use schema, so all 60 codex sessions yield zero tool calls",
   "type": "bug",
-  "updated_at": "2026-07-10T14:50:50Z",
+  "updated_at": "2026-07-10T15:19:47Z",
   "urgency": "normal"
 }
