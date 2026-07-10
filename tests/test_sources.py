@@ -11,10 +11,13 @@ import pytest
 
 from toolbench.sources import (
     AgentsViewLoader,
+    MissingSourceExport,
     NonTranscriptExport,
     RawFileLoader,
     SessionLoader,
     SessionRef,
+    SkipReason,
+    SkipRecord,
     _run_agentsview,
     iter_agentsview_sessions,
     iter_session_files,
@@ -384,6 +387,50 @@ def test_agentsview_loader_raises_on_nonzero_returncode() -> None:
 def test_loaders_are_session_loaders() -> None:
     assert issubclass(RawFileLoader, SessionLoader)
     assert issubclass(AgentsViewLoader, SessionLoader)
+
+
+# --- TB-23: a dead index entry raises a distinct, typed exception --------------
+
+
+def test_agentsview_loader_raises_missing_source_when_transcript_is_gone() -> None:
+    # AgentsView lists a session whose .jsonl no longer exists on disk. `export`
+    # exits non-zero with a `source file not found` stderr. That is a categorically
+    # different diagnosis from a generic export failure and gets its own type, so
+    # the reason survives to the report without a regex scan of the prose (TB-23).
+    ref = SessionRef(agent="claude", source="agentsview", project="p", session_id="claude-ai:x", path=None)
+    stderr = "fatal: source file not found: /Users/x/.claude/projects/p/x.jsonl"
+    bad = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr=stderr)
+    loader = AgentsViewLoader(runner=lambda argv: bad)
+    with pytest.raises(MissingSourceExport):
+        list(loader.lines(ref))
+
+
+def test_agentsview_loader_other_failure_is_not_missing_source() -> None:
+    # A non-zero export for any OTHER reason stays a plain RuntimeError (EXPORT_FAILED),
+    # never mis-typed as a dead index entry.
+    ref = SessionRef(agent="codex", source="agentsview", project="p", session_id="c:1", path=None)
+    bad = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="database is locked")
+    loader = AgentsViewLoader(runner=lambda argv: bad)
+    with pytest.raises(RuntimeError) as exc_info:
+        list(loader.lines(ref))
+    assert not isinstance(exc_info.value, MissingSourceExport)
+
+
+def test_missing_source_export_is_a_runtimeerror_but_not_a_non_transcript_export() -> None:
+    # RuntimeError so passive.main's per-session guard still demotes it to a skip.
+    # NOT a NonTranscriptExport: "the file is gone" and "the file is binary" are
+    # different reasons, so the type hierarchy keeps classify_skip unambiguous.
+    assert issubclass(MissingSourceExport, RuntimeError)
+    assert not issubclass(MissingSourceExport, NonTranscriptExport)
+
+
+def test_skip_record_carries_a_typed_reason() -> None:
+    rec = SkipRecord(
+        session_id="c:1", agent="codex", reason=SkipReason.UNKNOWN_SCHEMA, detail="no parser"
+    )
+    assert rec.reason is SkipReason.UNKNOWN_SCHEMA
+    assert rec.session_id == "c:1"
+    assert rec.detail == "no parser"
 
 
 if __name__ == "__main__":

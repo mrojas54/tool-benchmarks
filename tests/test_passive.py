@@ -24,7 +24,19 @@ from toolbench.passive import (
     parse_args,
     render_report,
 )
-from toolbench.sources import SessionRef
+from toolbench.passive import (
+    _discover_refs,
+    classify_skip,
+    skip_record_for,
+    tally_skips,
+)
+from toolbench.sources import (
+    MissingSourceExport,
+    NonTranscriptExport,
+    SessionRef,
+    SkipReason,
+    SkipRecord,
+)
 from toolbench.transcript import ParseResult, ToolCall, UsageProvenance
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -888,6 +900,69 @@ def test_unknown_schema_lands_in_skipped_roots_not_as_a_zero_row() -> None:
         skipped.append(str(exc))
     assert skipped, "an unparseable session must be skipped, never counted as 0 calls"
     assert reducer.calls_joined == 0
+
+
+# --- TB-23: skips carry a machine-readable reason, not stringified prose --------
+
+
+def test_classify_skip_maps_missing_source_export() -> None:
+    assert classify_skip(MissingSourceExport("gone")) is SkipReason.MISSING_SOURCE
+
+
+def test_classify_skip_maps_unknown_schema() -> None:
+    assert classify_skip(UnknownSchema("no parser claimed")) is SkipReason.UNKNOWN_SCHEMA
+
+
+def test_classify_skip_maps_non_transcript_export() -> None:
+    assert classify_skip(NonTranscriptExport("binary")) is SkipReason.NON_TRANSCRIPT
+
+
+def test_classify_skip_maps_unicode_decode_error() -> None:
+    exc = UnicodeDecodeError("utf-8", b"\xa0", 0, 1, "invalid start byte")
+    assert classify_skip(exc) is SkipReason.DECODE_ERROR
+
+
+def test_classify_skip_maps_bare_runtimeerror_to_export_failed() -> None:
+    # A non-zero `export` for a reason other than a missing source is a real,
+    # distinct failure -- not a dead index entry and not a parser gap.
+    assert classify_skip(RuntimeError("database is locked")) is SkipReason.EXPORT_FAILED
+
+
+def test_skip_record_for_stamps_the_refs_identity_and_the_typed_reason() -> None:
+    ref = SessionRef(agent="codex", source="agentsview", project="p", session_id="cx:1", path=None)
+    rec = skip_record_for(ref, UnknownSchema("no parser claimed"))
+    assert rec == SkipRecord(
+        session_id="cx:1",
+        agent="codex",
+        reason=SkipReason.UNKNOWN_SCHEMA,
+        detail="no parser claimed",
+    )
+
+
+def test_tally_skips_answers_how_many_have_no_parser_without_parsing_prose() -> None:
+    # The exact question TB-23 exists to make answerable: count the actionable
+    # parser gaps without a regex over rendered error messages.
+    skips = [
+        SkipRecord("a", "claude", SkipReason.MISSING_SOURCE, "source file not found"),
+        SkipRecord("b", "codex", SkipReason.UNKNOWN_SCHEMA, "no parser claimed"),
+        SkipRecord("c", "cursor", SkipReason.UNKNOWN_SCHEMA, "no parser claimed"),
+        SkipRecord("d", "hermes", SkipReason.NON_TRANSCRIPT, "binary content"),
+    ]
+    tally = tally_skips(skips)
+    assert tally[SkipReason.UNKNOWN_SCHEMA] == 2
+    assert tally[SkipReason.MISSING_SOURCE] == 1
+    assert tally[SkipReason.NON_TRANSCRIPT] == 1
+
+
+def test_discover_refs_records_a_missing_root_as_a_typed_skip() -> None:
+    # auto mode, agentsview unavailable, raw fallback root absent: the discovery-level
+    # FileNotFoundError becomes a typed SkipRecord rather than a bare string.
+    args = parse_args(["--index-source", "auto"])
+    runner = FakeRunner([FileNotFoundError("no agentsview")])
+    _refs, _fallback, skips = _discover_refs(args, "/definitely/not/a/real/root", runner)
+    assert skips, "a missing raw root must be recorded as a skip"
+    assert all(isinstance(s, SkipRecord) for s in skips)
+    assert skips[0].reason is SkipReason.MISSING_SOURCE
 
 
 class UsageMissingCounterTests(unittest.TestCase):
