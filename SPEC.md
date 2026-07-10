@@ -186,8 +186,9 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   SQLite read with no lines; every other session is claimed by content, since
   schema is a property of the payload, not of the producer (TB-13).
 - **S28 — no parser is the default.** An unrecognized transcript is never parsed
-  by `ClaudeParser`, and never reported as an agent with zero tool calls. `codex`
-  and `cursor` land in `skipped_roots` pending a `CodexParser` (TB-12).
+  by `ClaudeParser`, and never reported as an agent with zero tool calls. `cursor`
+  lands in `skipped_roots` pending a parser of its own. `codex` is claimed by
+  `CodexParser` (S33 / TB-12).
 
 ## Usage provenance — `toolbench/parsers.py` + `toolbench/probe.py`
 
@@ -227,3 +228,20 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   column (S19). `HermesTraceParser` output never populates this field: the
   trace export drops the cache channel entirely, so there is no session-grain
   value there either (TB-20).
+- **S33 — the codex schema is parsed, not skipped.** `CodexParser` claims a line
+  whose top-level `type` is one of codex's record kinds (`session_meta`,
+  `response_item`, `event_msg`, `turn_context`, `compacted`) and whose `payload`
+  is an object. It joins `function_call` → `function_call_output` and
+  `custom_tool_call` → `custom_tool_call_output` on `payload.call_id` — never
+  `tool_use_id`. `input_chars` is read from `arguments` for `function_call` and
+  from `input` for `custom_tool_call`; the two shapes differ in that field alone.
+  `session_id` is lifted from `session_meta` and `model` from the most recent
+  preceding `turn_context`, since neither appears on the call record. Every
+  resulting `ToolCall` carries `usage=None` with `UsageProvenance.ABSENT_BY_SCHEMA`:
+  codex reports tokens as per-turn `token_count` events, and a turn holds many
+  calls, so no per-call attribution exists to read (S29). `error` is always `None` —
+  codex encodes exit status in the output text and reports `status: completed`
+  even for a failed tool, so no error flag is inferred from prose. Unmatched calls
+  at EOF keep S6's `no_result` semantics. The claim predicate is disjoint from
+  `ClaudeParser`'s and `HermesTraceParser`'s, so `AmbiguousSchema` never fires
+  between them (TB-12).

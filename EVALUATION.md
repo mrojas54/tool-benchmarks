@@ -59,11 +59,12 @@ One row per SPEC criterion, each tagged by how it is verified:
 | S25 | acceptance smoke completes | `operator-assisted` / `external-oracle` | `test:full` |
 | S26 | requestId-keyed isolability; prose/thinking/batch blank usage | `autonomous` | `test` (prose + pooled fixtures) |
 | S27 | schema dispatch (`detect_parser`); UnknownSchema / AmbiguousSchema | `autonomous` | `test` (`test_adapters` / `test_registry`) |
-| S28 | no default parser; unrecognized schemas skip loudly | `autonomous` | `test` (codex/cursor → skipped_roots) |
+| S28 | no default parser; unrecognized schemas skip loudly | `autonomous` | `test` (cursor → skipped_roots; codex now parsed per S33) |
 | S29 | producer split on `version`; `UsageProvenance` stamped; four-case cache render | `autonomous` | `test` (`schema_hermes_trace.jsonl` fixture; `detect_parser` → `HermesTraceParser`; `n/a` / `n/a*` / `no` render) |
 | S30 | probe refuses trace at dispatch; `_turn_key` raises `NonIsolableTurns`; no timestamp fallback | `autonomous` | `test` (probe fixtures carry `requestId`; refusal on a stripped fixture) |
 | S31 | gate command collects every test (`TestCase` methods + module-level fns) | `autonomous` | `test` (`test_gate_completeness.py`) |
 | S32 | session-grain `cache_read_tokens` surfaced as an agent-level caveat, never fabricated per call, never mixed with the per-call `cache_assisted` column | `autonomous` / `operator-assisted` (live archive ratio) | `test` (`test_hermes.py` present/null/zero session-grain fixtures; `test_passive.py` Reducer counters + Agent Breakdown caveat render + Tool Leaderboard non-leakage) |
+| S33 | codex `response_item` records join on `payload.call_id`; `input` vs `arguments` per call shape; `session_id`/`model` carried from `session_meta`/`turn_context`; usage `ABSENT_BY_SCHEMA`; `error` never inferred; claim predicate disjoint from claude/hermes | `autonomous` / `operator-assisted` (live archive count) | `test` (`test_parsers.py` codex fixture: join, `input`-vs-`arguments`, EOF drain, provenance, no-error; `test_adapters.py` detection + claude non-theft; `test_registry.py` / `test_passive.py` end-to-end, with cursor still raising `UnknownSchema`) |
 
 ## Operator post-merge smoke checkpoints (human-driven)
 
