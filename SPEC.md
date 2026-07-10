@@ -202,3 +202,23 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   There is no timestamp fallback and no partial-corpus mode.
   `hermes sessions export --format trace` output is therefore valid input to
   `passive.py` and invalid input to `probe.py` (TB-18).
+- **S32 — session-grain cache surfaced without per-call fabrication.**
+  `parse_hermes_session` additionally reads `cache_read_tokens` off the
+  session's own `sessions` row (hermes carries cache data at session grain,
+  never per call — see S29) and stamps `ParseResult.session_cache_read_tokens`
+  with the raw value: `None` when the column is SQL `NULL` (not measured), an
+  `int` — including `0` — when the session was measured. This field is never
+  attributed to an individual `ToolCall`, never folded into `UsageProvenance`,
+  and never divided by `tool_call_count` to invent a per-call rate — that is
+  the exact class of fabrication S29 exists to eliminate. `Reducer.absorb`
+  folds it into two session-grain-only counters per agent
+  (`AgentStats.sessions_with_cache_data`, `.sessions_with_cache_hit`),
+  incremented once per session regardless of call count. The Agent Breakdown
+  section (S14 §1) renders one caveat line per agent whose measured count is
+  non-zero (`M of N sessions carry session-grain cache_read_tokens > 0 —
+  not attributable to individual tool calls`); this does not add a sixth
+  section and never touches the Tool Leaderboard's per-call `cache_assisted`
+  column (S29's four-case render), so the two signals are never mixed in one
+  column (S19). `HermesTraceParser` output never populates this field: the
+  trace export drops the cache channel entirely, so there is no session-grain
+  value there either (TB-20).

@@ -260,6 +260,74 @@ class ReducerAbsorbTests(unittest.TestCase):
         self.assertEqual(reducer.inefficiency.failures_by_tool, {"Bash": 2})
 
 
+class SessionGrainCacheCounterTests(unittest.TestCase):
+    """TB-20/S32: session-grain cache_read_tokens is counted once per session,
+    never per call, and never conflated with the per-call UsageProvenance arms."""
+
+    def test_measured_hit_increments_both_counters(self) -> None:
+        reducer = Reducer()
+        reducer.absorb(
+            "hermes",
+            ParseResult(calls=[make_call(agent="hermes")], malformed=0, session_cache_read_tokens=42),
+        )
+        stats = reducer.agents["hermes"]
+        self.assertEqual(stats.sessions_with_cache_data, 1)
+        self.assertEqual(stats.sessions_with_cache_hit, 1)
+
+    def test_measured_zero_increments_measured_but_not_hit(self) -> None:
+        reducer = Reducer()
+        reducer.absorb(
+            "hermes",
+            ParseResult(calls=[make_call(agent="hermes")], malformed=0, session_cache_read_tokens=0),
+        )
+        stats = reducer.agents["hermes"]
+        self.assertEqual(stats.sessions_with_cache_data, 1)
+        self.assertEqual(stats.sessions_with_cache_hit, 0)
+
+    def test_unmeasured_session_increments_neither_counter(self) -> None:
+        reducer = Reducer()
+        reducer.absorb(
+            "hermes",
+            ParseResult(calls=[make_call(agent="hermes")], malformed=0, session_cache_read_tokens=None),
+        )
+        stats = reducer.agents["hermes"]
+        self.assertEqual(stats.sessions_with_cache_data, 0)
+        self.assertEqual(stats.sessions_with_cache_hit, 0)
+
+    def test_claude_code_session_default_never_touches_the_counters(self) -> None:
+        # ParseResult.session_cache_read_tokens defaults to None for every
+        # producer but parse_hermes_session -- a real Claude Code session must
+        # not accidentally register as "session-grain measured".
+        reducer = Reducer()
+        reducer.absorb("claude-code", ParseResult(calls=[make_call()], malformed=0))
+        stats = reducer.agents["claude-code"]
+        self.assertEqual(stats.sessions_with_cache_data, 0)
+        self.assertEqual(stats.sessions_with_cache_hit, 0)
+
+    def test_counters_accumulate_across_sessions_one_increment_each_regardless_of_call_count(
+        self,
+    ) -> None:
+        # The ticket's hard constraint: a session-grain figure must be counted
+        # once per SESSION, never once per call (that would fabricate a
+        # per-call denominator the data does not have).
+        reducer = Reducer()
+        reducer.absorb(
+            "hermes",
+            ParseResult(
+                calls=[make_call(agent="hermes"), make_call(agent="hermes"), make_call(agent="hermes")],
+                malformed=0,
+                session_cache_read_tokens=99,
+            ),
+        )
+        reducer.absorb(
+            "hermes",
+            ParseResult(calls=[make_call(agent="hermes")], malformed=0, session_cache_read_tokens=0),
+        )
+        stats = reducer.agents["hermes"]
+        self.assertEqual(stats.sessions_with_cache_data, 2)
+        self.assertEqual(stats.sessions_with_cache_hit, 1)
+
+
 class DateRangeFilterTests(unittest.TestCase):
     def test_no_bounds_returns_same_calls(self) -> None:
         result = ParseResult(calls=[make_call(ts="2026-07-01T00:00:00Z")], malformed=2)
@@ -861,6 +929,109 @@ class CacheNoteRenderTests(unittest.TestCase):
             ),
             "yes",
         )
+
+
+class SessionGrainCacheCaveatRenderTests(unittest.TestCase):
+    """TB-20/S32: the Agent Breakdown section (S14 §1) carries a session-grain
+    caveat line, orthogonal to the Tool Leaderboard's per-call cache column."""
+
+    def _agent_breakdown(self, reducer: Reducer) -> str:
+        report = render_report(
+            reducer,
+            index_source="raw",
+            fallback_reason=None,
+            skipped_roots=[],
+            include_subagents=True,
+            since_note=None,
+        )
+        return report[report.index("## Agent Breakdown") : report.index("## Tool Leaderboard")]
+
+    def test_caveat_line_present_with_correct_ratio(self) -> None:
+        reducer = Reducer()
+        reducer.absorb(
+            "hermes",
+            ParseResult(calls=[make_call(agent="hermes")], malformed=0, session_cache_read_tokens=5),
+        )
+        reducer.absorb(
+            "hermes",
+            ParseResult(calls=[make_call(agent="hermes")], malformed=0, session_cache_read_tokens=0),
+        )
+        section = self._agent_breakdown(reducer)
+        self.assertIn("hermes: 1 of 2 sessions carry session-grain", section)
+        self.assertIn("cache_read_tokens", section)
+
+    def test_caveat_line_absent_when_no_session_grain_data(self) -> None:
+        reducer = Reducer()
+        reducer.absorb("claude-code", ParseResult(calls=[make_call()], malformed=0))
+        section = self._agent_breakdown(reducer)
+        self.assertNotIn("session-grain", section)
+
+    def test_caveat_mentions_not_attributable_per_call(self) -> None:
+        # The ticket's hard constraint, made visible in the report itself.
+        reducer = Reducer()
+        reducer.absorb(
+            "hermes",
+            ParseResult(calls=[make_call(agent="hermes")], malformed=0, session_cache_read_tokens=5),
+        )
+        section = self._agent_breakdown(reducer)
+        self.assertIn("not attributable to individual tool calls", section)
+
+    def test_five_sections_still_in_order_with_caveat_present(self) -> None:
+        reducer = Reducer()
+        reducer.absorb(
+            "hermes",
+            ParseResult(calls=[make_call(agent="hermes")], malformed=0, session_cache_read_tokens=5),
+        )
+        report = render_report(
+            reducer,
+            index_source="raw",
+            fallback_reason=None,
+            skipped_roots=[],
+            include_subagents=True,
+            since_note=None,
+        )
+        headers = [
+            "## Agent Breakdown",
+            "## Tool Leaderboard",
+            "## Model Breakdown",
+            "## Inefficiency Callouts",
+            "## Summary",
+        ]
+        indices = [report.index(h) for h in headers]
+        self.assertEqual(indices, sorted(indices))
+
+    def test_tool_leaderboard_cache_column_unaffected_by_session_grain_hit(self) -> None:
+        """The core acceptance proof: a real session-grain hit must NOT leak into
+        the per-call `cache_assisted` column, which stays `n/a` -- hermes calls
+        genuinely carry no per-call usage (ABSENT_BY_SCHEMA), regardless of what
+        the session row says."""
+        reducer = Reducer()
+        reducer.absorb(
+            "hermes",
+            ParseResult(
+                calls=[
+                    make_call(
+                        agent="hermes",
+                        usage=None,
+                        usage_provenance=UsageProvenance.ABSENT_BY_SCHEMA,
+                    )
+                ],
+                malformed=0,
+                session_cache_read_tokens=999,
+            ),
+        )
+        report = render_report(
+            reducer,
+            index_source="raw",
+            fallback_reason=None,
+            skipped_roots=[],
+            include_subagents=True,
+            since_note=None,
+        )
+        leaderboard = report[report.index("## Tool Leaderboard") : report.index("## Model Breakdown")]
+        row = next(line for line in leaderboard.splitlines() if "| hermes |" in line)
+        cache_note = row.rstrip("|").rsplit("|", 1)[-1].strip()
+        self.assertEqual(cache_note, "n/a")
 
 
 if __name__ == "__main__":

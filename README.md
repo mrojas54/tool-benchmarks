@@ -141,12 +141,12 @@ TB-13), usage provenance (**S29–S30** / TB-18: producer-aware
 cannot key to the billing unit), and the gate itself running every test
 (**S31** / TB-19: the documented command is `pytest`, not `unittest
 discover`, which silently missed 37 module-level tests). The strict gate
-(`ruff`, `mypy --strict`, `pytest`) is green — **249** tests passing
+(`ruff`, `mypy --strict`, `pytest`) is green — **262** tests passing
 (1 skipped when the live hermes archive is absent).
 
 Source-of-truth documents:
 
-- [`SPEC.md`](SPEC.md) — 31 numbered acceptance criteria (S1–S31).
+- [`SPEC.md`](SPEC.md) — 32 numbered acceptance criteria (S1–S32).
 - [`EVALUATION.md`](EVALUATION.md) — verification map for every criterion.
 - [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the T1–T6 tickets.
 - [`docs/2026-07-07-tool-benchmarks-design.md`](docs/2026-07-07-tool-benchmarks-design.md)

@@ -86,10 +86,19 @@ class ToolCall:
 
 @dataclass
 class ParseResult:
-    """Output of `parse_session` (S5): joined calls plus a malformed-line count."""
+    """Output of `parse_session` (S5): joined calls plus a malformed-line count.
+
+    `session_cache_read_tokens` (S32) is session-grain, not per-call: only
+    `parse_hermes_session` ever populates it, from the hermes `sessions` row's
+    own `cache_read_tokens` column. `None` means "not measured" (SQL NULL);
+    an int -- including `0` -- means the session was measured. It is never
+    attributed to an individual `ToolCall` or folded into `UsageProvenance`,
+    which answers a different, per-call question this field cannot answer.
+    """
 
     calls: list[ToolCall]
     malformed: int
+    session_cache_read_tokens: int | None = None
 
 
 def parse_session(

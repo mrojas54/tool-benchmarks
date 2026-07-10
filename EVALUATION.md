@@ -63,6 +63,7 @@ One row per SPEC criterion, each tagged by how it is verified:
 | S29 | producer split on `version`; `UsageProvenance` stamped; four-case cache render | `autonomous` | `test` (`schema_hermes_trace.jsonl` fixture; `detect_parser` → `HermesTraceParser`; `n/a` / `n/a*` / `no` render) |
 | S30 | probe refuses trace at dispatch; `_turn_key` raises `NonIsolableTurns`; no timestamp fallback | `autonomous` | `test` (probe fixtures carry `requestId`; refusal on a stripped fixture) |
 | S31 | gate command collects every test (`TestCase` methods + module-level fns) | `autonomous` | `test` (`test_gate_completeness.py`) |
+| S32 | session-grain `cache_read_tokens` surfaced as an agent-level caveat, never fabricated per call, never mixed with the per-call `cache_assisted` column | `autonomous` / `operator-assisted` (live archive ratio) | `test` (`test_hermes.py` present/null/zero session-grain fixtures; `test_passive.py` Reducer counters + Agent Breakdown caveat render + Tool Leaderboard non-leakage) |
 
 ## Operator post-merge smoke checkpoints (human-driven)
 
@@ -87,3 +88,10 @@ One row per SPEC criterion, each tagged by how it is verified:
    flag rather than `no`, and that `probe` over the same file refuses with
    `NonIsolableTurns` instead of scoring it. The fixture proves the shape;
    only the real CLI proves the shape is still what hermes emits.
+7. **Session-grain cache ratio (S32, `operator-assisted`).** Run `passive
+   --agent hermes --all` against the live archive and confirm the Agent
+   Breakdown gains a `hermes: M of N sessions carry session-grain
+   cache_read_tokens > 0` caveat line whose ratio is in the same ballpark as
+   a direct `SELECT` against the profile databases (~90% at ticket-filing
+   time), while the Tool Leaderboard's hermes row is still `n/a` — proving
+   the two signals stayed separate end to end, not just in fixtures.

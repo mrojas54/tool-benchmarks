@@ -19,7 +19,7 @@ from toolbench.transcript import ParseResult
 
 # The seven columns the adapter reads. Present in schema_version 16 and 19 alike;
 # `test_live_archive_schema_envelope` asserts that against the real DBs.
-_SESSION_COLS = ("id", "source", "model", "started_at", "tool_call_count")
+_SESSION_COLS = ("id", "source", "model", "started_at", "tool_call_count", "cache_read_tokens")
 _MESSAGE_COLS = ("session_id", "role", "content", "tool_call_id", "tool_calls", "timestamp")
 
 _SCHEMA = """
@@ -28,7 +28,8 @@ CREATE TABLE sessions (
     source TEXT NOT NULL,
     model TEXT,
     started_at REAL NOT NULL,
-    tool_call_count INTEGER DEFAULT 0
+    tool_call_count INTEGER DEFAULT 0,
+    cache_read_tokens INTEGER
 );
 CREATE TABLE messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,12 +44,19 @@ CREATE TABLE messages (
 """
 
 
-def _build_db(path: Path, session_id: str = "s1", *, model: str = "anthropic/claude-opus-4.8") -> None:
+def _build_db(
+    path: Path,
+    session_id: str = "s1",
+    *,
+    model: str = "anthropic/claude-opus-4.8",
+    cache_read_tokens: int | None = None,
+) -> None:
     conn = sqlite3.connect(path)
     conn.executescript(_SCHEMA)
     conn.execute(
-        "INSERT INTO sessions (id, source, model, started_at, tool_call_count) VALUES (?,?,?,?,?)",
-        (session_id, "cron", model, 1_760_000_000.0, 0),
+        "INSERT INTO sessions (id, source, model, started_at, tool_call_count, cache_read_tokens)"
+        " VALUES (?,?,?,?,?,?)",
+        (session_id, "cron", model, 1_760_000_000.0, 0, cache_read_tokens),
     )
     conn.commit()
     conn.close()
@@ -285,6 +293,30 @@ class ParseHermesSession(unittest.TestCase):
             _add_call(home / "state.db", "s1", "c1", "first", "{}", "ok", ts=100.0)
             names = [c.name for c in self._parse(home).calls]
             self.assertEqual(names, ["first", "second"])
+
+    def test_session_cache_read_tokens_surfaces_when_present(self) -> None:
+        # TB-20: session-grain `cache_read_tokens` reaches `ParseResult`, not just `model`.
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            _build_db(home / "state.db", "s1", cache_read_tokens=42)
+            _add_call(home / "state.db", "s1", "c1", "terminal", "{}", "ok")
+            self.assertEqual(self._parse(home).session_cache_read_tokens, 42)
+
+    def test_null_cache_read_tokens_is_not_measured(self) -> None:
+        # SQL NULL (the `_build_db` default) means "not measured", not zero -- absence
+        # and a measured zero must stay distinguishable (mirrors UsageProvenance, S29).
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            _build_db(home / "state.db", "s1")
+            _add_call(home / "state.db", "s1", "c1", "terminal", "{}", "ok")
+            self.assertIsNone(self._parse(home).session_cache_read_tokens)
+
+    def test_zero_cache_read_tokens_is_a_measured_zero_not_absence(self) -> None:
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            _build_db(home / "state.db", "s1", cache_read_tokens=0)
+            _add_call(home / "state.db", "s1", "c1", "terminal", "{}", "ok")
+            self.assertEqual(self._parse(home).session_cache_read_tokens, 0)
 
 
 class ParseRefDispatch(unittest.TestCase):

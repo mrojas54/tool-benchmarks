@@ -51,6 +51,8 @@ class AgentStats:
     input_tokens: int = 0
     errors: int = 0
     no_result: int = 0
+    sessions_with_cache_data: int = 0  # S32: session-grain, counted once per session
+    sessions_with_cache_hit: int = 0
 
 
 @dataclass
@@ -95,6 +97,13 @@ class Reducer:
         self.malformed_total += result.malformed
         agent_stats = self.agents.setdefault(agent, AgentStats())
         agent_stats.sessions += 1
+
+        # S32: session-grain, incremented once per session here -- never inside
+        # the per-call loop below, which would fabricate a per-call denominator.
+        if result.session_cache_read_tokens is not None:
+            agent_stats.sessions_with_cache_data += 1
+            if result.session_cache_read_tokens > 0:
+                agent_stats.sessions_with_cache_hit += 1
 
         prev_name: str | None = None
         prev_bad = False
@@ -336,12 +345,22 @@ def render_report(
     lines.append("")
     lines.append("| agent | sessions | calls | output_tokens | input_tokens | errors | no_result |")
     lines.append("|---|---|---|---|---|---|---|")
+    cache_caveats: list[str] = []
     for agent in sorted(reducer.agents):
         s = reducer.agents[agent]
         lines.append(
             f"| {agent} | {s.sessions} | {s.calls} | {s.output_tokens} | "
             f"{s.input_tokens} | {s.errors} | {s.no_result} |"
         )
+        if s.sessions_with_cache_data > 0:
+            # S32: session-grain only, orthogonal to the per-call `cache_assisted`
+            # column below -- never mixed into that column, never a sixth section.
+            cache_caveats.append(
+                f"- {agent}: {s.sessions_with_cache_hit} of {s.sessions_with_cache_data} "
+                "sessions carry session-grain `cache_read_tokens` > 0 "
+                "(S32: session grain only — not attributable to individual tool calls)."
+            )
+    lines.extend(cache_caveats)
     lines.append("")
 
     lines.append("## Tool Leaderboard")
