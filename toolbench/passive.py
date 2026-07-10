@@ -191,11 +191,13 @@ class CorpusFingerprint:
 
     The signature carries both mechanisms the corpus drifts by (see the ticket):
     a session's identity catches the sliding-window TAIL DELETION (a transcript
-    ages out and its id leaves the set), and its call count catches the live
-    session's APPEND (transcripts are append-only, so the count is an exact proxy
-    for content growth). An id-only digest would match across an append and
-    falsely reassure a reader diffing the two reports -- the one outcome the
-    ticket says must not survive.
+    ages out and its id leaves the set), and its call and malformed-line counts
+    catch the live session's APPEND (transcripts are append-only, so both counts
+    are exact proxies for content growth -- including an append that lands as a
+    malformed line rather than a new valid call). An id-only digest, or one
+    folding calls alone, would match across an append while a rendered number
+    moved and falsely reassure a reader diffing the two reports -- the one outcome
+    the ticket says must not survive.
 
     The scanned set, not the discovered set, is the basis: a discovered-set
     digest could match while transcripts slid scanned->skipped. The count travels
@@ -222,13 +224,17 @@ def corpus_fingerprint(signatures: Iterable[str]) -> CorpusFingerprint:
     return CorpusFingerprint(digest=h.hexdigest()[:16], count=len(items))
 
 
-def session_signature(session_id: str, call_count: int) -> str:
+def session_signature(session_id: str, call_count: int, malformed: int) -> str:
     """One scanned session's fingerprint contribution: identity + content (S36).
 
-    Tab-joined so a session that grows by a call moves the corpus fingerprint even
-    though its id is unchanged (append-only transcripts -> count is exact).
+    Tab-joins the id with both numbers the Summary renders for this session's
+    content -- its call count and its malformed-line count -- so a session that
+    grows moves the corpus fingerprint even though its id is unchanged
+    (append-only transcripts -> both counts are exact). Folding `call_count`
+    alone would miss an append that lands as a malformed line: `len(calls)` would
+    be unchanged while "Malformed lines" moved, and the digest would falsely match.
     """
-    return f"{session_id}\t{call_count}"
+    return f"{session_id}\t{call_count}\t{malformed}"
 
 
 def _bump(counter: dict[str, int], tool: str) -> None:
@@ -660,8 +666,11 @@ def main(
         filtered = _apply_date_range(result, args.date_from, args.date_to)
         reducer.absorb(ref.agent, filtered)
         # Signature after date filtering: the report counts these calls, so the
-        # fingerprint must fold the same post-filter count (S36).
-        scanned_sigs.append(session_signature(ref.session_id, len(filtered.calls)))
+        # fingerprint must fold the same post-filter count -- plus the malformed
+        # count, which the Summary also renders and date-filtering leaves intact (S36).
+        scanned_sigs.append(
+            session_signature(ref.session_id, len(filtered.calls), filtered.malformed)
+        )
 
     fingerprint = corpus_fingerprint(scanned_sigs)
 

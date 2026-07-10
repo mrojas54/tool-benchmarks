@@ -1293,10 +1293,19 @@ class CorpusFingerprintTests(unittest.TestCase):
         # content. The fingerprint must move -- an id-only digest would falsely
         # match and let a reader attribute the delta to code (the "must not
         # survive" outcome). session_signature folds the call count to catch it.
-        before = corpus_fingerprint([session_signature("live", 10), session_signature("s2", 3)])
-        after = corpus_fingerprint([session_signature("live", 11), session_signature("s2", 3)])
+        before = corpus_fingerprint([session_signature("live", 10, 0), session_signature("s2", 3, 0)])
+        after = corpus_fingerprint([session_signature("live", 11, 0), session_signature("s2", 3, 0)])
         self.assertNotEqual(before.digest, after.digest)
         self.assertEqual(before.count, after.count)  # same number of sessions
+
+    def test_a_malformed_line_moves_the_digest_with_the_same_call_count(self) -> None:
+        # An append can land as a malformed line rather than a new valid call:
+        # call_count is unchanged but the Summary's "Malformed lines" moves. The
+        # fingerprint must fold malformed too, or it would falsely match while a
+        # rendered number differs.
+        before = corpus_fingerprint([session_signature("live", 10, 0)])
+        after = corpus_fingerprint([session_signature("live", 10, 1)])
+        self.assertNotEqual(before.digest, after.digest)
 
 
 class CorpusFingerprintRenderTests(unittest.TestCase):

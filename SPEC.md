@@ -128,10 +128,12 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   (`session_signature(id, call_count)`). The basis is the scanned set — the
   sessions that produced the numbers — not the discovered set, which could match
   while transcripts slid `scanned → skipped`. The signature folds both drift
-  mechanisms: identity catches a vanished tail (an id leaves the set) and call
-  count catches an append (transcripts are append-only, so count is an exact proxy
-  for content growth). An id-only digest would match across an append and let a
-  reader mis-attribute the delta to code — the one outcome the ticket forbids. The
+  mechanisms: identity catches a vanished tail (an id leaves the set) and the
+  call **and** malformed-line counts catch an append (transcripts are append-only,
+  so both are exact proxies for content growth — including an append that lands as
+  a malformed line). An id-only digest, or one folding calls alone, would match
+  across an append while a rendered number moved and let a reader mis-attribute the
+  delta to code — the one outcome the ticket forbids. The
   fingerprint is order-independent (sorted before hashing) so paging order never
   moves it, and the count travels alongside so a collision cannot hide a size
   change (TB-22).
