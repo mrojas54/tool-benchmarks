@@ -356,6 +356,16 @@ def test_raw_file_loader_rejects_binary_before_any_parse(tmp_path: Path) -> None
         list(RawFileLoader().lines(ref))
 
 
+def test_raw_file_loader_missing_file_raises_missing_source(tmp_path: Path) -> None:
+    # A frozen ref whose raw transcript has since been deleted is a vanished source,
+    # not a generic export failure (TB-22): raise the same typed MissingSourceExport
+    # the AgentsView path raises so `classify_skip` buckets both as missing_source.
+    gone = tmp_path / "gone.jsonl"
+    ref = SessionRef(agent="claude", source="raw", project="p", session_id="gone", path=str(gone))
+    with pytest.raises(MissingSourceExport):
+        list(RawFileLoader().lines(ref))
+
+
 def test_raw_file_loader_decodes_leniently(tmp_path: Path) -> None:
     p = tmp_path / "s.jsonl"
     p.write_bytes(b'{"a":"\xa0"}\n')  # stray non-UTF-8 byte

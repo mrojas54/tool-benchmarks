@@ -190,6 +190,12 @@ class RawFileLoader(SessionLoader):
 
     def lines(self, ref: SessionRef) -> Iterator[str]:
         assert ref.path is not None, "RawFileLoader requires ref.path"
+        # A raw transcript that is no longer on disk is a vanished source, not a
+        # generic read error: raise the same typed MissingSourceExport the
+        # AgentsView path raises so a frozen ref that has aged out of the
+        # retention window is bucketed as `missing_source` on replay (TB-22).
+        if not Path(ref.path).exists():
+            raise MissingSourceExport(f"source file not found: {ref.path}")
         # Sniff on a separate binary handle so the text handle can still stream
         # line-by-line; slurping a head as text would force us to stitch a
         # mid-line cut back together.

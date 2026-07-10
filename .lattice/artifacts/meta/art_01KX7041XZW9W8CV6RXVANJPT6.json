@@ -1,0 +1,21 @@
+{
+  "created_at": "2026-07-10T21:49:43Z",
+  "created_by": "agent:claude",
+  "custom_fields": {
+    "url": "https://github.com/mrojas54/tool-benchmarks/pull/30"
+  },
+  "id": "art_01KX7041XZW9W8CV6RXVANJPT6",
+  "model": null,
+  "payload": {
+    "content_type": null,
+    "file": null,
+    "size_bytes": null
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": null,
+  "tags": [],
+  "title": "https://github.com/mrojas54/tool-benchmarks/pull/30",
+  "token_usage": null,
+  "type": "reference"
+}

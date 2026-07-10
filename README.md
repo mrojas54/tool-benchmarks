@@ -233,6 +233,12 @@ uv run python -m toolbench.passive --all --index-source agentsview
 uv run python -m toolbench.passive --all --date-from 2026-06-01 --date-to 2026-06-30
 uv run python -m toolbench.passive --all --exclude-subagents --out reports/2026-07-08-tool-usage.md
 
+# Reproducible before/after: freeze the corpus once, then replay it to compare.
+# First run writes the manifest; every later run scans the frozen set and names
+# what has vanished since (TB-22).
+uv run python -m toolbench.passive --all --freeze reports/corpus.manifest   # writes
+uv run python -m toolbench.passive --all --freeze reports/corpus.manifest   # replays
+
 # Active tool-vs-Bash probes. Score a dedicated probe session; without
 # --session every arm is seeded and the report is refused (SeededReportError).
 # Operator run sheet: protocols/probe-run-sheet.md (ten arms, ten turns).
@@ -280,6 +286,28 @@ discovery root is Claude Code sessions, so `--agent` is a no-op there.
 (first path segment after the root), not `path.parent.name`. Nested
 subagent transcripts at `<project>/subagents/*.jsonl` therefore survive
 `--project` and are only dropped when you pass `--exclude-subagents`.
+
+### Corpus reproducibility (`Corpus fingerprint` + `--freeze`)
+
+The corpus is a moving target: claude-mem observer transcripts age out of a
+~30-day sliding window *mid-scan*, so its tail deletes itself at roughly re-run
+cadence, and the live session appends calls while it is read. Two reports are
+therefore not automatically diffable — a delta between them may be the corpus
+moving, not your code (TB-22).
+
+- **`Corpus fingerprint: <digest> (<N> sessions scanned)`** (always emitted in the
+  Summary, S36) is a hash over the *scanned* set — the sessions that produced the
+  numbers. It folds each session's identity **and** its call count, so both a
+  vanished tail (an id leaves the set) and an append (a session grows) move it.
+  **Two reports whose fingerprints match are diffable; if they differ, do not
+  attribute the delta to code** until you know why the input set moved.
+- **`--freeze <manifest>`** (S37) makes a before/after actually reproducible. The
+  first run writes the discovered ref list to the manifest; every later run
+  *replays* it — scanning exactly the frozen set instead of re-discovering — and
+  reports `(<V> vanished since freeze)` for refs whose transcripts have since been
+  deleted (`--verbose` names them). Over an unchanged corpus a replay is
+  byte-identical; when the tail has moved, the vanished count names the mechanism
+  instead of letting it masquerade as a code effect.
 
 The fast test suite is hermetic — it fakes the `agentsview` CLI, points
 `$HERMES_HOME` at a fixture database, and never touches `~/.claude` or
