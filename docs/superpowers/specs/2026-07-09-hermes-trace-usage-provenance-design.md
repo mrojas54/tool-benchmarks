@@ -39,9 +39,10 @@ entirely.
 
 `usage=None` already does triple duty *today*, before trace exports enter the picture:
 
-1. **Absent by schema design** — `hermes.py:176`. The hermes SQLite DB records `token_count` per
-   *message*, not per tool call. There is no honest per-call usage record to report, and the
-   adapter's docstring says so.
+1. **Absent by schema design** — `hermes.py:176`. The hermes SQLite DB carries usage on the
+   *session* row, not per tool call, so there is no honest per-call usage record to report.
+   (`hermes.py`'s docstring justifies this by saying hermes "records `token_count` per message."
+   That premise is false — see §2.1 — but the conclusion holds, and holds harder.)
 2. **Absent by export truncation** — hermes `--format trace`. The producer *had* usage and the
    serializer dropped it.
 3. **Present but empty** — a `usage` dict that carries no cache keys.
@@ -80,6 +81,67 @@ parsed delta is small but *not zero*. TB-18 says "`tokens` is NOT poisoned." The
 supports "**perturbed by 3 tokens across 270 calls; negligible, not zero.**" The absolute claim
 should not survive into SPEC.md. Redaction evidently touches mostly fields that do not feed
 `output_chars`.
+
+### 2.1 Where hermes usage actually lives (and why `ABSENT_BY_SCHEMA` is right)
+
+`hermes.py`'s docstring justifies `usage=None` by asserting that hermes "records `token_count` per
+message, not per tool call." Read-only inspection of all four archive databases
+(`~/.hermes/state.db` plus three profiles) shows the premise is false:
+
+```
+db                                    rows   non-null   >0
+state.db                              6737          0    0
+profiles/aphrodite-mood/state.db      2006          0    0
+profiles/light-mood/state.db           746          0    0
+profiles/tech-interviewing/state.db    644          0    0
+-------------------------------------------------------------
+TOTAL                                10133          0    0
+```
+
+`messages.token_count` exists in the schema and is **populated zero times out of 10,133 rows.**
+Usage lives one level up, on the session row:
+
+```
+sessions: 788   with input_tokens > 0: 743   with cache_read_tokens > 0: 714
+columns: input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+         reasoning_tokens, estimated_cost_usd, actual_cost_usd, cost_status, cost_source
+```
+
+The conclusion is unchanged and better supported: hermes has **no per-call usage to give**, so
+`ABSENT_BY_SCHEMA` is correct. The granularity gap is *session → call*, not *message → call*. The
+docstring at `hermes.py:116` should be corrected as part of this work; it is a comment fix, not a
+behaviour change.
+
+This also settles the §7 open question. `ABSENT_BY_SCHEMA` is not a guess about a producer's
+intent — it is a checkable fact about its storage.
+
+### 2.2 Second corpus: an independent trace export reproduces the hazard
+
+A single-session trace export taken from an unrelated project
+(`aphrodite-oracle`, 87 records, 44 user / 43 assistant) reproduces TB-18 exactly:
+
+```
+with sessionId    : 87/87      → ClaudeParser claims it
+with requestId    :  0/87      → probe.py's null
+with message.usage:  0/87      → passive.py's null
+
+detect_parser -> ClaudeParser ; calls=1 ; malformed=0
+```
+
+Driving both consumers over it, verbatim from the current code:
+
+```
+passive.py:346   tool='read_file' calls=1 cache_hits=0  ->  cache_note='no'
+probe.py:_turn_key                                      ->  'ts:2026-07-10T00:50:31.403Z'
+```
+
+`passive.py` reports "no cache hits" for a session whose `--format jsonl` sibling records
+`cache_read_tokens: 1792854` and `cache_write_tokens: 624458`. Roughly 2.4M cache tokens rendered
+as `"no"`. `probe.py` groups by timestamp — the pre-TB-16 defect — in silence.
+
+Note the tool name: `read_file`, a hermes-native tool, not Claude Code's `Read`. This confirms the
+§3 non-finding that schema and producer are separate axes, and it is the mechanism by which a
+mixed-provenance `(agent, tool)` bucket forms.
 
 ---
 
@@ -308,13 +370,35 @@ Two mechanical consequences follow, and the implementer will hit both on the fir
 **`n/a*` is an unusual token in a markdown table column.** It needs a legend line wherever the
 table is rendered, or it reads as a footnote marker pointing nowhere.
 
-**Open — does any current corpus actually mix provenance in one bucket?** The `n/a*` case is
-reachable *in principle* because trace detects as claude. Whether it is reachable in practice
-depends on how refs get their `agent` label during discovery, which I have not traced. The counter
-is correct either way and costs one `int`; the mixed-bucket test may need a synthetic corpus rather
-than a natural one. Worth confirming during implementation, not before.
+**Settled — the `n/a*` mixed-bucket fixture must be synthetic.** The natural trace corpora
+available (§2.2's 87-record export carries exactly one `tool_use` block) cannot produce a bucket
+holding both `PRESENT` and absent rows under one `(agent, tool)` key. Construct it: absorb one real
+Claude transcript session and one trace session into the same `Reducer` under the same agent label.
+This is the test that fails against a scalar-enum implementation, so it is not optional.
 
 **Open — should `ABSENT_UNEXPECTED` also emit a one-time warning from `passive.py`?** TB-18's
 candidate fix (b) proposed a provenance warning at detect time. The typed field makes the *data*
 honest; a warning would make the *operator* aware. Deferring: it is additive, it does not change
 the type, and it can land as a follow-up once we see how often the arm fires in real runs.
+
+---
+
+## 8. Out of scope, discovered during design — file separately
+
+**`hermes.py:63` cannot read one of the four archive databases.** `_connect` opens
+`file:{db}?mode=ro`. `~/.hermes/profiles/aphrodite-mood/state.db` has no `-wal`/`-shm` sidecar, and
+SQLite cannot open a WAL-mode database read-only without creating the shared-memory file, so the
+connection raises `OperationalError: unable to open database file`. That profile — 2,006 messages —
+is invisible to the hermes adapter today.
+
+This is a live bug, unrelated to TB-18, and it should get its own ticket rather than being smuggled
+into this one. Two cautions for whoever takes it:
+
+- `immutable=1` opens the file but **ignores the WAL and returns stale data.** On
+  `tech-interviewing/state.db` it reports 639 messages where `mode=ro` reports 644. It is not a
+  drop-in fix.
+- The `mode=ro` comment at `hermes.py:62` ("a running hermes owns this file. Never open it
+  writable") is correct and must be preserved by any fix.
+
+This deepens the under-sampling already noted in `hermes.py`'s own module docstring (89 sessions
+via `session list` vs 789 via `agentsview stats`).
