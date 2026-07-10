@@ -4,6 +4,8 @@ import sqlite3
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
+from unittest import mock
 
 from toolbench.hermes import (
     _connect,
@@ -398,7 +400,7 @@ class LiveArchive(unittest.TestCase):
         if not dbs:
             self.skipTest("no hermes profile databases")
         for db in dbs:
-            conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            conn = _connect(db)  # an idle profile has no -shm; raw mode=ro cannot read it
             try:
                 scols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
                 mcols = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
@@ -462,14 +464,42 @@ class ConnectWalWithoutShm(unittest.TestCase):
             conn = _connect(db)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 1)
 
-    def test_connect_refuses_immutable_when_wal_frames_may_be_pending(self) -> None:
-        """A -wal sidecar means immutable=1 could silently skip committed frames."""
+    def test_mode_ro_tolerates_a_present_wal(self) -> None:
+        """Pins the real SQLite behaviour the guard is written against.
+
+        `mode=ro` fails only when the -wal is *absent* while the header says WAL.
+        A -wal that is present -- empty, truncated, or carrying frames -- reads
+        fine. So the guard below defends a state that cannot arise naturally.
+        """
         with TemporaryDirectory() as tmp:
             db = Path(tmp) / "state.db"
             self._make_wal_db(db)
-            db.with_name(db.name + "-wal").touch()  # pending frames may exist
-            with self.assertRaises(sqlite3.OperationalError):
-                _connect(db)
+            db.with_name(db.name + "-wal").touch()
+            conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 1)
+
+    def test_connect_refuses_immutable_when_wal_frames_may_be_pending(self) -> None:
+        """Defensive invariant, exercised by fault injection.
+
+        Should `mode=ro` ever fail while a -wal exists, `immutable=1` would ignore
+        that WAL and could return stale rows. `_connect` must re-raise instead.
+        """
+        with TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state.db"
+            self._make_wal_db(db, sidecars=True)
+            self.assertTrue(db.with_name(db.name + "-wal").exists())
+
+            real_connect = sqlite3.connect
+
+            def fail_mode_ro(dsn: str, *args: Any, **kwargs: Any) -> sqlite3.Connection:
+                if "mode=ro" in dsn:
+                    raise sqlite3.OperationalError("unable to open database file")
+                conn: sqlite3.Connection = real_connect(dsn, *args, **kwargs)
+                return conn
+
+            with mock.patch.object(sqlite3, "connect", side_effect=fail_mode_ro):
+                with self.assertRaises(sqlite3.OperationalError):
+                    _connect(db)
 
     def test_connect_reads_a_healthy_wal_db_without_falling_back(self) -> None:
         """Sidecars present: `mode=ro` works and the immutable path must not engage."""

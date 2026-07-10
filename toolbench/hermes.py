@@ -59,8 +59,31 @@ def iter_profile_dbs(home: Path | None = None) -> list[Path]:
 
 
 def _connect(db: Path) -> sqlite3.Connection:
-    # mode=ro: a running hermes owns this file. Never open it writable.
-    return sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    """Open a hermes archive database read-only.
+
+    mode=ro: a running hermes owns this file. Never open it writable.
+
+    A WAL database with no `-shm` sidecar cannot be read under `mode=ro` at all --
+    SQLite needs the shared-memory file to take a read lock, and read-only mode may
+    not create it. An idle hermes profile is in exactly this state, so it is a
+    normal condition, not a corrupt one.
+
+    `immutable=1` opens such a file, but it ignores the WAL entirely and will
+    silently return stale rows if frames are pending. Fall back to it only when no
+    `-wal` sidecar exists, which is precisely when there are no frames to miss.
+
+    The probe must touch a page. `sqlite3.connect` is lazy, and `SELECT 1` is a
+    constant expression that never opens a read transaction -- both succeed on a
+    database that cannot actually be read. Reading `sqlite_master` is what fails.
+    """
+    try:
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+        return conn
+    except sqlite3.OperationalError:
+        if db.with_name(db.name + "-wal").exists():
+            raise
+        return sqlite3.connect(f"file:{db}?immutable=1", uri=True)
 
 
 def _bare_id(session_id: str) -> str:
