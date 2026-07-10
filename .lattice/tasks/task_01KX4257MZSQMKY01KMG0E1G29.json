@@ -1,7 +1,7 @@
 {
   "assigned_to": null,
   "branch_links": [],
-  "comment_count": 2,
+  "comment_count": 3,
   "complexity": "medium",
   "created_at": "2026-07-09T18:27:36Z",
   "created_by": "agent:claude",
@@ -10,7 +10,7 @@
   "done_at": null,
   "evidence_refs": [],
   "id": "task_01KX4257MZSQMKY01KMG0E1G29",
-  "last_event_id": "ev_01KX595D4EB12WRC8EKRSB54J8",
+  "last_event_id": "ev_01KX5NSHY7VD0WFVG8M91E52B5",
   "last_status_changed_at": "2026-07-10T04:57:08Z",
   "priority": "medium",
   "relationships_out": [
@@ -40,6 +40,6 @@
   ],
   "title": "hermes --format trace parses as claude but carries no usage or requestId; cache-hit signal silently fabricated",
   "type": "bug",
-  "updated_at": "2026-07-10T05:49:16Z",
+  "updated_at": "2026-07-10T09:29:59Z",
   "urgency": null
 }

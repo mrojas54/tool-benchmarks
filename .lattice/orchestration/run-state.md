@@ -1,59 +1,66 @@
-# Run State — tool-benchmarks Phase 0/1
+# Run State — tool-benchmarks Run 2 (TB-19 · TB-18 remainder · TB-20)
+
+Run 1 (TB-2…TB-7, closed 2026-07-08) is archived under [`run-1/`](run-1/);
+its CLOSEOUT and validation report live there. Its footgun catalog is carried
+forward below — every entry re-verified still applicable on 2026-07-10.
 
 ## Configuration
-- **Autonomy:** Moderate (confirmed 2026-07-08)
-- **N (max concurrent delegators):** 3
-- **PR merge policy:** leave at terminal pre-merge status (confirmed — no auto-merge)
+- **Autonomy:** Moderate (operator-confirmed 2026-07-10, Phase 0 config dialogue)
+- **N (max concurrent delegators):** 2
+- **PR merge policy:** leave at terminal pre-merge status (`review`); no auto-merge
 - **Git remote (verified):** `origin` → git@github.com:mrojas54/tool-benchmarks.git
-- **Terminal pre-merge status:** `review` (classic preset; transition `review → done`. No `pr_open`/`in_validation` lane — delegators land tickets at `review`, never `pr_open`)
-- **Ticket fidelity:** verbose (full description + SPEC IDs + BUILDPLAN anchor + depends-on)
-- **plan_review_mode / review_mode:** headless code-review/plan-review (inline-full default)
-- **Master Validator:** on (6 tickets)
-- **Result Validator:** on — **model Sonnet** (downgraded from Opus at tick 4 for weekly-usage-ceiling conservation; operator-confirmed. The 27 pre-merge-static rows are mechanical diff-checks, within Sonnet's competence; terminal-audit independence preserved.)
+- **Terminal pre-merge status:** `review` (classic preset; verified via `valid_transitions` — no `pr_open`/`in_validation` lanes)
+- **Ticket fidelity:** verbose-by-comment — tickets pre-date this run; run-2 obligations attached as `agent:orchestrator-intake` comments on TB-18/TB-19/TB-20
+- **Workflow modes:** TB-19 fast-track · TB-18 inline-full · TB-20 inline-full (all collapse to inline own-reviewer on this install — see footguns)
+- **Delegator model:** Sonnet (per project CLAUDE.md default for review/explore tier; escalate only if a ticket's logic proves subtle)
+- **Master Validator:** OFF (3-ticket wave; operator-confirmed)
+- **Result Validator:** ON, model Sonnet
 - **auto-close finished surfaces:** on
-- **c11 workspace ref:** see Workspace panes below
+- **Test gate (pinned for every boot prompt):** `uv run ruff check .` · `uv run mypy --strict toolbench tests` (baseline 38 pre-existing errors — new errors only are failures) · `uv run pytest -q`. **Never `unittest discover`** — it silently skips 37 tests and executes module-level code (the defect TB-19 fixes).
+- **Contract-gap policy (operator-confirmed):** TB-19 and TB-20 author their own SPEC/EVALUATION/BUILDPLAN rows (S31, S32) in their DOCS phases, mirroring TB-18's S29/S30 precedent.
 
 ## Workspace panes (c11 refs)
-- workspace: workspace:1 "tool-benchmarks"
-- main_view_area: pane:1 / surface:5 "Orchestrator" (Master Validator + Result Validator land here as tabs)
-- control_surface: pane:2 / surface:6 "Control Surface" (terminal, protected) + surface:11 "Lattice Board" (browser → dashboard)
-- delegate_view_area_1: pane:5 / surface:10 "Delegate View" (delegators land here as tabs; soft cap 15, ≤6 total this run so one pane suffices — routine call, logged)
-- lattice_dashboard_port: 49427 (nohup lattice dashboard; log /tmp/lattice-dashboard-49427.log)
+- lattice_dashboard_port: **49427** (run-1 daemon still alive, PID verified 2026-07-10; reused)
+- Pane geometry: **deferred to Phase 1 boot** — run-1 pane/surface refs are stale (dead sessions), and the operator is advised to start Phase 1 in a fresh session (session-budget guard: 4.4M tokens at Phase 0 close). Phase 1 re-runs the geometry step from `references/intake.md` and records refs here.
 
 ## Tickets in scope
 | Ticket | Title | Status | Workflow mode | Branch base | Depends on |
 |--------|-------|--------|---------------|-------------|------------|
-| TB-2 | Scaffold + ToolCall + result_len | backlog | inline-full | main | — |
-| TB-3 | parse_session id-join | backlog | inline-full | main | TB-2 |
-| TB-4 | sources.py multi-agent discovery | backlog | inline-full | main | TB-2 |
-| TB-5 | passive.py reducer + report + CLI | backlog | inline-full | main | TB-3, TB-4 |
-| TB-6 | probe.py + active-probes.md | backlog | inline-full | main | TB-3 |
-| TB-7 | README + strict gate | backlog | fast-track | main | TB-5, TB-6 |
+| TB-19 | unittest discover silently skips 37 of 220 tests | backlog | fast-track | origin/main | — (dispatch FIRST) |
+| TB-18 | hermes --format trace: usage provenance + probe refusal (Tasks 3–6 of the 7-task plan) | in_progress | inline-full | `chore/add-hermes-cli-export-plan` (existing branch, PR #20 OPEN — continue, do not rebranch) | — (plan: `docs/superpowers/plans/2026-07-09-tb-18-usage-provenance.md`) |
+| TB-20 | hermes session-grain cache_read_tokens never consulted | backlog | inline-full | origin/main after PR #20 merges (else rebase onto #20's branch) | TB-18 (hard link) |
 
-Dispatch order: TB-2 first (unblocked). On TB-2 reaching `review` (press-ahead),
-spawn TB-3 + TB-4 (both depend only on TB-2). TB-6 unblocks with TB-3. TB-5
-needs TB-3 + TB-4. TB-7 needs TB-5 + TB-6 — last, fast-track (README + run gate).
+Dispatch order: TB-19 and TB-18 concurrently (N=2; no code dependency —
+TB-18's plan already pins pytest). TB-20 spawns when TB-18 reaches `review`
+(press-ahead), rebased appropriately. SHARED-FILE flag: TB-19 and TB-18 Task 6
+both touch README + EVALUATION; both PR bodies must name the overlap.
+
+## Out of scope (recorded)
+- TB-12 (CodexParser) — stays backlog; still unclaimed by any BUILDPLAN row.
+- `lattice show TB-15` CLI crash (`_read_artifact_info` AttributeError on a
+  string evidence ref) — upstream lattice-tracker bug, does not block status
+  mutations; report upstream, not this run's work.
 
 ## Decision log (append-only)
-- 2026-07-08 [autonomy: Moderate] Merge policy = leave-at-review; autonomy = Moderate (operator-confirmed via Phase 0 config dialogue).
-- 2026-07-08 [autonomy: Moderate] Workflow modes: TB-2..TB-6 inline-full (correctness-sensitive parsing/discovery/reporting), TB-7 fast-track (README + mechanical gate run). Routine call, logged.
-- 2026-07-08 [autonomy: Moderate] S16 tagged `pre-merge-static` (not `operator-assisted` as in EVALUATION): corpus is vendored + committed under `tools/`, so `active-probes.md` path-list is diff-checkable against the repo tree from a clean checkout — the G1 resolution's whole point. More checkable than EVALUATION assumed pre-vendoring.
-- 2026-07-08 [autonomy: Moderate] Contract checks passed with no gaps; G1/G2/G3 already RESOLVED in BUILDPLAN. No upstream routing needed.
-- 2026-07-08 [autonomy: Moderate] Geometry: one delegate pane (not the prescribed 3) — 6 delegators total, N=3 concurrent, well under the 15-surface soft cap; delegators route as tabs into pane:5. More legible in the 620px right column.
-- 2026-07-08 [autonomy: Moderate] Install is Lattice v0.2.0 `classic`, not Stage11. No `claim`/`plan-review`/`code-review`/`needs-human` subcommands, no `in_validation`/`pr_open` lanes. All tickets run inline own-reviewer (fresh-eyes review CLI unavailable); reviews attached as notes. Recorded in footguns; baked into boot prompts.
-- 2026-07-08 [autonomy: Moderate] Delegator model = Sonnet (mechanical/well-specified TDD tickets; cost discipline per operator signals). Final Result Validator = Opus. Escalate a delegator to Opus only if a ticket's logic proves subtle (e.g. TB-3 join-key).
-- 2026-07-08 [autonomy: Moderate] Result Validator downgraded Opus→Sonnet (operator-confirmed at tick 4). Reason: weekly usage at 76%; Opus validator was the priciest discretionary line and the static audit rows are mechanical. Delegators already Sonnet. Loop instructed to halt-and-surface (not thrash) if any agent hits the ceiling.
-- 2026-07-08 [autonomy: Moderate] TB-5 base = `integration/substrate` (merge of origin/tb-3-parse + origin/tb-4-sources), since TB-5 (passive) needs BOTH transcript-parser (TB-3) and sources (TB-4) and no single parent has both. Merge was clean (no conflicts); assembled-tree suite GREEN (40 tests). Pushed to origin/integration/substrate. TB-5 PR body must note it assembles #2 (TB-4) + #3 (TB-3); after those merge, TB-5 rebases onto main. TB-6 (probe) bases off origin/tb-3-parse (needs parser only).
+- 2026-07-10 [autonomy: Moderate] Run-2 scope = TB-19 + TB-18 (Tasks 3–6) + TB-20 (operator-confirmed via Phase 0 config dialogue).
+- 2026-07-10 [autonomy: Moderate] Board synced to verified git state (operator-confirmed): TB-13, TB-16 → done (PRs #19/#16 MERGED); TB-15 → done via review (PR #15 MERGED; `lattice show` crashes on it but status mutations work); TB-17 → done via planned→review (PR #18 MERGED, backlog status was stale).
+- 2026-07-10 [autonomy: Moderate] Contract gap TB-19/TB-20 (no SPEC/EVALUATION rows) closed by policy: each ticket's DOCS phase authors S31/S32 (operator-confirmed; TB-18's S29/S30 is the precedent). Validation plan rows 10–13 audit the authored rows themselves.
+- 2026-07-10 [autonomy: Moderate] Defaults accepted (operator-confirmed): N=2, Master Validator off, Result Validator on (Sonnet), merge policy leave-at-review, delegators Sonnet.
+- 2026-07-10 [autonomy: Moderate] TB-20 hard-linked depends_on TB-18: both rework passive.py's cache render; serialization prevents a four-case-render race. Routine call, logged.
+- 2026-07-10 [autonomy: Moderate] TB-19 scheduled first but NOT hard-linked as a dependency of the others: the gate defect is documentation-level; TB-18's plan already pins `uv run pytest -q`. Loose links kill parallelism.
+- 2026-07-10 [autonomy: Moderate] Run-1 artifacts archived to `run-1/` via `git mv`; fixed paths (`validation-plan.md`, future `validation-report.md`) freed for run 2.
+- 2026-07-10 [autonomy: Moderate] Run-1 dashboard (port 49427) verified alive and reused; no new daemon.
+- 2026-07-10 [autonomy: Moderate] Workspace geometry deferred to Phase 1 boot; session-budget guard (4.4M tokens) makes a fresh session for dispatch the honest recommendation. Run-1 pane refs marked stale.
 
-## Run-time footguns
-(rows added during dispatch)
-- **Status vocab.** Terminal pre-merge status is `review`, NOT `pr_open`. Ladder: `backlog → in_planning → planned → in_progress → review → done`. NO `in_validation`, NO `pr_open` lane. A delegator bumping to either hits Invalid transition. Validation evidence is attached as a note while `in_progress`/at `review`.
-- **Missing subcommands (v0.2.0 classic, NOT Stage11).** `lattice claim`, `plan-review`, `code-review`, `needs-human` DO NOT EXIST here. Substitutions baked into every boot prompt:
-  - claim → skip (no auto-rename); delegator sets its own title; use `--actor` on mutations. (`lattice assign <ID> <actor>` exists if assignment is wanted.)
-  - plan-review / code-review → **own-reviewer fallback always** (compute diff with `git log origin/main..HEAD` + per-file diffs, write a Verdict/findings review, `lattice attach <ID> --role review --inline "..."`). No headless review CLI in this install.
-  - needs-human → `lattice status <ID> needs_human`.
-- Consequence: inline-full and fast-track collapse to the same shape here (inline own-reviewer) — there is no headless fresh-eyes review CLI. Cross-cutting fresh eyes come from the Master Validator (in-flight) and the Result Validator (terminal).
-- **`gh` is aliased to `op plugin run -- gh`** (1Password) which FAILS headless ("interactive IO not available"). Mitigation baked into boot prompts: call the real binary `/usr/local/bin/gh` directly. (Found by TB-2 delegator, tick 2.)
-- **PR-create auth:** `GITHUB_PERSONAL_ACCESS_TOKEN` env var lacks PR-create scope; TB-2 had to `gh auth switch` to the keyring account (has repo scope) before `gh pr create` succeeded. Mitigation baked in: `/usr/local/bin/gh auth switch` to the keyring/repo-scoped account before `gh pr create`; verify with `/usr/local/bin/gh auth status`.
-- **Press-ahead branch base:** TB-3/TB-4 branch off `origin/tb-2-scaffold` (in-review parent, PR #1), NOT main — they build on `toolbench/transcript.py`. Their PRs name "based on #1 — merge that first; this rebases". `toolbench/__init__.py` is a potential shared-file edit (re-exports) — additive union at merge; flagged in both prompts.
-- **Phase 2 validator spawn BLOCKED (tick 6).** Two fresh terminal surfaces (surface:20 pane:1, surface:21 pane:5) would not initialize their PTY ("Surface not ready" on send-key, "Terminal surface not found" on read-screen), despite being the selected/active tab. Existing surfaces (surface:10) read fine → PTY subsystem not globally wedged, but NEW-surface init is failing. Concurrent symptom: a blocking 1Password "Locate your GitHub Personal Access Token" interactive prompt sitting in surface:10 (the op/gh integration). Compounded by usage ceiling (76% weekly) + session-budget guard (~1.2M tokens). Decision: halt-and-surface to operator rather than thrash. Options offered: (a) Orchestrator runs the audit in degraded mode (loses cold independence; plan is mechanical + gate already verified green), (b) retry fresh validator later, (c) operator runs validation post-reset. Loop stopped pending operator choice.
+## Run-time footguns (carried from run 1, re-verified 2026-07-10 + run-2 additions)
+- **Status vocab.** Terminal pre-merge status is `review`, NOT `pr_open`. Ladder: `backlog → in_planning → planned → in_progress → review → done`. NO `in_validation`, NO `pr_open` lane.
+- **Missing subcommands (v0.2.0 classic, NOT Stage11).** `lattice claim`, `plan-review`, `code-review`, `needs-human` DO NOT EXIST. Substitutions: claim → skip (use `--actor` on mutations); plan/code-review → own-reviewer fallback (diff + Verdict note via `lattice comment`); needs-human → `lattice status <ID> needs_human`.
+- **Lattice CLI arg shapes.** `lattice comment <ID> "<text>" --actor …` (text positional, no `-m`). zsh does not word-split unquoted vars — never pass flags via `$VAR` expansion.
+- **`lattice show TB-15` crashes** (upstream bug, string evidence ref). Status/comment mutations unaffected. Avoid `show` on TB-15.
+- **`gh` is aliased to `op plugin run -- gh`** — fails headless. Use `/usr/local/bin/gh`, including inside `$(...)`. Token env var is `GH_TOKEN`: `GH_TOKEN=$(/usr/local/bin/gh auth token) /usr/local/bin/gh …`.
+- **PR-create auth:** `GITHUB_PERSONAL_ACCESS_TOKEN` lacks PR-create scope; use the keyring account (`/usr/local/bin/gh auth switch`, verify `auth status`).
+- **`gh pr edit --body` silently fails** (deprecated Projects GraphQL path, exit 0, body unchanged). Use `gh api -X PATCH repos/<o>/<r>/pulls/<N> --input body.json`; verify with `gh pr view <N> --json body`.
+- **Test gate:** `uv run pytest -q` ONLY. `unittest discover` under-collects by 37 tests and executes module-level code (prints a probe table mid-run). This is the TB-19 defect — until its PR merges, the *documented* command lies.
+- **mypy --strict baseline is 38 pre-existing errors.** A delegator must diff error count against baseline, not demand zero.
+- **Hermes DBs are NEVER opened writable.** `mode=ro`; `immutable=1` only when no `-wal` sidecar exists (post-Task-0 `_connect`). `immutable=1` on a WAL DB reads stale data and `PRAGMA journal_mode` lies under it.
+- **Press-ahead branch bases:** TB-18 continues `chore/add-hermes-cli-export-plan` (PR #20) — new delegator must NOT rebranch. TB-20 bases off main post-merge or rebases onto #20's branch.

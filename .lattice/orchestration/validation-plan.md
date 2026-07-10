@@ -1,50 +1,39 @@
-# Validation Plan
-Source spec: [SPEC.md](../../SPEC.md) · Source evaluation: [EVALUATION.md](../../EVALUATION.md) · Date: 2026-07-08
+# Validation Plan — Run 2 (TB-19, TB-18 remainder, TB-20)
 
-The Result Validator (Phase 2) runs every `pre-merge-static` row exactly as
-written, from `gh pr diff` + PR-branch source + the hermetic `test`/lint/type
-commands (single-branch, no merged tree, no human, no real `~/.claude`).
-`post-merge-smoke` rows are the operator checklist, run after merge.
+Source spec: [SPEC.md](../../SPEC.md) · Source evaluation: [EVALUATION.md](../../EVALUATION.md) · Date: 2026-07-10
+
+Run 1's plan and report live in [`run-1/`](run-1/). This run delivers S29/S30
+(TB-18 Tasks 3–6), plus two criteria the tickets author themselves during
+their DOCS phases: **S31** (TB-19) and **S32** (TB-20). Rows 10–13 therefore
+audit *both* the authored contract row and the behavior it pins — a ticket
+that ships behavior without its criterion row FAILS its contract-row row.
 
 | # | Criterion (ID) | Verification method | Artifact to inspect | Pass condition | runnable_at |
 |---|----------------|---------------------|---------------------|----------------|-------------|
-| 1 | S1 id-join | Read parser tests; both key locations (top-level `toolUseID` + block-local `tool_use_id`) exercised over fixtures | TB-3 PR: `toolbench/transcript.py`, `tests/` | Fixtures join a call via each key location; `output_chars` non-zero on matched result | pre-merge-static |
-| 2 | S2 payload precedence | Read block-local-vs-top-level fixture; assert block-local `content` wins and source recorded | TB-3 PR: `transcript.py`, block-local fixture | Both-present fixture resolves to block-local payload; source field reflects the choice | pre-merge-static |
-| 3 | S3 `result_len` (4 shapes) | Read `result_len` unit test over dict / string / MCP block-list / block-local content | TB-2 PR: `transcript.py`, `tests/` | All four shapes normalize to correct char length | pre-merge-static |
-| 4 | S4 `ToolCall` fields | Read record definition + derived-prop test | TB-2 PR: `transcript.py` | Field set matches S4 exactly; `tokens==output_chars//4`, `input_tokens==input_chars//4` | pre-merge-static |
-| 5 | S5 malformed non-fatal | Read malformed-line fixture; assert counted, skipped, surfaced in `ParseResult.malformed` | TB-3 PR: parser + fixture | Malformed line increments count, never raises; count reaches `ParseResult` | pre-merge-static |
-| 6 | S6 interrupted kept | Read no-result fixture; assert kept with `output_chars=0, no_result=True` | TB-3 PR: parser + fixture | Interrupted `tool_use` retained, not dropped; flags set | pre-merge-static |
-| 7 | S7 raw discovery | Read `iter_session_files` test over tmp tree; project substring + mtime filter; missing root raises | TB-4 PR: `sources.py`, tmp-tree test | Filters apply; `FileNotFoundError` on missing `root` | pre-merge-static |
-| 8 | S8 AgentsView pagination | Read fake-runner test; cursor pagination + `SessionRef` shape | TB-4 PR: `sources.py`, `test_sources.py` fake runner | Multi-page cursor walk yields correct `SessionRef`s; `--limit 500` arg constructed | pre-merge-static |
-| 9 | S9 uniform open | Read `open_session_jsonl` test over path vs export (fake runner) | TB-4 PR: `sources.py` | Both a filesystem path and an `export <id>` stream JSONL lines identically | pre-merge-static |
-| 10 | S10 index-source (logic) | Read auto/strict/raw policy test; fallback records reason | TB-4 PR: `sources.py` | `auto` falls back on fake-nonzero-exit and records reason; `agentsview` strict errors; `raw` fs-only | pre-merge-static |
-| 11 | S10 index-source (live) | Live AgentsView daemon healthy → auto uses it; daemon down → falls back, report names reason | merged tree + live daemon | `--index-source auto --limit 20` uses AgentsView, then falls back with a stated reason | post-merge-smoke |
-| 12 | S11 incremental (reducer) | Read reducer unit + source scan: no whole-corpus `list[ToolCall]`; only per-agent/per-tool counters global | TB-5 PR: `passive.py` | No corpus-wide list accumulation; reducers are per-agent/per-tool | pre-merge-static |
-| 13 | S11 incremental (scale) | `--all --limit 200 --verbose` completes with flat memory on real corpus | merged tree + real `~/.claude/projects` | Completes without unbounded memory growth | post-merge-smoke |
-| 14 | S12 CLI | Read arg-parse test; flags + default scope `--agent all --all` | TB-5 PR: `passive.py` | All S12 flags parse; default scope correct | pre-merge-static |
-| 15 | S13 subagents | Read include/exclude test; `--exclude-subagents` drops `/subagents/` paths | TB-5 PR: `passive.py` | Included by default; excluded on flag | pre-merge-static |
-| 16 | S14 report sections | Read report-string test; four sections in order | TB-5 PR: `passive.py` | Agent breakdown → Tool leaderboard → Inefficiency callouts → Summary, in order | pre-merge-static |
-| 17 | S15 provenance | Read report-string test for provenance fields | TB-5 PR: `passive.py` | Report states index source, sessions scanned, calls joined, malformed count, subagent inclusion, fallback reason, `--since` mtime note | pre-merge-static |
-| 18 | S16 vendored corpus | Diff `protocols/active-probes.md` five relative paths against files under `tools/`; probe output goes to `reports/` | TB-6 PR: `protocols/active-probes.md`, `tools/`, `probe.py` | Exactly the five vendored files listed by relative path; all exist under `tools/`; no external absolute paths; outputs land in `reports/` | pre-merge-static |
-| 19 | S17 sentinels | Read `find_probe_calls` test; `TB_PROBE_*_V2` globally unique, none a substring of another; verifies sentinel + tool name | TB-6 PR: `probe.py` | Sentinels unique + non-substring; probe-call match requires sentinel AND expected tool name | pre-merge-static |
-| 20 | S18 comparison table | Read table test; context-tokens per arm + real `usage` when isolable; #8376 seeds (`search` 723/794, `find` 68/89) when arm absent | TB-6 PR: `probe.py` | Table emits per-arm context tokens; falls back to seeded baselines on absent arm | pre-merge-static |
-| 21 | S19 metric roles | Read ranking test/source; context-cost (`chars/4`) ranks; cache flag caveat-only; failure/slow/churn callouts-only | TB-5 PR: `passive.py` | Ranking keyed on context-cost tokens; cache never ranks; churn/failure feed callouts only | pre-merge-static |
-| 22 | S20 stdlib + uv shape | Import-scan `toolbench/` for third-party imports; read `pyproject.toml` (empty runtime deps, dev group ruff/mypy/pytest) + `uv.lock` present | TB-2 PR: `toolbench/`, `pyproject.toml`, `uv.lock` | No third-party imports in shipped package; uv project shape correct | pre-merge-static |
-| 23 | S21 entry points | Read module guards + `unittest discover tests` green on PR branch | TB-2 PR: `toolbench/`, `tests/` | `python -m toolbench.passive` / `.probe` importable + guarded; `unittest discover` green | pre-merge-static |
-| 24 | S22 strict gate | Run on PR branch: `uv run ruff check .`; `uv run mypy --strict toolbench tests`; `uv run python -m unittest discover tests` | TB-7 PR (final tree) | All three green | pre-merge-static |
-| 25 | S23 exit contract | Read argv + tmp-root tests | TB-5 PR: `passive.py` | Empty selection → message + exit 0; missing strict root → exit 1; `--agent all --index-source auto` continues + reports skipped roots | pre-merge-static |
-| 26 | S24 fixtures + fake runner | Confirm the five parser fixtures + fake `agentsview` runner present | TB-3/TB-4 PRs: `tests/` | String, MCP block-list, block-local content, interrupted, malformed fixtures + fake runner all present | pre-merge-static |
-| 27 | S25 acceptance smoke | Run S25 commands against real corpus / live daemon | merged tree + real corpus + daemon | `--project` slice reports counts; `--all --limit 200 --verbose` bounded memory; `--index-source auto --limit 20` via AgentsView or stated fallback | post-merge-smoke |
+| 1 | S29 — producer split | Read `toolbench/parsers.py` + `tests/test_parsers.py` in the TB-18 PR tree: `HermesTraceParser.claims_line` keys on `version == "hermes-agent"`; `ClaudeParser.claims_line` excludes it; a partition test asserts no line is claimed by both | TB-18 PR (#20) diff + source | Both predicates present; partition test exists and passes in CI-equivalent local run | pre-merge-static |
+| 2 | S29 — fixture routes | `tests/fixtures/schema_hermes_trace.jsonl` exists; a test drives `detect_parser` over it and asserts the returned parser is `HermesTraceParser` (by `type(...) is`, not isinstance) | TB-18 PR diff | Fixture committed; routing test asserts exact type; no `AmbiguousSchema`/`UnknownSchema` | pre-merge-static |
+| 3 | S29 — provenance stamped | `ToolCall.usage_provenance` is a required (no-default) field; every `ToolCall(` construction site in `toolbench/` passes it; `HermesTraceParser._provenance` returns `ABSENT_BY_EXPORT` unconditionally | source at PR head | `rg -n 'ToolCall\(' toolbench/` sites all pass `usage_provenance`; mypy --strict shows no new errors vs baseline (38) | pre-merge-static |
+| 4 | S29 — four-case cache render | `tests/test_passive.py` covers all four renders: `yes`, `no` (usage present, zero hits), `n/a` (no call measurable), `n/a*` (mixed); `ToolStats.usage_missing` is a counter, not a scalar | TB-18 PR diff (Task 3) | Four distinct render assertions pass; `no` is only emitted when `usage_missing == 0` for the bucket | pre-merge-static |
+| 5 | S29/S19 — cache stays caveat-only | Diff inspection: no ranking/sort in `render_report` consults cache fields | TB-18 PR diff | Ranking unchanged; cache column render-only | pre-merge-static |
+| 6 | S30 — probe refuses trace at dispatch | Test drives probe entry over a hermes-trace fixture and asserts refusal (exception naming hermes-trace/NonIsolableTurns), not a scored table | TB-18 PR diff (Task 5) | Refusal test passes; no partial-corpus mode flag exists | pre-merge-static |
+| 7 | S30 — `_turn_key` raises | `_turn_key` on an entry lacking `requestId` raises `NonIsolableTurns`; `rg -n 'ts:' toolbench/probe.py` finds no timestamp-fallback key construction | source at PR head | Raise test passes; zero `f"ts:{...}"` occurrences remain | pre-merge-static |
+| 8 | S30 — probe fixtures migrated first | Commit order in the TB-18 PR: fixture `requestId` migration (Task 4) lands before the fallback deletion (Task 5); `probe_session_response_pooled.jsonl` byte-identical to pre-PR state | PR commit list + `git diff` on that fixture | Task-4 commit precedes Task-5 commit; pooled fixture untouched | pre-merge-static |
+| 9 | S22 — strict gate per PR | For each of the three PRs at head: `uv run ruff check .`, `uv run mypy --strict toolbench tests` (≤38 pre-existing errors), `uv run pytest -q` all green | each PR checked out locally | All three commands exit 0 (mypy: no NEW errors); pytest reports 0 failures | pre-merge-static |
+| 10 | S31 — criterion authored (TB-19) | SPEC.md gains an S31 row; EVALUATION.md gains a matching table row + updated Harness commands; BUILDPLAN gains a T-row carrying both IDs | TB-19 PR diff | All three documents updated in the same PR; S31 text pins one fast-suite command that collects the full suite | pre-merge-static |
+| 11 | S31 — full collection proven (TB-19) | Compare collected test counts: the documented command's count equals `uv run pytest -q`'s count; a regression test or CI-visible check prevents silent skips recurring | TB-19 PR tree | Documented command collects 100% of tests; the 37-test gap is closed or `unittest discover` is no longer documented anywhere (`rg -n 'unittest discover'` over README/EVALUATION/BUILDPLAN/SPEC returns nothing) | pre-merge-static |
+| 12 | S32 — criterion authored (TB-20) | SPEC.md gains an S32 row; EVALUATION.md row; BUILDPLAN T-row | TB-20 PR diff | Same three-document standard as row 10 | pre-merge-static |
+| 13 | S32 — session-grain cache consulted (TB-20) | Test with a hermes fixture whose session row carries `cache_read_tokens > 0` asserts the report no longer renders a universal miss for hermes buckets; DB opens remain read-only (`mode=ro` / guarded `immutable=1` only) | TB-20 PR diff + source | Test passes; `rg -n 'sqlite3.connect' toolbench/` shows no writable open | pre-merge-static |
+| 14 | S29/S30 live trace export (external-oracle) | EVALUATION smoke #6: `hermes sessions export --format trace <dir>` on a real session; `passive` renders `n/a` (not `no`) for its calls; `probe` over the same file refuses with `NonIsolableTurns` | operator terminal, merged tree | Both behaviors observed against a fresh export from the installed hermes CLI | post-merge-smoke |
+| 15 | S32 live archive (operator-assisted) | `TOOLBENCH_LIVE=1 uv run pytest -q` against the real `~/.hermes` archives; hermes cache figures materially non-zero in a real report run | operator terminal, merged tree | Live suite green; a real hermes report shows session-grain cache signal | post-merge-smoke |
+| 16 | Report reads well (felt) | Operator reads one full passive report post-merge | merged tree report output | Four-case cache column is scannable and the `n/a*` footnote explains itself | post-merge-smoke |
 
-## Operator post-merge smoke checklist (verbatim, human-driven)
+## Notes for the Result Validator
 
-1. **Join-key on real data (S1/S2)** — the flagged primary risk. Run
-   `passive --agent claude --project <one real project> --limit 5` against a
-   real `~/.claude/projects` file and confirm tool-output tokens are non-zero
-   (the block-local `content` branch actually fires).
-2. **AgentsView live path (S10/S25)** — with the daemon healthy, run
-   `--index-source auto --limit 20`; then stop the daemon and confirm
-   fallback-to-raw and that the report names the reason.
-3. **Scale (S11)** — `--all --limit 200 --verbose` completes with flat memory.
-4. **Report reads well (`felt`)** — the four-section report is scannable and
-   the inefficiency callouts are actionable, not noise.
+- Rows 10–13 depend on contract rows that do not exist at plan-writing time
+  by design (the tickets author them). If a ticket's PR ships behavior without
+  its SPEC/EVALUATION/BUILDPLAN row, mark the contract-row row FAIL — do not
+  audit the behavior against the ticket description as a substitute.
+- The mypy --strict baseline is 38 pre-existing errors; "green" for row 9
+  means no new errors, not zero.
+- TB-18's PR is #20 and already contains Tasks 0–2; audit the whole PR, not
+  only the run-2 commits.

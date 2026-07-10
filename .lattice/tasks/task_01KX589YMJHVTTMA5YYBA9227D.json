@@ -1,7 +1,7 @@
 {
   "assigned_to": null,
   "branch_links": [],
-  "comment_count": 0,
+  "comment_count": 1,
   "complexity": "medium",
   "created_at": "2026-07-10T05:34:16Z",
   "created_by": "agent:claude",
@@ -10,7 +10,7 @@
   "done_at": null,
   "evidence_refs": [],
   "id": "task_01KX589YMJHVTTMA5YYBA9227D",
-  "last_event_id": "ev_01KX58ADGZQJX2TCFC6GV3G7HZ",
+  "last_event_id": "ev_01KX5NSHQ4P7TWEM84178ACHCP",
   "last_status_changed_at": "2026-07-10T05:34:16Z",
   "priority": "medium",
   "relationships_out": [
@@ -20,6 +20,13 @@
       "note": "TB-18 introduces UsageProvenance and the four-case render rule; TB-20 extends that seam to session-grain cache data. TB-18 lands first.",
       "target_task_id": "task_01KX4257MZSQMKY01KMG0E1G29",
       "type": "related_to"
+    },
+    {
+      "created_at": "2026-07-10T09:29:01Z",
+      "created_by": "agent:orchestrator-intake",
+      "note": null,
+      "target_task_id": "task_01KX4257MZSQMKY01KMG0E1G29",
+      "type": "depends_on"
     }
   ],
   "reopened_count": 0,
@@ -33,6 +40,6 @@
   ],
   "title": "hermes sessions report 100% cache-miss: session-grain cache_read_tokens is never consulted",
   "type": "bug",
-  "updated_at": "2026-07-10T05:34:31Z",
+  "updated_at": "2026-07-10T09:29:59Z",
   "urgency": null
 }

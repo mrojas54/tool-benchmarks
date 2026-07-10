@@ -1,11 +1,12 @@
-# Agents — tool-benchmarks run
+# Agents — tool-benchmarks (run 2: TB-19 · TB-18 · TB-20)
 
 Active table overwritten each dispatch tick (Lattice + `c11 tree` are ground truth).
+Run-1 delegator history retained under Archived.
 
 ## Active
 | Role | Ticket | Surface ref | Pane ref | Branch | Worktree | Phase | Last seen | Spawned at |
 |------|--------|-------------|----------|--------|----------|-------|-----------|------------|
-| (none — run complete) | | | | | | | | |
+| (none — Phase 0 complete 2026-07-10; dispatch not started) | | | | | | | | |
 
 ## Archived (run history)
 | Actor | Ticket | Outcome | Notes |

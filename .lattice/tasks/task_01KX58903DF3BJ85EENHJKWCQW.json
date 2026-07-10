@@ -1,7 +1,7 @@
 {
   "assigned_to": null,
   "branch_links": [],
-  "comment_count": 0,
+  "comment_count": 1,
   "complexity": "low",
   "created_at": "2026-07-10T05:33:45Z",
   "created_by": "agent:claude",
@@ -10,7 +10,7 @@
   "done_at": null,
   "evidence_refs": [],
   "id": "task_01KX58903DF3BJ85EENHJKWCQW",
-  "last_event_id": "ev_01KX58ADMQKG0TJ984DVJXW3VR",
+  "last_event_id": "ev_01KX5NSHFVEAV2J7AAFD55FF00",
   "last_status_changed_at": "2026-07-10T05:33:45Z",
   "priority": "high",
   "relationships_out": [
@@ -32,6 +32,6 @@
   ],
   "title": "unittest discover, the documented test command, silently skips 37 of 220 tests",
   "type": "bug",
-  "updated_at": "2026-07-10T05:34:32Z",
+  "updated_at": "2026-07-10T09:29:59Z",
   "urgency": null
 }
