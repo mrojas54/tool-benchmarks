@@ -10,8 +10,8 @@
   "done_at": null,
   "evidence_refs": [],
   "id": "task_01KX60GDJAFD4KS8M19FTNG9C0",
-  "last_event_id": "ev_01KX60HH174P4JKPWFMA7VGYXW",
-  "last_status_changed_at": "2026-07-10T12:37:14Z",
+  "last_event_id": "ev_01KX6Z7WYTNGKZB1GZTXHTE5KF",
+  "last_status_changed_at": "2026-07-10T21:34:21Z",
   "priority": "high",
   "relationships_out": [
     {
@@ -25,7 +25,7 @@
   "reopened_count": 0,
   "schema_version": 1,
   "short_id": "TB-22",
-  "status": "backlog",
+  "status": "planned",
   "tags": [
     "reporting",
     "integrity",
@@ -34,6 +34,6 @@
   ],
   "title": "Corpus is non-reproducible between runs: observer transcripts age out of a 30-day window mid-scan",
   "type": "task",
-  "updated_at": "2026-07-10T12:37:50Z",
+  "updated_at": "2026-07-10T21:34:21Z",
   "urgency": null
 }

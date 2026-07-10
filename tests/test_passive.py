@@ -12,13 +12,16 @@ from tempfile import TemporaryDirectory
 import pytest
 
 from toolbench.adapters import UnknownSchema
+from toolbench.freeze import read_manifest, write_manifest
 from toolbench.passive import (
     OVERSIZED_OUTPUT_TOKENS,
     UNKNOWN_MODEL,
+    CorpusFingerprint,
     Reducer,
     _apply_date_range,
     _is_subagent_path,
     _parse_ref,
+    corpus_fingerprint,
     filter_subagents,
     main,
     parse_args,
@@ -1256,6 +1259,217 @@ class DiscoveryReconciliationMainTests(unittest.TestCase):
         # the skipped session ids stay out of the default report
         self.assertNotIn("dead-1", report)
         self.assertNotIn("cursor-1", report)
+
+
+class CorpusFingerprintTests(unittest.TestCase):
+    """TB-22 / S36: a fingerprint over the scanned session ids identifies the
+    corpus that produced the numbers, so two reports can be checked for identical
+    inputs before a delta between them is attributed to code."""
+
+    def test_fingerprint_is_order_independent(self) -> None:
+        # Discovery/paging order must never move the digest -- only membership can.
+        a = corpus_fingerprint(["s3", "s1", "s2"])
+        b = corpus_fingerprint(["s1", "s2", "s3"])
+        self.assertEqual(a.digest, b.digest)
+        self.assertEqual(a, b)
+
+    def test_count_is_the_number_of_ids(self) -> None:
+        self.assertEqual(corpus_fingerprint(["a", "b", "c"]).count, 3)
+        self.assertEqual(corpus_fingerprint([]).count, 0)
+
+    def test_membership_change_changes_the_digest(self) -> None:
+        base = corpus_fingerprint(["a", "b", "c"])
+        dropped = corpus_fingerprint(["a", "b"])  # a session aged out mid-scan
+        added = corpus_fingerprint(["a", "b", "c", "d"])
+        self.assertNotEqual(base.digest, dropped.digest)
+        self.assertNotEqual(base.digest, added.digest)
+
+    def test_empty_and_populated_differ(self) -> None:
+        self.assertNotEqual(corpus_fingerprint([]).digest, corpus_fingerprint(["a"]).digest)
+
+
+class CorpusFingerprintRenderTests(unittest.TestCase):
+    """S36: the Summary carries the fingerprint line so a reader can compare inputs."""
+
+    def _reducer(self, scanned: int) -> Reducer:
+        reducer = Reducer()
+        for _ in range(scanned):
+            reducer.absorb("claude-code", ParseResult(calls=[make_call()], malformed=0))
+        return reducer
+
+    def _summary(self, fingerprint: CorpusFingerprint | None) -> str:
+        report = render_report(
+            self._reducer(3),
+            index_source="agentsview",
+            fallback_reason=None,
+            skips=[],
+            include_subagents=True,
+            since_note=None,
+            fingerprint=fingerprint,
+        )
+        return report[report.index("## Summary") :]
+
+    def test_summary_carries_fingerprint_line(self) -> None:
+        fp = corpus_fingerprint(["s1", "s2", "s3"])
+        summary = self._summary(fp)
+        self.assertIn(f"Corpus fingerprint: {fp.digest} (3 sessions scanned)", summary)
+
+    def test_no_fingerprint_line_when_absent(self) -> None:
+        self.assertNotIn("Corpus fingerprint:", self._summary(None))
+
+
+class CorpusFingerprintMainTests(unittest.TestCase):
+    """S36 end-to-end: an unchanged scanned set yields an identical fingerprint
+    line; a session that vanishes mid-scan moves it."""
+
+    def _payload(self) -> str:
+        return json.dumps(
+            {
+                "sessions": [
+                    {"id": "good-1", "project": "p", "agent": "claude"},
+                    {"id": "good-2", "project": "p", "agent": "claude"},
+                ],
+                "next_cursor": "",
+                "total": 2,
+            }
+        )
+
+    def _fingerprint_line(self, report: str) -> str:
+        for line in report.splitlines():
+            if "Corpus fingerprint:" in line:
+                return line
+        raise AssertionError("no fingerprint line in report")
+
+    def test_two_identical_runs_produce_the_same_fingerprint_line(self) -> None:
+        good = (FIXTURES / "sample.jsonl").read_text()
+        reports = []
+        for _ in range(2):
+            runner = FakeRunner(
+                [_completed(stdout=self._payload()), _completed(stdout=good), _completed(stdout=good)]
+            )
+            out = io.StringIO()
+            with redirect_stdout(out):
+                main(["--index-source", "agentsview"], runner=runner)
+            reports.append(out.getvalue())
+        self.assertEqual(self._fingerprint_line(reports[0]), self._fingerprint_line(reports[1]))
+
+    def test_a_vanished_session_moves_the_fingerprint(self) -> None:
+        good = (FIXTURES / "sample.jsonl").read_text()
+        # run 1: both sessions scan.
+        r1 = FakeRunner(
+            [_completed(stdout=self._payload()), _completed(stdout=good), _completed(stdout=good)]
+        )
+        # run 2: good-2's transcript has aged out of the retention window.
+        r2 = FakeRunner(
+            [
+                _completed(stdout=self._payload()),
+                _completed(stdout=good),
+                _completed(returncode=1, stderr="fatal: source file not found: /x/good-2.jsonl"),
+            ]
+        )
+        outs = []
+        for runner in (r1, r2):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                main(["--index-source", "agentsview"], runner=runner)
+            outs.append(out.getvalue())
+        self.assertNotEqual(self._fingerprint_line(outs[0]), self._fingerprint_line(outs[1]))
+        self.assertIn("(2 sessions scanned)", self._fingerprint_line(outs[0]))
+        self.assertIn("(1 sessions scanned)", self._fingerprint_line(outs[1]))
+
+
+class CorpusFreezeMainTests(unittest.TestCase):
+    """TB-22 / S37: `--freeze <manifest>` pins the discovered set (write-once),
+    replays it on later runs, and names refs that have vanished since the freeze."""
+
+    def _payload(self) -> str:
+        return json.dumps(
+            {
+                "sessions": [
+                    {"id": "good-1", "project": "p", "agent": "claude"},
+                    {"id": "good-2", "project": "p", "agent": "claude"},
+                ],
+                "next_cursor": "",
+                "total": 2,
+            }
+        )
+
+    def test_first_run_writes_the_manifest(self) -> None:
+        good = (FIXTURES / "sample.jsonl").read_text()
+        with TemporaryDirectory() as d:
+            manifest = str(Path(d) / "corpus.manifest")
+            runner = FakeRunner(
+                [_completed(stdout=self._payload()), _completed(stdout=good), _completed(stdout=good)]
+            )
+            with redirect_stdout(io.StringIO()):
+                code = main(["--index-source", "agentsview", "--freeze", manifest], runner=runner)
+            self.assertEqual(code, 0)
+            self.assertTrue(Path(manifest).exists())
+            m = read_manifest(manifest)
+            self.assertEqual({r.session_id for r in m.refs}, {"good-1", "good-2"})
+
+    def test_replay_uses_frozen_refs_not_live_discovery(self) -> None:
+        good = (FIXTURES / "sample.jsonl").read_text()
+        with TemporaryDirectory() as d:
+            manifest = str(Path(d) / "corpus.manifest")
+            refs = [
+                SessionRef("claude", "agentsview", "p", "good-1", None),
+                SessionRef("claude", "agentsview", "p", "good-2", None),
+            ]
+            write_manifest(manifest, refs, corpus_fingerprint(["good-1", "good-2"]).digest)
+            # Only exports -- no `session list` call, because inputs come from the manifest.
+            runner = FakeRunner([_completed(stdout=good), _completed(stdout=good)])
+            with redirect_stdout(io.StringIO()):
+                code = main(["--index-source", "agentsview", "--freeze", manifest], runner=runner)
+            self.assertEqual(code, 0)
+            self.assertTrue(all("list" not in argv for argv in runner.calls))
+
+    def test_replay_reports_refs_that_vanished_since_freeze(self) -> None:
+        good = (FIXTURES / "sample.jsonl").read_text()
+        with TemporaryDirectory() as d:
+            manifest = str(Path(d) / "corpus.manifest")
+            refs = [
+                SessionRef("claude", "agentsview", "p", "good-1", None),
+                SessionRef("claude", "agentsview", "p", "gone-2", None),
+            ]
+            write_manifest(manifest, refs, corpus_fingerprint(["good-1", "gone-2"]).digest)
+            runner = FakeRunner(
+                [
+                    _completed(stdout=good),
+                    _completed(returncode=1, stderr="fatal: source file not found: /x/gone-2.jsonl"),
+                ]
+            )
+            out = io.StringIO()
+            with redirect_stdout(out):
+                main(["--index-source", "agentsview", "--freeze", manifest, "--verbose"], runner=runner)
+            report = out.getvalue()
+            self.assertIn("vanished since freeze", report)
+            self.assertIn("1", self._vanished_line(report))
+            self.assertIn("gone-2", report)  # named under --verbose
+
+    def _vanished_line(self, report: str) -> str:
+        for line in report.splitlines():
+            if "vanished since freeze" in line:
+                return line
+        raise AssertionError("no vanished line")
+
+    def test_two_replays_are_byte_identical_when_nothing_vanished(self) -> None:
+        good = (FIXTURES / "sample.jsonl").read_text()
+        with TemporaryDirectory() as d:
+            manifest = str(Path(d) / "corpus.manifest")
+            refs = [
+                SessionRef("claude", "agentsview", "p", "good-1", None),
+                SessionRef("claude", "agentsview", "p", "good-2", None),
+            ]
+            write_manifest(manifest, refs, corpus_fingerprint(["good-1", "good-2"]).digest)
+            outs = []
+            for _ in range(2):
+                runner = FakeRunner([_completed(stdout=good), _completed(stdout=good)])
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    main(["--index-source", "agentsview", "--freeze", manifest], runner=runner)
+                outs.append(out.getvalue())
+            self.assertEqual(outs[0], outs[1])
 
 
 if __name__ == "__main__":
