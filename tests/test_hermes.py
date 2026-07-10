@@ -412,13 +412,15 @@ class PassiveIntegration(unittest.TestCase):
             finally:
                 del os.environ["HERMES_HOME"]
 
-        # Exit 0 and name the skipped session: a hermes archive we cannot read
-        # degrades the run, never aborts it.
+        # Exit 0 and name the reason: a hermes archive we cannot read degrades the
+        # run, never aborts it. The only session skipped, so this is the empty-selection
+        # path, which now reports a typed reason tally (TB-21/S34). The NonTranscriptExport
+        # that S9a raises for an unreadable archive lands in the non_transcript bucket;
+        # the per-session id and "not in local archive" detail are available under --verbose.
         self.assertEqual(code, 0)
         report = out.getvalue()
-        self.assertIn("cron_1", report)
-        self.assertIn("skipped roots", report)
-        self.assertIn("not in local archive", report)
+        self.assertIn("no sessions matched", report)
+        self.assertIn("skipped 1: non_transcript=1", report)
 
 
 class LiveArchive(unittest.TestCase):
