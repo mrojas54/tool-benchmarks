@@ -12,12 +12,17 @@ One row per SPEC criterion, each tagged by how it is verified:
 
 ## Harness commands
 
-- **`test` (fast, hermetic, parallel, ≤60s)** — `uv run python -m unittest
-  discover tests`. The delegators' inner-loop clock. Pure stdlib, no daemon,
-  no `~/.claude` access; fixtures + fake `agentsview` runner only.
+- **`test` (fast, hermetic, parallel, ≤60s)** — `uv run pytest -q`. The
+  delegators' inner-loop clock. No daemon, no `~/.claude` access; fixtures +
+  fake `agentsview` runner only. Collects `unittest.TestCase` methods and
+  module-level `test_*` functions uniformly (S31) — `unittest discover`
+  silently missed the latter (37 of 220 tests, TB-19) and is no longer the
+  documented command.
 - **`test:full` (slow, real corpus / daemon)** — the S25 smoke commands run
   against a real `~/.claude/projects` and, where healthy, the live
-  AgentsView daemon. Not hermetic; operator-run.
+  AgentsView daemon. Not hermetic; operator-run. Tests that read a live
+  archive are gated on `TOOLBENCH_LIVE=1` and skip out of the fast suite;
+  run them with `TOOLBENCH_LIVE=1 uv run pytest -q`.
 - **lint / types** — `uv run ruff check .`; `uv run mypy --strict toolbench
   tests`.
 
@@ -55,6 +60,10 @@ One row per SPEC criterion, each tagged by how it is verified:
 | S26 | requestId-keyed isolability; prose/thinking/batch blank usage | `autonomous` | `test` (prose + pooled fixtures) |
 | S27 | schema dispatch (`detect_parser`); UnknownSchema / AmbiguousSchema | `autonomous` | `test` (`test_adapters` / `test_registry`) |
 | S28 | no default parser; unrecognized schemas skip loudly | `autonomous` | `test` (codex/cursor → skipped_roots) |
+| S29 | producer split on `version`; `UsageProvenance` stamped; four-case cache render | `autonomous` | `test` (`schema_hermes_trace.jsonl` fixture; `detect_parser` → `HermesTraceParser`; `n/a` / `n/a*` / `no` render) |
+| S30 | probe refuses trace at dispatch; `_turn_key` raises `NonIsolableTurns`; no timestamp fallback | `autonomous` | `test` (probe fixtures carry `requestId`; refusal on a stripped fixture) |
+| S31 | gate command collects every test (`TestCase` methods + module-level fns) | `autonomous` | `test` (`test_gate_completeness.py`) |
+| S32 | session-grain `cache_read_tokens` surfaced as an agent-level caveat, never fabricated per call, never mixed with the per-call `cache_assisted` column | `autonomous` / `operator-assisted` (live archive ratio) | `test` (`test_hermes.py` present/null/zero session-grain fixtures; `test_passive.py` Reducer counters + Agent Breakdown caveat render + Tool Leaderboard non-leakage) |
 
 ## Operator post-merge smoke checkpoints (human-driven)
 
@@ -76,3 +85,16 @@ One row per SPEC criterion, each tagged by how it is verified:
    cells are filled, do **not** rank arms on them — bash usage includes a
    sentinel (+ optional `description`) tax the tool arm cannot carry (TB-17);
    compare context tokens instead.
+6. **Live trace export (S29/S30, `external-oracle`).** Export a real session
+   with `hermes sessions export --format trace <dir>` (positional dir, not
+   `--output-dir`). Confirm `passive` reports its calls with a `n/a` cache
+   flag rather than `no`, and that `probe` over the same file refuses with
+   `NonIsolableTurns` instead of scoring it. The fixture proves the shape;
+   only the real CLI proves the shape is still what hermes emits.
+7. **Session-grain cache ratio (S32, `operator-assisted`).** Run `passive
+   --agent hermes --all` against the live archive and confirm the Agent
+   Breakdown gains a `hermes: M of N sessions carry session-grain
+   cache_read_tokens > 0` caveat line whose ratio is in the same ballpark as
+   a direct `SELECT` against the profile databases (~90% at ticket-filing
+   time), while the Tool Leaderboard's hermes row is still `n/a` — proving
+   the two signals stayed separate end to end, not just in fixtures.

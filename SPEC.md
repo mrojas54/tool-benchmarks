@@ -135,10 +135,9 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   imports nothing third-party; the project is uv-managed (`pyproject.toml`
   + `uv.lock`, empty runtime deps, `dev` group `ruff`/`mypy`/`pytest`).
 - **S21 — entry points.** Runnable as `uv run python -m toolbench.passive`
-  and `… toolbench.probe`; tests via `uv run python -m unittest discover
-  tests`.
+  and `… toolbench.probe`; tests via `uv run pytest -q` (S31).
 - **S22 — strict gate.** `uv run ruff check .`, `uv run mypy --strict
-  toolbench tests`, and the full unittest suite are green before any PR.
+  toolbench tests`, and the full pytest suite are green before any PR.
 - **S23 — error handling.** Empty session selection → clear message,
   exit 0. Missing selected raw root → exit 1 for a strict source; but
   `--agent all --index-source auto` continues with other sources and
@@ -164,12 +163,18 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   response. Claude Code writes one response as several JSONL entries
   (`thinking` / `text` / each `tool_use`) that share a `requestId` and a
   single `usage` figure but carry distinct timestamps. A turn is therefore
-  the `requestId` (falling back to timestamp when absent). An arm's usage is
+  the `requestId`; there is no timestamp fallback (superseded by S30). An arm's usage is
   attributable only when that response emitted exactly one `tool_use` and no
   non-empty `text` / `thinking` / `redacted_thinking` block. Batching,
   prose, or reasoning in the arm turn keeps the match and the context-token
   columns, and blanks usage (`—`). Only a fresh session recovers the number
   (TB-16).
+- **S31 — gate collects every test.** The documented and enforced fast-suite
+  command is `uv run pytest -q`, not `uv run python -m unittest discover
+  tests`. `unittest.TestLoader.discover` only finds `unittest.TestCase`
+  methods; it is blind to module-level `test_*` functions, which pytest
+  collects uniformly alongside `TestCase` methods. A test added as a bare
+  module-level function cannot silently escape the gate (TB-19).
 
 ## Schema dispatch — `toolbench/adapters.py` + `toolbench/registry.py`
 
@@ -183,3 +188,42 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 - **S28 — no parser is the default.** An unrecognized transcript is never parsed
   by `ClaudeParser`, and never reported as an agent with zero tool calls. `codex`
   and `cursor` land in `skipped_roots` pending a `CodexParser` (TB-12).
+
+## Usage provenance — `toolbench/parsers.py` + `toolbench/probe.py`
+
+- **S29 — producer provenance for usage.** Schema and producer are separate
+  axes. A transcript claimed by the claude schema is routed by producer:
+  `version == "hermes-agent"` selects `HermesTraceParser`, otherwise
+  `ClaudeParser`. The two claim predicates partition, so `AmbiguousSchema`
+  never fires between them. Every `ToolCall` carries a `UsageProvenance` of
+  `PRESENT`, `ABSENT_BY_SCHEMA`, `ABSENT_BY_EXPORT`, or `ABSENT_UNEXPECTED`,
+  stamped by its producer. The passive cache-hit flag renders `n/a` when no
+  call in a bucket could be measured, `n/a*` when only some could, and `no`
+  only when usage was available and zero hits were observed. Per S19 the flag
+  remains caveat-only and never affects ranking (TB-18).
+- **S30 — probe requires the billing unit.** `probe.py` groups turns solely by
+  `requestId`, amending S26. It rejects `hermes-trace` input at dispatch, and
+  `_turn_key` raises `NonIsolableTurns` on any entry lacking `requestId`.
+  There is no timestamp fallback and no partial-corpus mode.
+  `hermes sessions export --format trace` output is therefore valid input to
+  `passive.py` and invalid input to `probe.py` (TB-18).
+- **S32 — session-grain cache surfaced without per-call fabrication.**
+  `parse_hermes_session` additionally reads `cache_read_tokens` off the
+  session's own `sessions` row (hermes carries cache data at session grain,
+  never per call — see S29) and stamps `ParseResult.session_cache_read_tokens`
+  with the raw value: `None` when the column is SQL `NULL` (not measured), an
+  `int` — including `0` — when the session was measured. This field is never
+  attributed to an individual `ToolCall`, never folded into `UsageProvenance`,
+  and never divided by `tool_call_count` to invent a per-call rate — that is
+  the exact class of fabrication S29 exists to eliminate. `Reducer.absorb`
+  folds it into two session-grain-only counters per agent
+  (`AgentStats.sessions_with_cache_data`, `.sessions_with_cache_hit`),
+  incremented once per session regardless of call count. The Agent Breakdown
+  section (S14 §1) renders one caveat line per agent whose measured count is
+  non-zero (`M of N sessions carry session-grain cache_read_tokens > 0 —
+  not attributable to individual tool calls`); this does not add a sixth
+  section and never touches the Tool Leaderboard's per-call `cache_assisted`
+  column (S29's four-case render), so the two signals are never mixed in one
+  column (S19). `HermesTraceParser` output never populates this field: the
+  trace export drops the cache channel entirely, so there is no session-grain
+  value there either (TB-20).

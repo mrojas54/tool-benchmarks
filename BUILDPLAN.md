@@ -37,8 +37,10 @@ raw roots + AgentsView exports
 
 ## Test split
 
-- **`test`** — `uv run python -m unittest discover tests` (hermetic,
-  stdlib, fake `agentsview` runner, no `~/.claude` access; ≤60s).
+- **`test`** — `uv run pytest -q` (hermetic, fake `agentsview` runner, no
+  `~/.claude` access; ≤60s). Collects `unittest.TestCase` methods and
+  module-level `test_*` functions uniformly — `unittest discover` silently
+  missed the latter and is no longer the documented command (S31 / TB-19).
 - **`test:full`** — the S25 acceptance-smoke commands against real corpus /
   live daemon; operator-run post-merge.
 
@@ -55,11 +57,29 @@ parallel (T2, T3), then the two consumers (T4, T5), then docs + gate (T6).
 | **T4 — `passive.py` reducer + report + CLI** | incremental reducer, five report sections + provenance, full CLI, error/exit contract | S11, S12, S13, S14, S15, S19, S23 | T2, T3 |
 | **T5 — `probe.py` + `active-probes.md`** | 5-file corpus under `tools/` (done), `_V2` sentinels + tool-name verify, comparison table + #8376 seeds → `reports/` | S16, S17, S18 | T2 |
 | **T6 — README + strict gate** | README (agents/targets/run/index/metrics), then ruff + mypy --strict + full suite green; PR | S22 | T4, T5 |
+| **T7 — schema dispatch seam** (lattice `TB-13`) | `detect_parser`, `PARSERS` registry, `UnknownSchema` / `AmbiguousSchema`; no default parser | S27, S28 | T2 |
+| **T8 — requestId-keyed arm isolability** (lattice `TB-16`) | turn key is the `requestId`, not the timestamp; response-pooled usage attribution | S26 | T5 |
+| **T9 — usage provenance + probe refusal** (lattice `TB-18`) | `UsageProvenance` enum, `HermesTraceParser` split on `version`, four-case cache render, `NonIsolableTurns` refusal, WAL read-only repair | S29, S30 | T4, T5, T7, T8 |
+| **T10 — pytest as the documented gate** (lattice `TB-19`) | Replace `unittest discover` (silently missed 37/220 module-level tests) with `uv run pytest -q` as the gate command in README/EVALUATION/BUILDPLAN/AGENTS; `testpaths` pytest config; regression test pinning the collection defect | S31 | T6 |
+| **T11 — session-grain cache surfaced as a caveat** (lattice `TB-20`) | `parse_hermes_session` reads `cache_read_tokens` off the session row; `ParseResult.session_cache_read_tokens`; `AgentStats` session-grain counters; Agent Breakdown caveat line, orthogonal to the per-call `cache_assisted` column | S32 | T4, T9 |
+
+`T1`–`T6` are the original v2 build-contract tickets (board `TB-2`–`TB-7`) and
+predate the lattice board's use as the source of truth. `T7`–`T9` are recorded
+retroactively: the work landed as lattice tickets first, and the criteria they
+deliver — S26, S27, S28 — were previously claimed by no row here at all.
+
+Rows are listed in dependency order, not in the order they were minted. Every
+future row carries both IDs; `T9`'s step-by-step lives in
+`docs/superpowers/plans/2026-07-09-tb-18-usage-provenance.md`; `T11`'s lives
+in the lattice plan for `TB-20`.
+
+Still unclaimed by any row: the `CodexParser` itself (board `TB-12`), which S28
+only defers — `codex` and `cursor` land in `skipped_roots` until it exists.
 
 ## Checkpoint sequence
 
-1. **Skeleton (T1)** — `uv run python -m unittest discover tests` green on
-   the record + normalizer; `pyproject.toml` shows empty runtime deps.
+1. **Skeleton (T1)** — `uv run pytest -q` green on the record + normalizer;
+   `pyproject.toml` shows empty runtime deps.
 2. **Substrate (T2 ∥ T3)** — parser joins both key/payload shapes; sources
    page AgentsView via the fake runner. The **join-key on real data**
    (operator checkpoint #1) is de-risked here by the block-local fixture.

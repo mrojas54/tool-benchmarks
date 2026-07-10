@@ -5,7 +5,7 @@
 `toolbench` is an offline, standard-library-only Python CLI harness (no web
 server, no database daemon, no long-running services). "Running the app" means
 invoking the two CLI entry points; "testing end to end" means the hermetic
-`unittest` suite plus the strict gate. Standard commands live in `README.md`
+`pytest` suite plus the strict gate. Standard commands live in `README.md`
 (Usage + Quality gate) and `pyproject.toml`; don't duplicate them here.
 
 Non-obvious notes for this environment:
@@ -16,13 +16,10 @@ Non-obvious notes for this environment:
   via `uv run …` (e.g. `uv run python -m toolbench.passive`); the system
   `/usr/bin/python3` is 3.12 and will not satisfy the version pin.
 - **Quality gate before any PR** (from `README.md`): `uv run ruff check .`,
-  `uv run mypy --strict toolbench tests`, and `uv run python -m unittest discover tests`.
-  The unittest run's OK/FAIL summary is printed to **stderr**, and some tests emit
-  report tables to stdout — redirect stdout to `/dev/null` if you only want the
-  pass/fail summary. **Caveat:** `unittest discover` collects **176** tests;
-  **37** module-level `test_*` functions (TB-13 seam files) are only visible to
-  `pytest` (**213** total). Until TB-19 switches the documented gate, run
-  `uv run pytest -q` when you need the full suite.
+  `uv run mypy --strict toolbench tests`, and `uv run pytest -q`. Do not use
+  `uv run python -m unittest discover tests` as the gate — it silently misses
+  module-level `test_*` functions (37 of 220 as of TB-19) and executes
+  module-level code, printing report tables to stdout mid-run.
 - **Running the passive analyzer on real data:** there is no `--root` CLI flag;
   raw scanning defaults to `~/.claude/projects` and treats the first path segment
   under the root as the project. To exercise it, drop a `*.jsonl` transcript at

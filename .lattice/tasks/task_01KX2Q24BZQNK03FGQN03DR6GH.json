@@ -9,20 +9,20 @@
   "created_by": "agent:claude",
   "custom_fields": {},
   "description": "The probe's tool arm cannot carry its sentinel, so it is unmatchable by\nconstruction -- the same class of defect as the tool-naming bug, one layer in.\n\nTHE PROBLEM\n\n`_performing_sentinel` matches a call only if the sentinel string appears in the\ncall's *serialized tool input*. That silently assumes every tool arm has an inert\nfree-text field to park a correlation id in. Bash does (a `#` comment). Serena's\n`find_file` does not: its schema is exactly\n\n    {file_mask: str, relative_path: str}\n\n`file_mask` must equal `regex_check.py` or the search misses; `relative_path`\nmust be a real directory. Neither can hold `TB_PROBE_01_TOOL_V2` without\ndestroying the search being measured. Probes 01, 03 and 05 -- every `find` arm --\nare therefore unperformable as specified. Only `search_for_pattern` (02, 04) has\na free-text field (`substring_pattern`), and using it means measuring a regex\nwith a never-matching alternation bolted on, which is not the task.\n\nWHY THE TESTS DID NOT CATCH IT\n\nBoth probe fixtures fabricate a field the real tool rejects:\n\n    probe_session.jsonl              {\"name_path\": \"TB_PROBE_01_TOOL_V2 regex_check\"}\n    probe_session_plugin_names.jsonl {\"file_mask\": \"regex_check.py\",\n                                      \"relative_path\": \"tools\",\n                                      \"comment\": \"TB_PROBE_01_TOOL_V2\"}\n\n`name_path` and `comment` are not parameters of `find_file`. The fixtures encode\nthe same false assumption as the matcher, so they agree with it. This is verbatim\nthe retro finding from the previous probe-integrity fix.\n\nTHE FIX\n\nSentinels are load-bearing only for the bash arm, where the command is\nunstructured text. The tool arm is already uniquely identified by the transcript\nitself: `name == mcp__plugin_serena_serena__find_file` AND the corpus target\nappearing in the input. Match structurally.\n\n  - `ProbeSpec` grows `target` (the corpus basename, e.g. `regex_check.py`).\n  - Tool arm matches on (name in tool_names) AND (target in serialized_input),\n    with no sentinel required.\n  - A tool-arm candidate is still rejected if it carries a sentinel belonging to\n    a *different* probe, or if it trips MENTION_MARKERS.\n  - Bash arm is unchanged: sentinel still required.\n\nACCEPTANCE\n\n  - Fixtures use only real serena parameters; no invented free-text key survives.\n  - A `find_file` call with no sentinel at all matches its tool arm.\n  - A `Bash` call over the corpus file with no sentinel matches nothing.\n  - A `find_file` call carrying another probe's sentinel matches nothing.\n  - A `find_file` call that trips MENTION_MARKERS matches nothing.\n  - ruff clean, mypy --strict clean, full suite green.\n",
-  "done_at": null,
+  "done_at": "2026-07-10T09:29:01Z",
   "evidence_refs": [
     "protocols/active-probes.md#s20",
     ".lattice/orchestration/CLOSEOUT.md"
   ],
   "id": "task_01KX2Q24BZQNK03FGQN03DR6GH",
-  "last_event_id": "ev_01KX2R51DBJBY8X8GF17CV5PK8",
-  "last_status_changed_at": "2026-07-09T06:13:29Z",
+  "last_event_id": "ev_01KX5NQS55JKWR8BV90NM1ZM3W",
+  "last_status_changed_at": "2026-07-10T09:29:01Z",
   "priority": "high",
   "relationships_out": [],
   "reopened_count": 0,
   "schema_version": 2,
   "short_id": "TB-15",
-  "status": "in_progress",
+  "status": "done",
   "tags": [
     "probe",
     "integrity",
@@ -30,6 +30,6 @@
   ],
   "title": "probe tool arm has no sentinel channel: find_file cannot carry TB_PROBE_*, so 3 of 5 serena arms are unmatchable",
   "type": "bug",
-  "updated_at": "2026-07-09T06:13:29Z",
+  "updated_at": "2026-07-10T09:29:01Z",
   "urgency": "high"
 }

@@ -21,7 +21,7 @@ from toolbench.sources import (
     SessionRef,
     iter_sessions,
 )
-from toolbench.transcript import ParseResult
+from toolbench.transcript import ParseResult, UsageProvenance
 
 OVERSIZED_OUTPUT_TOKENS = 5000
 SUBAGENT_TOOL_NAMES = frozenset({"Agent", "Task"})
@@ -38,6 +38,7 @@ class ToolStats:
     errors: int = 0
     no_result: int = 0
     cache_hits: int = 0
+    usage_missing: int = 0
 
 
 @dataclass
@@ -50,6 +51,8 @@ class AgentStats:
     input_tokens: int = 0
     errors: int = 0
     no_result: int = 0
+    sessions_with_cache_data: int = 0  # S32: session-grain, counted once per session
+    sessions_with_cache_hit: int = 0
 
 
 @dataclass
@@ -95,6 +98,13 @@ class Reducer:
         agent_stats = self.agents.setdefault(agent, AgentStats())
         agent_stats.sessions += 1
 
+        # S32: session-grain, incremented once per session here -- never inside
+        # the per-call loop below, which would fabricate a per-call denominator.
+        if result.session_cache_read_tokens is not None:
+            agent_stats.sessions_with_cache_data += 1
+            if result.session_cache_read_tokens > 0:
+                agent_stats.sessions_with_cache_hit += 1
+
         prev_name: str | None = None
         prev_bad = False
         for call in result.calls:
@@ -129,6 +139,12 @@ class Reducer:
             if _is_cache_hit(call.usage):
                 tool_stats.cache_hits += 1
                 model_stats.cache_hits += 1
+
+            if call.usage_provenance is not UsageProvenance.PRESENT:
+                # Every flavour of absence means the same thing here: not measurable.
+                # The arms differ for diagnostics, not for this flag.
+                tool_stats.usage_missing += 1
+                model_stats.usage_missing += 1
 
             if call.name == "ToolSearch":
                 self.inefficiency.tool_search_calls += 1
@@ -329,12 +345,22 @@ def render_report(
     lines.append("")
     lines.append("| agent | sessions | calls | output_tokens | input_tokens | errors | no_result |")
     lines.append("|---|---|---|---|---|---|---|")
+    cache_caveats: list[str] = []
     for agent in sorted(reducer.agents):
         s = reducer.agents[agent]
         lines.append(
             f"| {agent} | {s.sessions} | {s.calls} | {s.output_tokens} | "
             f"{s.input_tokens} | {s.errors} | {s.no_result} |"
         )
+        if s.sessions_with_cache_data > 0:
+            # S32: session-grain only, orthogonal to the per-call `cache_assisted`
+            # column below -- never mixed into that column, never a sixth section.
+            cache_caveats.append(
+                f"- {agent}: {s.sessions_with_cache_hit} of {s.sessions_with_cache_data} "
+                "sessions carry session-grain `cache_read_tokens` > 0 "
+                "(S32: session grain only — not attributable to individual tool calls)."
+            )
+    lines.extend(cache_caveats)
     lines.append("")
 
     lines.append("## Tool Leaderboard")
@@ -343,11 +369,24 @@ def render_report(
     lines.append("|---|---|---|---|---|---|---|")
     ranked = sorted(reducer.tools.items(), key=lambda kv: kv[1].output_tokens, reverse=True)
     for (agent, tool), stats in ranked:
-        cache_note = "yes" if stats.cache_hits > 0 else "no"
+        if stats.cache_hits > 0:
+            cache_note = "yes"                        # a hit was observed; blindness elsewhere is irrelevant
+        elif stats.usage_missing == 0:
+            cache_note = "no"                         # measured, and it was zero
+        elif stats.usage_missing == stats.calls:
+            cache_note = "n/a"                         # never measurable
+        else:
+            cache_note = "n/a*"                        # partially measurable; some rows blind
         lines.append(
             f"| {agent} | {tool} | {stats.calls} | {stats.output_tokens} | "
             f"{stats.input_tokens} | {stats.errors} | {cache_note} |"
         )
+    lines.append("")
+    lines.append(
+        "`n/a` = usage channel unavailable for every call (S29); "
+        "`n/a*` = unavailable for some. Neither is a measured zero. "
+        "Per S19 this flag is caveat-only and never affects ranking."
+    )
     lines.append("")
 
     lines.append("## Model Breakdown")

@@ -1,92 +1,65 @@
-# Validation Report — tool-benchmarks
+# Validation Report
 
-**Date:** 2026-07-08 · **Auditor:** Orchestrator (degraded mode) · **Plan:** [validation-plan.md](validation-plan.md)
-
-> ⚠️ **Independence caveat (honest disclosure).** The Phase-2 fresh-session Result
-> Validator could not be spawned — two new c11 terminal surfaces failed to
-> initialize their PTY, compounded by a blocking 1Password prompt and the weekly
-> usage ceiling. Per operator direction, this audit was run by the **Orchestrator**
-> instead. Mitigating the loss of "cold, no-build-context" independence: the
-> Orchestrator did **not** author `SPEC.md` and did **not** implement any ticket
-> (the delegators did); it walked the plan mechanically against shipped source it
-> did not write, on the assembled `integration/full` tree; and it re-ran the strict
-> gate itself rather than trusting delegator claims. What is genuinely reduced is
-> the freshness of perspective — a follow-up cold audit is cheap insurance if
-> desired (see Recommendations).
+Source spec: [SPEC.md](../../SPEC.md)
+Source build plan: [BUILDPLAN.md](../../BUILDPLAN.md)
+Source validation plan: [validation-plan.md](./validation-plan.md)
+Result Validator: fresh Sonnet audit session (Phase 2, run 2)
+Date: 2026-07-10
+Run completed: 2026-07-10T06:44 (per run-state.md dispatch-complete log)
 
 ## Summary
+- Total criteria audited: 13 (all `pre-merge-static` rows, 1–13)
+- Pass: 12
+- Partial: 1
+- Fail: 0
+- Blocked: 0
 
-**24 / 24 `pre-merge-static` rows PASS.** Zero FAIL, zero PARTIAL. The build
-faithfully implements SPEC S1–S24. The flagged primary risk (S11 no-whole-corpus
-list) is **correctly implemented and independently confirmed**. Three
-`post-merge-smoke` rows (S10-live, S11-scale, S25) are for the operator; the
-strict gate (ruff + mypy --strict + 93 unittest) is green on the assembled tree.
+**Overall verdict: 🟡 Yellow.** Every substantive criterion (TB-18's S29/S30 implementation, and TB-19's/TB-20's self-authored S31/S32 contract rows) passes cleanly against source, tests, and diff inspection. The single Partial (row 9, strict gate) is a real, reproducible pytest exit-1 on PR #21: it branched from `main` before TB-18's hermetic-suite fix (commit `5baeca1`) landed, so its `LiveArchive` live-archive test lacks the `TOOLBENCH_LIVE` gate and unconditionally tries to open the real `~/.hermes` archive on any machine where one exists — confirmed twice, including with `TOOLBENCH_LIVE` explicitly unset. This is a genuine merge-order/rebase gap, not environment noise (see Recommendations).
 
-Evidence base: assembled tree `integration/full` (= merge of all six ticket
-branches), re-run gate, and per-module source + test reads. PR→branch map:
-#1 tb-2-scaffold, #2 tb-4-sources, #3 tb-3-parse, #4 tb-6-probe, #5 tb-5-passive,
-#6 tb-7-readme.
+## Per-criterion results
 
-## Per-criterion results (24 static rows)
+| # | SPEC.md criterion | Result | Notes |
+|---|---|---|---|
+| 1 | S29 — producer split (`HermesTraceParser`/`ClaudeParser` claims_line partition) | ✅ Pass | `parsers.py:249` and `:95` are mutually exclusive by construction (`version == HERMES_TRACE_VERSION` vs `!=`). Partition test `test_adapters.py:122-131` passes. Targeted run: 5/5 passed. PR #20. |
+| 2 | S29 — fixture routes to `HermesTraceParser` by exact type | ✅ Pass | `tests/fixtures/schema_hermes_trace.jsonl` exists; `test_adapters.py:117-119` asserts `type(parser) is HermesTraceParser`. No `AmbiguousSchema`/`UnknownSchema`. PR #20. |
+| 3 | S29 — `usage_provenance` stamped at every `ToolCall(` site | ✅ Pass | `transcript.py:71` field has no default; all 3 construction sites (`hermes.py:195`, `parsers.py:188`,`:209`) pass it explicitly. `HermesTraceParser._provenance` (`parsers.py:251-254`) returns `ABSENT_BY_EXPORT` unconditionally. `mypy --strict` → 38 errors, all pre-existing `no-untyped-def` in test files — 0 new vs. baseline. PR #20. |
+| 4 | S29 — four-case cache render (`yes`/`no`/`n/a`/`n/a*`) + `usage_missing` counter | ✅ Pass | `test_passive.py` `CacheNoteRenderTests` (814-863) covers all four renders distinctly. `passive.py:41` `usage_missing: int = 0` is a counter; `"no"` only reached via `elif stats.usage_missing == 0` (passive.py:352-360). PR #20. |
+| 5 | S29/S19 — cache render is caveat-only, never ranks | ✅ Pass | `passive.py:351` sort key is `output_tokens` only; `cache_note` computed after `ranked` is built and never feeds back into ordering. PR #20. |
+| 6 | S30 — probe refuses trace input at dispatch (no partial-corpus mode) | ✅ Pass | `test_probe.py:450-456` asserts `NonIsolableTurns` raised with "trace" in message, no scored table produced. `probe.py main()` exposes no partial-corpus flag. PR #20. |
+| 7 | S30 — `_turn_key` raises `NonIsolableTurns`, no `ts:` fallback | ✅ Pass | `probe.py:160-166` raises on missing/empty `requestId`; anti-regression test `test_probe.py:444-447` asserts no `f"ts:{"` in source. Independent `rg -n 'ts:' toolbench/probe.py` → only a class-name false-positive (`_TurnStats`), zero real fallback occurrences. PR #20. |
+| 8 | S30 — probe fixtures migrated (Task 4) before fallback deletion (Task 5); pooled fixture untouched | ✅ Pass | Commit order confirmed: `1ac1220` (Task 4, requestId migration) precedes `5704e8e`/`53e2762` (Task 5). `probe_session_response_pooled.jsonl` byte-identical to `main` (MD5 match, no diff). PR #20. |
+| 9 | S22 — strict gate green on all three PRs at head | ⚠️ Partial | Baseline (fresh `main` clone) confirmed at exactly 38 mypy errors. **Ruff:** exit 0 on all three PRs. **Mypy:** exit 1 (as expected — errors exist) but exactly 38 on all three, 0 new vs. baseline. **Pytest:** PR #20 → 247 passed/1 skipped (exit 0); PR #22 → 260 passed/1 skipped (exit 0); **PR #21 → 214 passed/1 failed (exit 1), reproduced twice, including on operator re-run with `TOOLBENCH_LIVE` explicitly unset**. Root cause (confirmed via `git log -S TOOLBENCH_LIVE -- tests/test_hermes.py`): the `TOOLBENCH_LIVE`-gated `skipTest` guard on `LiveArchive` was added by commit `5baeca1` ("Make the fast suite hermetic — TB-18 Phase 0 gap"), which lives **only on TB-18's branch**. PR #21 branched from `main` before that fix landed, so its copy of `test_hermes.py` only checks `home.is_dir()` / non-empty `dbs` — on any machine with a real `~/.hermes` directory (this one included) it unconditionally attempts a live DB open and fails with `sqlite3.OperationalError`. This is a genuine cross-branch gap, not environment noise: **PR #21 as it stands is not actually hermetic per S25** on a machine with a live archive present. Deselecting that one test: 214/214 pass. |
+| 10 | S31 — criterion authored (TB-19: SPEC + EVALUATION + BUILDPLAN all gain S31 rows) | ✅ Pass | All three docs updated in commit `46007bb`. `SPEC.md:166-171` "S31 — gate collects every test" pins `uv run pytest -q`; `EVALUATION.md` Harness `test` command updated + matching S31 table row; `BUILDPLAN.md:51` T-row carries both `S31` and `TB-19`. PR #21. |
+| 11 | S31 — full collection proven, gap closed | ✅ Pass | `uv run pytest -q --collect-only` → 215 tests; `unittest discover` → 177 (a 38-test gap — suite grew since the ticket cited "37 of 220"; same defect class, numbers shifted). Documented gate command (`pytest -q`) now collects the full 215, closing the primary pass-condition disjunct. Regression test `tests/test_gate_completeness.py` (commit `c48d0b7`) pins the defect class via a synthetic fixture package so it can't silently recur. The alternate disjunct ("`unittest discover` no longer documented anywhere") is not literally met — 6 hits remain, all contrastive/explanatory, not documenting it as the gate. PR #21. |
+| 12 | S32 — criterion authored (TB-20: SPEC + EVALUATION + BUILDPLAN all gain S32 rows) | ✅ Pass | Diffed against the TB-18 base branch (not main) to isolate TB-20's own additions. `SPEC.md` gains full "S32 — session-grain cache surfaced without per-call fabrication" entry; `EVALUATION.md` gains S32 row + operator checkpoint #7; `BUILDPLAN.md` gains `T10` row mapped to S32, retroactive-rows prose updated to "T7–T10". PR #22. |
+| 13 | S32 — session-grain cache consulted; DB opens stay read-only | ✅ Pass | `test_hermes.py::test_session_cache_read_tokens_surfaces_when_present` and `test_passive.py::test_caveat_line_present_with_correct_ratio` prove the Agent Breakdown renders session-grain cache signal instead of a universal miss for hermes buckets, without leaking into the untouched per-call `cache_assisted` column. `rg -n 'sqlite3.connect' toolbench/` → exactly 2 sites in `hermes.py::_connect` (lines 80, 86): `mode=ro` always first; `immutable=1` only in the `except OperationalError` branch gated on absence of a `-wal` sidecar. `uv run pytest -q` → 260 passed/1 skipped. PR #22. |
 
-| # | Criterion | Verdict | Evidence |
-|---|-----------|---------|----------|
-| 1 | S1 id-join | ✅ PASS | `transcript._result_id` tries block-local `tool_use_id` then top-level `toolUseID`; joined via `pending[tool_use_block["id"]]`. Tests: `test_id_block_local_only`, `test_string_result_top_level_join`. |
-| 2 | S2 payload precedence | ✅ PASS | `_result_payload` returns block-local `content` ("block_local") before top-level `toolUseResult`; source stored in `ToolCall.result_source`. Test: `test_payload_block_local_wins_over_top_level`. |
-| 3 | S3 result_len (4 shapes) | ✅ PASS | `result_len` handles str / dict(json) / MCP block-list / block-local `{content:[...]}`. Tests assert all four lengths (`transcript.py:11-39`). |
-| 4 | S4 ToolCall fields | ✅ PASS | Dataclass has full S4 field set; `tokens=output_chars//4`, `input_tokens=input_chars//4`. Test `test_derived_tokens_floor_division` (101//4=25, 41//4=10). |
-| 5 | S5 malformed non-fatal | ✅ PASS | `json.JSONDecodeError` / non-dict → `malformed += 1`, `continue`; surfaced on `ParseResult.malformed`. Test `test_malformed_line_counted_and_skipped`. |
-| 6 | S6 interrupted kept | ✅ PASS | Leftover `pending` appended with `output_chars=0, no_result=True`. Test `test_interrupted_call_kept_with_no_result`. |
-| 7 | S7 raw discovery | ✅ PASS | `iter_session_files` filters by parent-dir substring + mtime (`datetime.fromisoformat`); raises `FileNotFoundError` on missing root (`sources.py:32-47`). |
-| 8 | S8 AgentsView pagination | ✅ PASS | `iter_agentsview_sessions` builds `session list --json --limit 500`, cursor-pages via `next_cursor`/`--cursor`, yields `SessionRef`. Injectable `Runner`; `FakeRunner` test. |
-| 9 | S9 uniform open | ✅ PASS | `open_session_jsonl`: file path → read; else `agentsview session export <id>`. |
-| 10 | S10 index-source (logic) | ✅ PASS | `iter_sessions`: raw=fs-only; agentsview=strict (RuntimeError on nonzero); auto=probe→fallback-to-raw recording reason. Returns `(refs, reason)`. |
-| 12 | S11 incremental reducer | ✅ **PASS (flagged risk)** | `Reducer.absorb` folds each session's `ParseResult.calls` into per-agent (`agents`) + per-tool (`tools`) dict counters, then discards; main loop retains no corpus-wide `list[ToolCall]` (only a bounded `refs: list[SessionRef]`). Docstring + code trace confirm the invariant. |
-| 14 | S12 CLI | ✅ PASS | `parse_args` defines all S12 flags; `--all`/`--project` mutually exclusive; default `--agent all`, `all_projects` default true. |
-| 15 | S13 subagents | ✅ PASS | `filter_subagents` drops refs whose `path` contains `/subagents/`; applied only under `--exclude-subagents` (included by default). |
-| 16 | S14 report sections | ✅ PASS | `render_report` emits Agent Breakdown → Tool Leaderboard → Inefficiency Callouts → Summary, in order; callouts cover ToolSearch/failures/oversized/subagent-fanout/churn. |
-| 17 | S15 provenance | ✅ PASS | Summary lists index source, sessions scanned, calls joined, malformed count, subagents-included, fallback reason, skipped roots, and the `--since` mtime note. |
-| 18 | S16 vendored corpus | ✅ PASS | `protocols/active-probes.md` lists exactly 5 relative `tools/` paths (all present); output defaults to `reports/active-probe-comparison.md`; explicit input/output separation note. |
-| 19 | S17 sentinels | ✅ PASS | `TB_PROBE_0N_{TOOL,BASH}_V2` — 10 distinct, none a substring of another; `find_probe_calls` requires sentinel-in-input **and** matching tool name. |
-| 20 | S18 comparison table | ✅ PASS | Per-arm context tokens (`chars//4`) + real `usage.output_tokens` only when turn isolable; seeds `SEED_BASELINES` search 723/794, find 68/89 when arm absent; `*` marks seeded. |
-| 21 | S19 metric roles | ✅ PASS | Leaderboard ranked by `output_tokens` (context cost); `_is_cache_hit` is caveat column only ("never used for ranking"); failures/oversized/churn feed callouts only. |
-| 22 | S20 stdlib + uv | ✅ PASS | `pyproject.toml` `dependencies = []`, dev group ruff/mypy/pytest; `uv.lock` present; import-scan of `toolbench/` shows only stdlib + internal imports. |
-| 23 | S21 entry points | ✅ PASS | `passive.py`/`probe.py` have `if __name__ == "__main__"` guards + `main()`; `python -m unittest discover tests` green (93 tests). |
-| 24 | S22 strict gate | ✅ PASS | Re-run on `integration/full`: `ruff check .` clean; `mypy --strict toolbench tests` clean (10 files); `unittest discover` 93 OK, exit 0. |
-| 25 | S23 exit contract | ✅ PASS | Empty selection → message + `return 0`; strict missing root → caught → `return 1`; `--agent all --index-source auto` swallows `FileNotFoundError` into `skipped_roots` and continues. |
-| 26 | S24 fixtures + fake runner | ✅ PASS | Parser fixtures: string, MCP block-list, block-local content, interrupted, malformed. `test_sources.FakeRunner` fakes the `agentsview` CLI (no daemon). |
+## Drift from BUILDPLAN.md
 
-## Drift from BUILDPLAN
+- **Test-suite size grew between ticket filing and delivery.** TB-19's ticket text cites "37 of 220" tests silently skipped; the PR's own regression test and live counts show 215 collected under `pytest -q` and 177 under `unittest discover` — a 38-test gap on a 215-test suite. This doesn't change the verdict (S31's pass condition is about parity between the documented command and the true count, which holds), but the operator should not expect the ticket's original numbers to reconcile exactly with what's in the PR.
+- **TB-20 landed a new `T10` BUILDPLAN row** (as designed — TB-20 authors its own contract row per the run's contract-gap policy) rather than reusing an existing T-row. This is expected drift, not a problem: BUILDPLAN's "T7–T9 recorded retroactively" prose was correctly extended to "T7–T10" to keep the numbering honest.
 
-Minor, all acceptable — none contradict SPEC:
-1. **`--agent` is a no-op under `--index-source raw`** (TB-5-flagged). Consistent with S7, which scopes raw discovery to Claude Code only (parent-dir = *project*, not agent); the `--agent` filter applies to the AgentsView path (S8). Recommend a one-line README/`--help` note.
-2. **`ToolCall.duration_ms` is always `None`.** `parse_session` documents that raw Claude Code JSONL carries no per-tool-call duration field. S4 lists the field (present in the type) but does not require it be populated from raw; acceptable.
-3. **`SUBAGENT_TOOL_NAMES = {Agent, Task}`** is a heuristic set (TB-5-flagged) for the subagent-fanout callout. Callout-only (never ranks), so no S19 conflict; reasonable default.
+## Gaps
 
-## Gaps & recommendations
+- **PR #21 (TB-19) is not hermetic on a machine with a real `~/.hermes` archive.** S25 requires the fast suite to be hermetic with no `~/.claude`/live-archive access; TB-18 fixed this for `LiveArchive` via commit `5baeca1`, but that commit isn't on TB-19's branch (which forked from `main` beforehand). As currently based, merging #21 to `main` before #20 would reintroduce a non-hermetic fast suite on `main` even though TB-18 already solved it elsewhere. Everything else in this run's scope (S29, S30, S31, S32) is fully addressed by a merged-or-open PR.
 
-- **NIT (test hygiene):** a probe test prints the comparison table to stdout during
-  `unittest discover` (visible in the run). Not a failure; consider capturing
-  stdout or asserting on the returned string to keep the test run quiet.
-- **Optional cold re-audit:** since this report was produced in degraded mode, a
-  fresh-session validator pass (after the usage reset / once the 1Password/PTY
-  issue clears) would restore full independence. Given 24/24 PASS with concrete
-  evidence, this is insurance, not a blocker.
-- **Merge order** for the operator: #1 (scaffold) → #2, #3 (sources, parse) →
-  #4 (probe), #5 (passive) → #6 (README+gate); each child PR rebases onto `main`
-  after its parents merge (the integration branches were the build-time base).
+## Recommendations
 
-## Operator post-merge smoke checklist (verbatim — human-driven, NOT run here)
+- **Fix-back-in-flight:** Rebase PR #21 (`tb-19-pytest-gate`) onto `main` **after** #20 merges (or cherry-pick commit `5baeca1` onto it now) before merging #21, so its copy of `test_hermes.py` picks up the `TOOLBENCH_LIVE` gate. Re-run `uv run pytest -q` post-rebase to confirm exit 0. This is the highest-priority action from this audit — without it, `main`'s fast suite regresses to non-hermetic the moment #21 merges.
+- **Accept-as-is:** The TB-19 ticket-number drift (215 vs. 220, gap 38 vs. 37) — the criterion the PR ships (documented-command parity) holds regardless of the exact historical count; no action needed beyond operator awareness.
+- **New tickets:** None indicated by this audit.
+- **Merge order (revised):** #20 first (unblocks the hermetic fix), then rebase #21 onto post-#20 `main` and re-verify before merging #21, then retarget #22 (currently based on #20's branch) to `main` and rebase before merging. Do **not** merge #21 independently of this ordering, contrary to run-state.md's original "independent" note — that note predates this finding.
 
-Rows 11, 13, 27 from the validation plan + the four EVALUATION checkpoints:
+## What I couldn't verify
 
-1. **Join-key on real data (S1/S2)** — the flagged primary risk. Run
-   `passive --agent claude --project <one real project> --limit 5` against a real
-   `~/.claude/projects` file and confirm tool-output tokens are non-zero (the
-   block-local `content` branch actually fires).
-2. **AgentsView live path (S10/S25)** — with the daemon healthy, run
-   `--index-source auto --limit 20`; then stop the daemon and confirm
-   fallback-to-raw and that the report names the reason.
-3. **Scale (S11)** — `--all --limit 200 --verbose` completes with flat memory.
-4. **Report reads well (`felt`)** — the four-section report is scannable and the
-   inefficiency callouts are actionable, not noise.
+- **Row 11's "no timestamp fallback" grep count** — 6 contrastive hits of the phrase "unittest discover" remain in the docs (explaining why *not* to use it). The pass condition's first disjunct (count parity) is unambiguously met, so I did not treat this as a blocker, but flagging it in case the plan's author intended a stricter reading.
+
+## Operator smoke-pass checklist (post-merge)
+
+Copied verbatim from `validation-plan.md` — these are **not** attempted here; they require a merged tree or a live/real-CLI environment.
+
+| # | SPEC.md criterion | Verification method | Artifact to inspect | Pass condition |
+|---|---|---|---|---|
+| 14 | S29/S30 live trace export (external-oracle) | EVALUATION smoke #6: `hermes sessions export --format trace <dir>` on a real session; `passive` renders `n/a` (not `no`) for its calls; `probe` over the same file refuses with `NonIsolableTurns` | operator terminal, merged tree | Both behaviors observed against a fresh export from the installed hermes CLI |
+| 15 | S32 live archive (operator-assisted) | `TOOLBENCH_LIVE=1 uv run pytest -q` against the real `~/.hermes` archives; hermes cache figures materially non-zero in a real report run | operator terminal, merged tree | Live suite green; a real hermes report shows session-grain cache signal |
+| 16 | Report reads well (felt) | Operator reads one full passive report post-merge | merged tree report output | Four-case cache column is scannable and the `n/a*` footnote explains itself |

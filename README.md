@@ -135,16 +135,18 @@ multi-agent source layer, the passive analyzer, and the active probes.
 Post-merge hardening covers **TB-8** (subagent `--project` filter), **TB-9**
 (callout denominators), **TB-10** (non-UTF-8 / non-transcript exports),
 **TB-11** (Hermes SQLite direct read — discovery still via AgentsView),
-probe isolability (**S26** / TB-14–16), and schema dispatch (**S27–S28** /
-TB-13). The strict gate (`ruff`, `mypy --strict`, `unittest`) is green —
-**176** tests collected by `unittest discover` (1 skipped when the live
-hermes archive is absent). **37** additional module-level `test_*`
-functions (TB-13 seam coverage) are only collected by `pytest` — **213**
-total — and are silently skipped by the documented gate today (TB-19).
+probe isolability (**S26** / TB-14–16), schema dispatch (**S27–S28** /
+TB-13), usage provenance (**S29–S30** / TB-18: producer-aware
+`UsageProvenance` on every `ToolCall`, and `probe.py` refusing corpora it
+cannot key to the billing unit), and the gate itself running every test
+(**S31** / TB-19: the documented command is `pytest`, not `unittest
+discover`, which silently missed 37 module-level tests). The strict gate
+(`ruff`, `mypy --strict`, `pytest`) is green — **262** tests passing
+(1 skipped when the live hermes archive is absent).
 
 Source-of-truth documents:
 
-- [`SPEC.md`](SPEC.md) — 28 numbered acceptance criteria (S1–S28).
+- [`SPEC.md`](SPEC.md) — 32 numbered acceptance criteria (S1–S32).
 - [`EVALUATION.md`](EVALUATION.md) — verification map for every criterion.
 - [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the T1–T6 tickets.
 - [`docs/2026-07-07-tool-benchmarks-design.md`](docs/2026-07-07-tool-benchmarks-design.md)
@@ -206,7 +208,7 @@ uv run python -m toolbench.probe --session /path/to/probe-session.jsonl --out re
 uv run python -m toolbench.probe --allow-seeded   # baseline table only; measures nothing
 
 # Tests
-uv run python -m unittest discover tests
+uv run pytest -q
 ```
 
 ### Probe scoring pitfalls
@@ -281,9 +283,10 @@ zero count omits the top-offender clause.
 | Probe usage column shows `—` but context tokens are real | Arm matched, but the API response was not isolable (prose, thinking, or batched `tool_use` — S26) | Re-run from [`protocols/probe-run-sheet.md`](protocols/probe-run-sheet.md); one tool call per turn, no surrounding prose. |
 | Bash usage looks ~15–20 tokens higher than the tool arm | Sentinel + optional Bash `description` are billed into bash `output_tokens` only (TB-17) | Expected until TB-17. Compare context-token columns; treat usage as non-comparable. |
 | `codex` / `cursor` sessions appear only in Skipped roots | No parser claims their schema yet (`UnknownSchema`, S28) | Expected until TB-12 lands a `CodexParser`. They must not appear as healthy zero-call agents. |
-| `unittest discover` reports ~176 tests; `pytest` reports ~213 | 37 module-level `test_*` functions are invisible to `unittest.TestLoader.discover` | Known gate gap (TB-19). Until that lands, run `uv run pytest -q` when you need the full seam suite. |
 
 ## Quality gate
 
 Before any PR: `uv run ruff check .`, `uv run mypy --strict toolbench tests`,
-and the full unittest suite must be green.
+and the full `pytest -q` suite must be green (S31 — the documented command
+must collect every test, including module-level `test_*` functions that
+`unittest discover` silently misses).
