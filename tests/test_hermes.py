@@ -393,6 +393,8 @@ class LiveArchive(unittest.TestCase):
     """Guards the schema compatibility envelope against the real DBs (v16 and v19)."""
 
     def test_live_archive_schema_envelope(self) -> None:
+        if not os.environ.get("TOOLBENCH_LIVE"):
+            self.skipTest("external-oracle test; set TOOLBENCH_LIVE=1 (see EVALUATION.md)")
         home = Path("~/.hermes").expanduser()
         if not home.is_dir():
             self.skipTest("no live hermes archive")

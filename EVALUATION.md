@@ -17,7 +17,9 @@ One row per SPEC criterion, each tagged by how it is verified:
   no `~/.claude` access; fixtures + fake `agentsview` runner only.
 - **`test:full` (slow, real corpus / daemon)** — the S25 smoke commands run
   against a real `~/.claude/projects` and, where healthy, the live
-  AgentsView daemon. Not hermetic; operator-run.
+  AgentsView daemon. Not hermetic; operator-run. Tests that read a live
+  archive are gated on `TOOLBENCH_LIVE=1` and skip out of the fast suite;
+  run them with `TOOLBENCH_LIVE=1 uv run pytest -q`.
 - **lint / types** — `uv run ruff check .`; `uv run mypy --strict toolbench
   tests`.
 
