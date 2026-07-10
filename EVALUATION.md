@@ -17,7 +17,9 @@ One row per SPEC criterion, each tagged by how it is verified:
   no `~/.claude` access; fixtures + fake `agentsview` runner only.
 - **`test:full` (slow, real corpus / daemon)** — the S25 smoke commands run
   against a real `~/.claude/projects` and, where healthy, the live
-  AgentsView daemon. Not hermetic; operator-run.
+  AgentsView daemon. Not hermetic; operator-run. Tests that read a live
+  archive are gated on `TOOLBENCH_LIVE=1` and skip out of the fast suite;
+  run them with `TOOLBENCH_LIVE=1 uv run pytest -q`.
 - **lint / types** — `uv run ruff check .`; `uv run mypy --strict toolbench
   tests`.
 
@@ -55,6 +57,8 @@ One row per SPEC criterion, each tagged by how it is verified:
 | S26 | requestId-keyed isolability; prose/thinking/batch blank usage | `autonomous` | `test` (prose + pooled fixtures) |
 | S27 | schema dispatch (`detect_parser`); UnknownSchema / AmbiguousSchema | `autonomous` | `test` (`test_adapters` / `test_registry`) |
 | S28 | no default parser; unrecognized schemas skip loudly | `autonomous` | `test` (codex/cursor → skipped_roots) |
+| S29 | producer split on `version`; `UsageProvenance` stamped; four-case cache render | `autonomous` | `test` (`schema_hermes_trace.jsonl` fixture; `detect_parser` → `HermesTraceParser`; `n/a` / `n/a*` / `no` render) |
+| S30 | probe refuses trace at dispatch; `_turn_key` raises `NonIsolableTurns`; no timestamp fallback | `autonomous` | `test` (probe fixtures carry `requestId`; refusal on a stripped fixture) |
 
 ## Operator post-merge smoke checkpoints (human-driven)
 
@@ -73,3 +77,9 @@ One row per SPEC criterion, each tagged by how it is verified:
    `toolbench.probe --session …`. Expect ten unseeded context-token cells and
    real usage numbers (not `—`). A `—` in usage with unseeded context tokens
    means the arm matched but its response was not isolable.
+6. **Live trace export (S29/S30, `external-oracle`).** Export a real session
+   with `hermes sessions export --format trace <dir>` (positional dir, not
+   `--output-dir`). Confirm `passive` reports its calls with a `n/a` cache
+   flag rather than `no`, and that `probe` over the same file refuses with
+   `NonIsolableTurns` instead of scoring it. The fixture proves the shape;
+   only the real CLI proves the shape is still what hermes emits.

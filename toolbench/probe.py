@@ -10,6 +10,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from toolbench.adapters import detect_parser
+from toolbench.parsers import HermesTraceParser
 from toolbench.transcript import ToolCall, parse_session
 
 BASH_TOOL_NAME = "Bash"
@@ -20,6 +22,16 @@ class SeededReportError(RuntimeError):
 
     A fully-seeded table restates `SEED_BASELINES` and measures nothing. It must
     not be written to `reports/` as though it were a result.
+    """
+
+
+class NonIsolableTurns(RuntimeError):
+    """Raised when turns cannot be keyed to the billing unit (S26).
+
+    A probe that cannot group by `requestId` does not produce an incomplete
+    measurement -- it produces a confidently wrong one, by silently treating each
+    JSONL record as its own API response. There is no useful degraded mode, so
+    there is no partial-corpus path.
     """
 
 
@@ -136,19 +148,22 @@ class _ScanResult:
     turns: dict[str, _TurnStats]
 
 
-def _turn_key(entry: dict[str, object], ts: str) -> str:
+def _turn_key(entry: dict[str, object]) -> str:
     """The unit `output_tokens` is billed against: the API response (S26).
 
     Claude Code writes one API response as several JSONL entries -- `thinking`,
     `text`, and each `tool_use` -- sharing a `requestId` and a single `usage`
     figure, but carrying *distinct* timestamps. Grouping by timestamp therefore
-    sees every response as a lone block. Fixtures predating this discovery have
-    no `requestId`; they fall back to the timestamp, one record per turn.
+    sees every response as a lone block, which is the TB-16 defect. There is no
+    timestamp fallback: an entry that cannot be keyed to a response is refused.
     """
     request_id = entry.get("requestId")
-    if isinstance(request_id, str) and request_id:
-        return f"req:{request_id}"
-    return f"ts:{ts}"
+    if not (isinstance(request_id, str) and request_id):
+        raise NonIsolableTurns(
+            "probe requires requestId to group turns by the billing unit (S26); "
+            "this entry has none. hermes --format trace exports never carry it."
+        )
+    return f"req:{request_id}"
 
 
 def _is_assistant(entry: dict[str, object], message: dict[str, object]) -> bool:
@@ -175,12 +190,24 @@ def _scan_tool_use_blocks(path: str | os.PathLike[str]) -> _ScanResult:
     Deliberately independent of `transcript.parse_session`, which normalizes
     tool input to a character count (`result_len`) and drops the raw text a
     sentinel would live in.
+
+    Routes through `adapters.detect_parser` for one reason: to refuse a hermes
+    trace export by name before it silently produces a plausible, wrong answer.
+    The `_turn_key` guard below is the load-bearing check -- it defends S26 for any
+    corpus, whatever parser claimed it -- but a refusal at the door can say why.
     """
     records: list[tuple[str, str, str, str]] = []
     turns: dict[str, _TurnStats] = defaultdict(_TurnStats)
     session_path = Path(path)
     with session_path.open(encoding="utf-8") as handle:
-        for raw_line in handle:
+        parser, replayed = detect_parser(handle)
+        if parser.schema_tag == HermesTraceParser.schema_tag:
+            raise NonIsolableTurns(
+                "hermes --format trace carries no requestId, so turns cannot be "
+                "keyed to the billing unit (S30). Trace exports are valid input to "
+                "passive.py but not to probe.py. Use a native Claude transcript."
+            )
+        for raw_line in replayed:
             line = raw_line.strip()
             if not line:
                 continue
@@ -198,7 +225,7 @@ def _scan_tool_use_blocks(path: str | os.PathLike[str]) -> _ScanResult:
                 continue
             ts = entry.get("timestamp")
             ts_str = ts if isinstance(ts, str) else ""
-            key = _turn_key(entry, ts_str)
+            key = _turn_key(entry)
             stats = turns[key]
             for block in content:
                 if not isinstance(block, dict):

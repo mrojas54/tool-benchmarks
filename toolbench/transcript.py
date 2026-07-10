@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 
@@ -39,6 +40,21 @@ def _block_list_len(blocks: list[object]) -> int:
     return total
 
 
+class UsageProvenance(Enum):
+    """Why a `ToolCall` does or does not carry a usage record (S29).
+
+    `usage=None` previously meant three different things at once. Each arm below
+    is one of them, made explicit. Only a producer may assert ABSENT_BY_SCHEMA or
+    ABSENT_BY_EXPORT; a parser that merely fails to find usage on a schema that
+    promises it records ABSENT_UNEXPECTED and says nothing about the cause.
+    """
+
+    PRESENT = "present"
+    ABSENT_BY_SCHEMA = "absent_by_schema"  # producer has no per-call usage (hermes SQLite)
+    ABSENT_BY_EXPORT = "absent_by_export"  # producer had usage; the export dropped it (trace)
+    ABSENT_UNEXPECTED = "absent_unexpected"  # claude schema, claude producer, no usage: anomaly
+
+
 @dataclass
 class ToolCall:
     """A single tool invocation joined from an agent transcript (S4)."""
@@ -52,6 +68,7 @@ class ToolCall:
     session_id: str
     ts: str
     usage: dict[str, object] | None
+    usage_provenance: UsageProvenance
     duration_ms: float | None
     error: str | None
     model: str | None
