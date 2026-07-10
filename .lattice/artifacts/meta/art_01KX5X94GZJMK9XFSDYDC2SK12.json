@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-10T11:40:50Z",
+  "created_by": "agent:orchestrator",
+  "custom_fields": {},
+  "id": "art_01KX5X94GZJMK9XFSDYDC2SK12",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KX5X94GZJMK9XFSDYDC2SK12.md",
+    "size_bytes": 302
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": "Phase 2 RV validated (rows pass; row 9 partial traced to branch topology \u2014 fork predated hermetic commit 5baeca1, resolved by gate-check before merge). PR #21 (tb-19-pytest-gate) MERGED 2026-07-10T11:",
+  "tags": [],
+  "title": "Review findings",
+  "token_usage": null,
+  "type": "note"
+}

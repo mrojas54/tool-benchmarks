@@ -1,0 +1,1 @@
+Phase 2 RV validated (rows pass; row 9 partial traced to branch topology — fork predated hermetic commit 5baeca1, resolved by gate-check before merge). PR #21 (tb-19-pytest-gate) MERGED 2026-07-10T11:21:53Z as 3612dcf: pytest gate replaces unittest discover, recovering the 37 silently-skipped tests.

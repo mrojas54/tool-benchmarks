@@ -1,0 +1,1 @@
+Phase 2 RV validated (all rows pass, cache_read caveat recorded). PR #22 (tb-20-cache-read) retargeted to main, rebased (T10→T11 renumbering), MERGED 2026-07-10T11:37:34Z: session-grain cache_read_tokens now consulted, eliminating the fabricated 100% cache-miss on hermes sessions.
