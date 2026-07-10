@@ -1,17 +1,23 @@
 {
   "assigned_to": null,
   "branch_links": [],
-  "comment_count": 1,
+  "comment_count": 5,
   "complexity": "low",
   "created_at": "2026-07-10T05:33:45Z",
   "created_by": "agent:claude",
   "custom_fields": {},
   "description": "EVALUATION.md defines the fast harness command as `uv run python -m unittest discover tests`, and BUILDPLAN calls it the delegators inner-loop clock. It collects only unittest.TestCase methods.\n\nMEASURED (ast walk over tests/test_*.py, 2026-07-10):\n\n  in-TestCase methods : 183   <- what `unittest discover` runs\n  module-level test fns:  37   <- invisible to it; pytest collects them\n  total               : 220\n\nBreakdown of the 37 invisible tests:\n  test_adapters.py : 14\n  test_sources.py  :  7\n  test_parsers.py  :  6\n  test_registry.py :  6\n  test_passive.py  :  4\n\nConfirmed by running both: `unittest discover` reports \"Ran 183 tests\"; `pytest -q` reports 220.\n\nWHY IT MATTERS. 17% of the suite never runs under the documented gate. The 14 in test_adapters.py are precisely the module-level assertions the TB-18 design flags as needing to be tightened from `isinstance(parser, ClaudeParser)` to `type(parser) is ClaudeParser` once HermesTraceParser subclasses ClaudeParser. A weakened assertion in a test the gate does not execute fails silently twice over.\n\nFIX (pick one, do not do both silently):\n  a. Change the documented `test` command to `uv run pytest -q`. Cheapest; pytest is already a dev dependency.\n  b. Convert the 37 module-level functions into TestCase methods, keeping unittest as the gate.\n\nOption (a) also fixes the TOOLBENCH_LIVE gate uniformly. Option (b) preserves the \"pure stdlib runtime\" posture of S20 for the test harness too.\n\nACCEPTANCE. The documented harness command executes all 220 tests, and a test added as a module-level function cannot silently escape the gate.",
   "done_at": null,
-  "evidence_refs": [],
+  "evidence_refs": [
+    {
+      "id": "art_01KX5QE23W5MJBSGCCESB0T0DA",
+      "role": "review",
+      "source_type": "artifact"
+    }
+  ],
   "id": "task_01KX58903DF3BJ85EENHJKWCQW",
-  "last_event_id": "ev_01KX5NSHFVEAV2J7AAFD55FF00",
-  "last_status_changed_at": "2026-07-10T05:33:45Z",
+  "last_event_id": "ev_01KX5QJ0Q9VPSA9RFNREB9EKER",
+  "last_status_changed_at": "2026-07-10T10:00:35Z",
   "priority": "high",
   "relationships_out": [
     {
@@ -25,13 +31,13 @@
   "reopened_count": 0,
   "schema_version": 1,
   "short_id": "TB-19",
-  "status": "backlog",
+  "status": "review",
   "tags": [
     "harness",
     "integrity"
   ],
   "title": "unittest discover, the documented test command, silently skips 37 of 220 tests",
   "type": "bug",
-  "updated_at": "2026-07-10T09:29:59Z",
+  "updated_at": "2026-07-10T10:00:49Z",
   "urgency": null
 }

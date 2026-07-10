@@ -19,16 +19,19 @@ forward below — every entry re-verified still applicable on 2026-07-10.
 - **Test gate (pinned for every boot prompt):** `uv run ruff check .` · `uv run mypy --strict toolbench tests` (baseline 38 pre-existing errors — new errors only are failures) · `uv run pytest -q`. **Never `unittest discover`** — it silently skips 37 tests and executes module-level code (the defect TB-19 fixes).
 - **Contract-gap policy (operator-confirmed):** TB-19 and TB-20 author their own SPEC/EVALUATION/BUILDPLAN rows (S31, S32) in their DOCS phases, mirroring TB-18's S29/S30 precedent.
 
-## Workspace panes (c11 refs)
-- lattice_dashboard_port: **49427** (run-1 daemon still alive, PID verified 2026-07-10; reused)
-- Pane geometry: **deferred to Phase 1 boot** — run-1 pane/surface refs are stale (dead sessions), and the operator is advised to start Phase 1 in a fresh session (session-budget guard: 4.4M tokens at Phase 0 close). Phase 1 re-runs the geometry step from `references/intake.md` and records refs here.
+## Workspace panes (c11 refs) — set at Phase 1 boot 2026-07-10 05:48
+- workspace: **workspace:1** ("tool-benchmarks")
+- main_view_area: **pane:2** (Orchestrator = surface:9)
+- control_surface: **pane:1** (pre-existing: Lattice Dashboard browser surface:6 → port **8799**, daemon terminal surface:11; design-doc markdown surfaces 7/8)
+- delegate_view_area: **pane:12** (recreated 06:13 — closing pane:11's last surface collapsed the pane; TB-20 = surface:34. Earlier: TB-19 = surface:27, TB-18 = surface:31, both closed at review)
+- lattice_dashboard_port: **8799** (live daemon in-workspace, browser surface already bound; run-1 daemon on 49427 also alive but unused by any surface)
 
 ## Tickets in scope
 | Ticket | Title | Status | Workflow mode | Branch base | Depends on |
 |--------|-------|--------|---------------|-------------|------------|
 | TB-19 | unittest discover silently skips 37 of 220 tests | backlog | fast-track | origin/main | — (dispatch FIRST) |
 | TB-18 | hermes --format trace: usage provenance + probe refusal (Tasks 3–6 of the 7-task plan) | in_progress | inline-full | `chore/add-hermes-cli-export-plan` (existing branch, PR #20 OPEN — continue, do not rebranch) | — (plan: `docs/superpowers/plans/2026-07-09-tb-18-usage-provenance.md`) |
-| TB-20 | hermes session-grain cache_read_tokens never consulted | backlog | inline-full | origin/main after PR #20 merges (else rebase onto #20's branch) | TB-18 (hard link) |
+| TB-20 | hermes session-grain cache_read_tokens never consulted | dispatched 06:14 (press-ahead) | inline-full | `tb-20-cache-read` off origin/chore/add-hermes-cli-export-plan @ 5c74901; **anchor PR #20** ("merge that first; this rebases"); PR base = parent branch | TB-18 (hard link; parent at review) |
 
 Dispatch order: TB-19 and TB-18 concurrently (N=2; no code dependency —
 TB-18's plan already pins pytest). TB-20 spawns when TB-18 reaches `review`
@@ -51,6 +54,11 @@ both touch README + EVALUATION; both PR bodies must name the overlap.
 - 2026-07-10 [autonomy: Moderate] Run-1 artifacts archived to `run-1/` via `git mv`; fixed paths (`validation-plan.md`, future `validation-report.md`) freed for run 2.
 - 2026-07-10 [autonomy: Moderate] Run-1 dashboard (port 49427) verified alive and reused; no new daemon.
 - 2026-07-10 [autonomy: Moderate] Workspace geometry deferred to Phase 1 boot; session-budget guard (4.4M tokens) makes a fresh session for dispatch the honest recommendation. Run-1 pane refs marked stale.
+- 2026-07-10 [autonomy: Moderate] **TB-18 delegator runs in the ROOT checkout**, not a worktree: `.lattice/` is tracked and the entire run-2 board state exists only on `chore/add-hermes-cli-export-plan`, which is checked out at root — a second worktree on a checked-out branch is impossible, and switching root to main would rewind the board (TB-19/TB-20 would vanish from the working tree). Precedent: TB-18 Tasks 0–2 were committed in root. Mitigations baked into its boot prompt: no rebase/reset/clean/checkout, explicit-path commits only, nothing under `.lattice/` committed by the delegator.
+- 2026-07-10 [autonomy: Moderate] Board-state git commits are **orchestrator-owned** this run (delegators leave `.lattice/` dirty); orchestrator commits board sync at closeout. Prevents interleaving with the orchestrator's uncommitted bookkeeping edits.
+- 2026-07-10 [autonomy: Moderate] Inline-full's headless plan/code-review steps collapse to the own-reviewer fallback executed synchronously by the delegator (install has no `plan-review`/`code-review`); both delegators therefore run their arcs synchronously, no delegator-side /loop. Follows the Phase 0 "all collapse to inline own-reviewer" pin.
+- 2026-07-10 [autonomy: Moderate] **Dispatch complete 06:42.** TB-19 → review (PR #21, off main), TB-18 → review (PR #20, MERGEABLE), TB-20 → review (PR #22, stacked on #20). All three arcs verified against git/PR ground truth, all delegator surfaces closed, board-sync commit by orchestrator follows. Merge order for operator: #20 → retarget #22 to main + rebase → #22; #21 independent (union-merge overlap with both at README/EVALUATION tails). Phase 2 Result Validator (fresh session, Sonnet) spawned next.
+- 2026-07-10 [autonomy: Moderate] TB-18 spawn took 4 attempts (see footguns: pane-cwd inheritance + send/zsh-init race + `new-surface` silently ignoring an unsupported `--cwd` flag). Final recipe: create surface → exit any auto-launched claude → stateful `cd` at the live zsh → verify prompt path → launch. surfaces 28/29/30 were killed clean; no board or git damage.
 
 ## Run-time footguns (carried from run 1, re-verified 2026-07-10 + run-2 additions)
 - **Status vocab.** Terminal pre-merge status is `review`, NOT `pr_open`. Ladder: `backlog → in_planning → planned → in_progress → review → done`. NO `in_validation`, NO `pr_open` lane.
@@ -64,3 +72,9 @@ both touch README + EVALUATION; both PR bodies must name the overlap.
 - **mypy --strict baseline is 38 pre-existing errors.** A delegator must diff error count against baseline, not demand zero.
 - **Hermes DBs are NEVER opened writable.** `mode=ro`; `immutable=1` only when no `-wal` sidecar exists (post-Task-0 `_connect`). `immutable=1` on a WAL DB reads stale data and `PRAGMA journal_mode` lies under it.
 - **Press-ahead branch bases:** TB-18 continues `chore/add-hermes-cli-export-plan` (PR #20) — new delegator must NOT rebranch. TB-20 bases off main post-merge or rebases onto #20's branch.
+- **`c11 new-surface` silently ignores unknown flags** (`--cwd` printed OK but did nothing — the flag does not exist). Never trust an OK for a flag not in `--help`.
+- **`c11 identify` can time out inside a fresh delegator shell** (same daemon slowness family as the close-surface timeout). The identity block's fatal-halt fires; recovery = orchestrator sets the tab identity itself and sends "skip the identity block, proceed" — identity is telemetry, not load-bearing.
+- **Closing a pane's last surface collapses the pane** — `new-surface --pane <old-ref>` then fails "Pane not found". Re-split and re-title instead of retrying.
+- **`claude "<prompt arg>"` launched via `c11 send` often strands the argument** (TUI comes up idle at the placeholder). Don't fight it: once the TUI is idle, `c11 send` the prompt text as the first message + `send-key enter`.
+- **`c11 close-surface` can time out (10s) yet still complete** — the claude child reap is slow. Verify with `c11 tree` before retrying; a blind retry errors on the missing surface.
+- **New-surface spawn cwd = pane's last shell cwd, and `send` races zsh init.** Text sent before the first prompt gets buffered and replays unpredictably (may execute pre-prompt text, may strand the claude arg). Recipe that works: create surface → wait → read-screen until a real zsh prompt shows → send standalone `cd <target>` + enter → read-screen to verify the prompt path changed → then send the claude launch line. The `cd <wt> && claude ...` single-line form also works but ONLY after the prompt is confirmed up.
