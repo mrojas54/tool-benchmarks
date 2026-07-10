@@ -65,11 +65,15 @@ Acquisition and interpretation are orthogonal, so they are separate ABCs:
 - A **`SessionAdapter`** composes the two. `registry.pick_adapter` walks an
   ordered list of `claims(ref)` predicates and returns the first match.
 
-**Hermes is keyed on source; everything else is keyed on content.** Hermes is a
-SQLite read, not a transcript, so it claims by `agent == "hermes" and path is
-None`. Every other session is content-sniffed over a bounded 100-line window,
-because schema is a property of the payload, not of the producer: `cowork` emits
-Claude's exact schema and parses correctly with zero registry entries of its own.
+**Hermes SQLite is keyed on source; everything else is keyed on content.**
+Hermes archive sessions claim by `agent == "hermes" and path is None` — a
+SQLite read with no lines. Every other session is content-sniffed over a
+bounded 100-line window, because schema is a property of the payload, not of
+the producer: `cowork` emits Claude's exact schema and parses with zero
+registry entries of its own. A `hermes sessions export --format trace` file
+is also content-sniffed: it speaks Claude's shape but declares
+`version == "hermes-agent"`, so `HermesTraceParser` claims it (S29) rather
+than letting `ClaudeParser` swallow a usage-less export as a measured zero.
 
 **No parser is the default.** An unrecognized transcript raises `UnknownSchema`
 (a `RuntimeError`, so `passive.main`'s existing per-session guard demotes it to
@@ -77,16 +81,20 @@ Claude's exact schema and parses correctly with zero registry entries of its own
 matched nothing, and reported a healthy zero. `codex` and `cursor` land in
 `skipped_roots` today, pending a `CodexParser` in TB-12.
 
-- **`transcript.py`** — the schema-neutral records: `ToolCall`, `ParseResult`,
-  and `result_len`, which normalizes a payload to a character length.
-  `parse_session` remains as a compat shim over `ClaudeParser`. Stray
-  non-UTF-8 bytes decode with `errors="replace"` so one bad byte never aborts
-  the session (TB-10).
+- **`transcript.py`** — the schema-neutral records: `ToolCall` (with
+  `UsageProvenance`), `ParseResult` (optional `session_cache_read_tokens`),
+  and `result_len`. `parse_session` remains as a compat shim over
+  `ClaudeParser`. Stray non-UTF-8 bytes decode with `errors="replace"` so one
+  bad byte never aborts the session (TB-10).
 - **`parsers.py`** — one class per schema. `ClaudeParser` joins each assistant
-  `tool_use` block to its result by id. Malformed lines are counted and
-  skipped, never fatal.
+  `tool_use` block to its result by id. `HermesTraceParser` subclasses it for
+  the claude-shaped hermes trace export and stamps every call
+  `ABSENT_BY_EXPORT` (S29). Malformed lines are counted and skipped, never
+  fatal.
 - **`adapters.py`** — `detect_parser`, `UnknownSchema`, `AmbiguousSchema`, and
-  `ComposedAdapter` (the terminal fallback).
+  `ComposedAdapter` (the terminal fallback). `PARSERS` currently holds
+  `ClaudeParser` and `HermesTraceParser`; their `claims_line` predicates
+  partition on `version`.
 - **`registry.py`** — the ordered adapter list and `pick_adapter`. Exists to
   break the `hermes.py` ↔ `adapters.py` import cycle. Adding an agent means
   adding an entry here, never editing a dispatcher.
@@ -99,15 +107,20 @@ matched nothing, and reported a healthy zero. `codex` and `cursor` land in
 - **`hermes.py`** — direct read-only SQLite adapter for Hermes sessions
   (TB-11). Discovery still comes from AgentsView; only the read is redirected
   because `session export` returns the whole default-profile database.
+  Per-call usage is `ABSENT_BY_SCHEMA`; session-row `cache_read_tokens` is
+  surfaced on `ParseResult` for the Agent Breakdown caveat (S32 / TB-20),
+  never attributed per call.
 - **`passive.py`** — streams and aggregates **incrementally** (per-agent /
   per-tool reducers only, never a whole-corpus `list[ToolCall]`), then emits
-  a five-section report: agent breakdown, tool leaderboard, model breakdown,
-  inefficiency callouts, summary.
+  a five-section report: agent breakdown (plus optional session-grain cache
+  caveats), tool leaderboard (`cache_assisted` as `yes` / `no` / `n/a` /
+  `n/a*`), model breakdown, inefficiency callouts, summary.
 - **`probe.py`** — scores matched tool-vs-Bash probe pairs from a dedicated
   session JSONL and emits a context-token + usage comparison table under
   `reports/`. Tool arms match structurally (name + corpus target); bash arms
   match by sentinel. Usage is attributed only when the API response is
-  isolable (one `tool_use`, no prose/reasoning — S26).
+  isolable (one `tool_use`, no prose/reasoning — S26). Turns are keyed solely
+  by `requestId` (S30); hermes-trace input is refused with `NonIsolableTurns`.
 
 ## Probe corpus
 
@@ -138,9 +151,11 @@ Post-merge hardening covers **TB-8** (subagent `--project` filter), **TB-9**
 probe isolability (**S26** / TB-14–16), schema dispatch (**S27–S28** /
 TB-13), usage provenance (**S29–S30** / TB-18: producer-aware
 `UsageProvenance` on every `ToolCall`, and `probe.py` refusing corpora it
-cannot key to the billing unit), and the gate itself running every test
+cannot key to the billing unit), the gate itself running every test
 (**S31** / TB-19: the documented command is `pytest`, not `unittest
-discover`, which silently missed 37 module-level tests). The strict gate
+discover`, which silently missed 37 module-level tests), and session-grain
+Hermes cache surfacing (**S32** / TB-20: Agent Breakdown caveat, never
+folded into the per-call `cache_assisted` column). The strict gate
 (`ruff`, `mypy --strict`, `pytest`) is green — **262** tests passing
 (1 skipped when the live hermes archive is absent).
 
@@ -170,7 +185,14 @@ Three source adapters. The first two are selected per-session by
   (`$HERMES_HOME` overrides). `agentsview session export` returns `rc=0` and
   streams the whole 37 MB default-profile database for every hermes session
   instead of that session's transcript, so hermes contributed zero tool calls
-  until this adapter landed (TB-11).
+  until this adapter landed (TB-11). Per-call usage is absent by schema; when
+  the session row carries `cache_read_tokens`, that appears as an Agent
+  Breakdown caveat only (S32).
+
+A fourth path is content-detected, not selected by `--index-source`:
+`hermes sessions export --format trace` JSONL is claimed by
+`HermesTraceParser` (S29). Valid for `passive` (`cache_assisted` → `n/a`);
+refused by `probe` (`NonIsolableTurns`, S30).
 
 Hermes **discovery** still comes from AgentsView; only the read is redirected.
 The corpus is *defined* as what `agentsview session list` returns, and every
@@ -215,9 +237,11 @@ uv run pytest -q
 
 - **Fresh session only.** Mentions of sentinels, the run sheet, or
   `toolbench/probe.py` are discarded as contamination (`MENTION_MARKERS`).
-- **One tool call per API response.** Usage is keyed by `requestId` (S26).
-  Batching, prose, or reasoning in an arm turn blanks the usage column (`—`)
-  while keeping real context tokens — it does **not** re-seed the cell.
+- **One tool call per API response.** Usage is keyed by `requestId` (S26 /
+  S30). Batching, prose, or reasoning in an arm turn blanks the usage column
+  (`—`) while keeping real context tokens — it does **not** re-seed the cell.
+  There is no timestamp fallback; a corpus without `requestId` (including
+  `hermes sessions export --format trace`) raises `NonIsolableTurns`.
 - **Usage columns are not yet comparable (TB-17).** `output_tokens` bills
   the whole emitted `tool_use` block. The bash arm must carry a sentinel
   comment (and often a `description`) that the tool arm cannot carry, so
@@ -228,6 +252,8 @@ uv run pytest -q
 - **Turn 0 before arms.** Confirm serena has an active project with a
   non-corpus target (`pyproject.toml`) so a failed arm call is not scored as
   a successful match.
+- **Native Claude transcript only.** Score a Claude Code probe session, not
+  a hermes trace export — `passive` accepts both; `probe` does not (S30).
 
 ### `--index-source` policy
 
@@ -267,6 +293,17 @@ worst tool when the count is non-zero, for example:
 Ties for "top" break alphabetically so the report stays deterministic. A
 zero count omits the top-offender clause.
 
+The Tool Leaderboard's `cache_assisted` column is caveat-only (S19) and
+uses four values (S29): `yes` (a hit was observed), `no` (usage was
+measurable and zero hits), `n/a` (usage unavailable for every call in the
+bucket — e.g. hermes SQLite or hermes-trace), `n/a*` (mixed). Neither
+`n/a` form is a measured zero.
+
+When Hermes sessions carry session-row `cache_read_tokens`, the Agent
+Breakdown adds a caveat line such as `M of N sessions carry session-grain
+cache_read_tokens > 0` (S32). That signal is never divided into a per-call
+rate and never mixed into `cache_assisted`.
+
 ### Troubleshooting / common pitfalls
 
 | Symptom | Likely cause | What to do |
@@ -282,6 +319,8 @@ zero count omits the top-offender clause.
 | `toolbench.probe` without `--session` refuses to write | Seeded-only report is blocked (`SeededReportError`) | Pass `--session PATH`, or `--allow-seeded` for the baseline table only. |
 | Probe usage column shows `—` but context tokens are real | Arm matched, but the API response was not isolable (prose, thinking, or batched `tool_use` — S26) | Re-run from [`protocols/probe-run-sheet.md`](protocols/probe-run-sheet.md); one tool call per turn, no surrounding prose. |
 | Bash usage looks ~15–20 tokens higher than the tool arm | Sentinel + optional Bash `description` are billed into bash `output_tokens` only (TB-17) | Expected until TB-17. Compare context-token columns; treat usage as non-comparable. |
+| `cache_assisted` shows `n/a` / `n/a*` for hermes (or hermes-trace) | Per-call usage is absent by schema or dropped by the trace export (S29) | Expected. Do not read `n/a` as "no cache hits". Session-grain cache, when present, appears as an Agent Breakdown caveat (S32), not in this column. |
+| `toolbench.probe` raises `NonIsolableTurns` on a hermes trace file | Trace export has no `requestId`; probe keys turns only by that field (S30) | Score a native Claude Code probe session instead. Trace remains valid input to `passive`. |
 | `codex` / `cursor` sessions appear only in Skipped roots | No parser claims their schema yet (`UnknownSchema`, S28) | Expected until TB-12 lands a `CodexParser`. They must not appear as healthy zero-call agents. |
 
 ## Quality gate

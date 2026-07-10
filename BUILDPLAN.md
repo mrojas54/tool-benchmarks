@@ -31,9 +31,15 @@ raw roots + AgentsView exports
 - **Reducer (decided):** passive keeps only per-agent/per-tool counters
   globally; it never accumulates a whole-corpus `list[ToolCall]`.
 - **Schema dispatch (TB-13, shipped):** acquisition (`SessionLoader`) and
-  interpretation (`TranscriptParser`) are orthogonal ABCs. Hermes claims by
-  source; every other session is content-sniffed. Unrecognized schemas raise
+  interpretation (`TranscriptParser`) are orthogonal ABCs. Hermes SQLite
+  claims by source; every other session is content-sniffed (including
+  hermes-trace via `HermesTraceParser`, S29). Unrecognized schemas raise
   `UnknownSchema` and land in `skipped_roots` (S27–S28).
+- **Usage provenance (TB-18 / TB-20, shipped):** every `ToolCall` carries
+  `UsageProvenance`; cache flags render `n/a` / `n/a*` when unmeasurable
+  (S29). `probe.py` keys turns only by `requestId` and refuses hermes-trace
+  (S30). Hermes session-row `cache_read_tokens` surfaces as an Agent
+  Breakdown caveat, never a per-call rate (S32).
 
 ## Test split
 
