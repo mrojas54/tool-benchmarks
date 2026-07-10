@@ -141,7 +141,7 @@ TB-13), usage provenance (**S29–S30** / TB-18: producer-aware
 cannot key to the billing unit), and the gate itself running every test
 (**S31** / TB-19: the documented command is `pytest`, not `unittest
 discover`, which silently missed 37 module-level tests). The strict gate
-(`ruff`, `mypy --strict`, `pytest`) is green — **249** tests passing
+(`ruff`, `mypy --strict`, `pytest`) is green — **262** tests passing
 (1 skipped when the live hermes archive is absent).
 
 Source-of-truth documents:
