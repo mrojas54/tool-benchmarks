@@ -228,6 +228,21 @@ class ClaudeParser(TranscriptParser):
         return ParseResult(calls=calls, malformed=malformed)
 
 
+class CodexParser(TranscriptParser):
+    """STUB (TB-12 RED). Deliberately inert so each test fails on its own assertion."""
+
+    schema_tag: ClassVar[str] = "codex"
+
+    @classmethod
+    def claims_line(cls, entry: dict[str, object]) -> bool:
+        return False
+
+    def parse(
+        self, lines: Iterable[str], *, agent: str, source: str, project: str
+    ) -> ParseResult:
+        return ParseResult(calls=[], malformed=0)
+
+
 class HermesTraceParser(ClaudeParser):
     """`hermes sessions export --format trace`: the claude schema, a different producer.
 

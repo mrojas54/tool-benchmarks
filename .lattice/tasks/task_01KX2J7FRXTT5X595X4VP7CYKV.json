@@ -1,6 +1,13 @@
 {
   "assigned_to": null,
-  "branch_links": [],
+  "branch_links": [
+    {
+      "branch": "feat/tb-12-codex-parser",
+      "linked_at": "2026-07-10T14:33:26Z",
+      "linked_by": "agent:claude",
+      "repo": null
+    }
+  ],
   "comment_count": 0,
   "complexity": "medium",
   "created_at": "2026-07-09T04:29:58Z",
@@ -10,8 +17,8 @@
   "done_at": null,
   "evidence_refs": [],
   "id": "task_01KX2J7FRXTT5X595X4VP7CYKV",
-  "last_event_id": "ev_01KX3VVM1QC1N247TXEHFW5P8G",
-  "last_status_changed_at": "2026-07-09T04:29:58Z",
+  "last_event_id": "ev_01KX6756PN10F8NX8M3Y6HNWSZ",
+  "last_status_changed_at": "2026-07-10T14:33:26Z",
   "priority": "high",
   "relationships_out": [
     {
@@ -25,7 +32,7 @@
   "reopened_count": 0,
   "schema_version": 1,
   "short_id": "TB-12",
-  "status": "backlog",
+  "status": "in_progress",
   "tags": [
     "codex",
     "adapter",
@@ -36,6 +43,6 @@
   ],
   "title": "toolbench parses only Claude's tool_use schema, so all 60 codex sessions yield zero tool calls",
   "type": "bug",
-  "updated_at": "2026-07-09T16:37:29Z",
+  "updated_at": "2026-07-10T14:33:26Z",
   "urgency": "normal"
 }

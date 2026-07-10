@@ -9,7 +9,7 @@ from toolbench.adapters import (
     UnknownSchema,
     detect_parser,
 )
-from toolbench.parsers import ClaudeParser, HermesTraceParser
+from toolbench.parsers import ClaudeParser, CodexParser, HermesTraceParser
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -87,9 +87,16 @@ def test_cowork_fixture_detects_as_claude_with_no_registry_entry_of_its_own():
     assert type(parser) is ClaudeParser
 
 
-def test_codex_fixture_raises_unknown_schema_until_tb_12():
-    with pytest.raises(UnknownSchema):
-        detect_parser(_lines("schema_codex.jsonl"))
+def test_codex_fixture_detects_as_codex():
+    """Was `..._raises_unknown_schema_until_tb_12`. TB-12 registered the parser."""
+    parser, _ = detect_parser(_lines("schema_codex.jsonl"))
+    assert type(parser) is CodexParser
+
+
+def test_claude_fixture_still_detects_as_claude_with_codex_registered():
+    """Guards the AmbiguousSchema invariant: adding a parser must not steal claude's lines."""
+    parser, _ = detect_parser(_lines("schema_claude.jsonl"))
+    assert type(parser) is ClaudeParser
 
 
 def test_cursor_fixture_raises_unknown_schema():
