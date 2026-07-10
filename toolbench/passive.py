@@ -345,22 +345,22 @@ def render_report(
     lines.append("")
     lines.append("| agent | sessions | calls | output_tokens | input_tokens | errors | no_result |")
     lines.append("|---|---|---|---|---|---|---|")
+    cache_caveats: list[str] = []
     for agent in sorted(reducer.agents):
         s = reducer.agents[agent]
         lines.append(
             f"| {agent} | {s.sessions} | {s.calls} | {s.output_tokens} | "
             f"{s.input_tokens} | {s.errors} | {s.no_result} |"
         )
-    for agent in sorted(reducer.agents):
-        s = reducer.agents[agent]
         if s.sessions_with_cache_data > 0:
             # S32: session-grain only, orthogonal to the per-call `cache_assisted`
             # column below -- never mixed into that column, never a sixth section.
-            lines.append(
+            cache_caveats.append(
                 f"- {agent}: {s.sessions_with_cache_hit} of {s.sessions_with_cache_data} "
                 "sessions carry session-grain `cache_read_tokens` > 0 "
                 "(S32: session grain only — not attributable to individual tool calls)."
             )
+    lines.extend(cache_caveats)
     lines.append("")
 
     lines.append("## Tool Leaderboard")
