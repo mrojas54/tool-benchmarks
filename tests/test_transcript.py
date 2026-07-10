@@ -1,12 +1,14 @@
+import dataclasses
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 # S1/S2 join and payload-resolution moved to `parsers.py` in TB-13. The
 # assertions below are unchanged: only the import site moved.
-from toolbench.parsers import _result_id, _result_payload
+from toolbench.parsers import ClaudeParser, _result_id, _result_payload
 from toolbench.transcript import (
     ToolCall,
+    UsageProvenance,
     parse_session,
     result_len,
 )
@@ -56,6 +58,14 @@ class ToolCallTests(unittest.TestCase):
             "model": "claude-opus-4-8",
         }
         fields.update(overrides)
+        # Mirrors ClaudeParser._provenance so existing tests keep their meaning:
+        # usage={...} still reads as a measurement, usage=None as an absence.
+        fields.setdefault(
+            "usage_provenance",
+            UsageProvenance.PRESENT
+            if fields["usage"] is not None
+            else UsageProvenance.ABSENT_UNEXPECTED,
+        )
         return ToolCall(**fields)  # type: ignore[arg-type]
 
     def test_fields(self) -> None:
@@ -194,6 +204,40 @@ class NonUtf8SessionTests(unittest.TestCase):
             result = parse_session(str(path), agent="claude-code", source="raw", project="p")
         self.assertEqual(result.calls, [])
         self.assertEqual(result.malformed, 1)
+
+
+class UsageProvenanceTests(unittest.TestCase):
+    def test_enum_has_exactly_four_arms(self) -> None:
+        self.assertEqual(
+            {m.name for m in UsageProvenance},
+            {"PRESENT", "ABSENT_BY_SCHEMA", "ABSENT_BY_EXPORT", "ABSENT_UNEXPECTED"},
+        )
+
+    def test_tool_call_has_no_default_provenance(self) -> None:
+        """A default would silently mark unconverted call sites PRESENT."""
+        field = {f.name: f for f in dataclasses.fields(ToolCall)}["usage_provenance"]
+        self.assertIs(field.default, dataclasses.MISSING)
+        self.assertIs(field.default_factory, dataclasses.MISSING)
+
+    def test_provenance_precedes_the_defaulted_fields(self) -> None:
+        names = [f.name for f in dataclasses.fields(ToolCall)]
+        self.assertLess(names.index("usage_provenance"), names.index("no_result"))
+        self.assertEqual(names[names.index("usage") + 1], "usage_provenance")
+
+
+class ClaudeProvenanceHookTests(unittest.TestCase):
+    def test_dict_usage_is_present(self) -> None:
+        self.assertIs(ClaudeParser._provenance({"input_tokens": 1}), UsageProvenance.PRESENT)
+
+    def test_empty_dict_usage_is_present_a_measured_zero(self) -> None:
+        """The channel existed and reported nothing. That is a measurement."""
+        self.assertIs(ClaudeParser._provenance({}), UsageProvenance.PRESENT)
+
+    def test_missing_usage_is_absent_unexpected(self) -> None:
+        self.assertIs(ClaudeParser._provenance(None), UsageProvenance.ABSENT_UNEXPECTED)
+
+    def test_non_dict_usage_is_absent_unexpected(self) -> None:
+        self.assertIs(ClaudeParser._provenance("42"), UsageProvenance.ABSENT_UNEXPECTED)
 
 
 if __name__ == "__main__":
