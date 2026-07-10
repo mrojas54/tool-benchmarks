@@ -146,7 +146,7 @@ discover`, which silently missed 37 module-level tests). The strict gate
 
 Source-of-truth documents:
 
-- [`SPEC.md`](SPEC.md) — 31 numbered acceptance criteria (S1–S31).
+- [`SPEC.md`](SPEC.md) — 32 numbered acceptance criteria (S1–S32).
 - [`EVALUATION.md`](EVALUATION.md) — verification map for every criterion.
 - [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the T1–T6 tickets.
 - [`docs/2026-07-07-tool-benchmarks-design.md`](docs/2026-07-07-tool-benchmarks-design.md)
