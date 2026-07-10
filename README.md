@@ -136,15 +136,17 @@ Post-merge hardening covers **TB-8** (subagent `--project` filter), **TB-9**
 (callout denominators), **TB-10** (non-UTF-8 / non-transcript exports),
 **TB-11** (Hermes SQLite direct read — discovery still via AgentsView),
 probe isolability (**S26** / TB-14–16), schema dispatch (**S27–S28** /
-TB-13), and usage provenance (**S29–S30** / TB-18: producer-aware
+TB-13), usage provenance (**S29–S30** / TB-18: producer-aware
 `UsageProvenance` on every `ToolCall`, and `probe.py` refusing corpora it
-cannot key to the billing unit). The strict gate (`ruff`, `mypy --strict`,
-`unittest`) is green — **247** tests passing, 1 skipped when the live hermes
-archive is absent.
+cannot key to the billing unit), and the gate itself running every test
+(**S31** / TB-19: the documented command is `pytest`, not `unittest
+discover`, which silently missed 37 module-level tests). The strict gate
+(`ruff`, `mypy --strict`, `pytest`) is green — **249** tests passing
+(1 skipped when the live hermes archive is absent).
 
 Source-of-truth documents:
 
-- [`SPEC.md`](SPEC.md) — 30 numbered acceptance criteria (S1–S30).
+- [`SPEC.md`](SPEC.md) — 31 numbered acceptance criteria (S1–S31).
 - [`EVALUATION.md`](EVALUATION.md) — verification map for every criterion.
 - [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the T1–T6 tickets.
 - [`docs/2026-07-07-tool-benchmarks-design.md`](docs/2026-07-07-tool-benchmarks-design.md)
@@ -206,7 +208,7 @@ uv run python -m toolbench.probe --session /path/to/probe-session.jsonl --out re
 uv run python -m toolbench.probe --allow-seeded   # baseline table only; measures nothing
 
 # Tests
-uv run python -m unittest discover tests
+uv run pytest -q
 ```
 
 ### Probe scoring pitfalls
@@ -277,4 +279,6 @@ zero count omits the top-offender clause.
 ## Quality gate
 
 Before any PR: `uv run ruff check .`, `uv run mypy --strict toolbench tests`,
-and the full unittest suite must be green.
+and the full `pytest -q` suite must be green (S31 — the documented command
+must collect every test, including module-level `test_*` functions that
+`unittest discover` silently misses).

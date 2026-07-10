@@ -12,9 +12,12 @@ One row per SPEC criterion, each tagged by how it is verified:
 
 ## Harness commands
 
-- **`test` (fast, hermetic, parallel, ≤60s)** — `uv run python -m unittest
-  discover tests`. The delegators' inner-loop clock. Pure stdlib, no daemon,
-  no `~/.claude` access; fixtures + fake `agentsview` runner only.
+- **`test` (fast, hermetic, parallel, ≤60s)** — `uv run pytest -q`. The
+  delegators' inner-loop clock. No daemon, no `~/.claude` access; fixtures +
+  fake `agentsview` runner only. Collects `unittest.TestCase` methods and
+  module-level `test_*` functions uniformly (S31) — `unittest discover`
+  silently missed the latter (37 of 220 tests, TB-19) and is no longer the
+  documented command.
 - **`test:full` (slow, real corpus / daemon)** — the S25 smoke commands run
   against a real `~/.claude/projects` and, where healthy, the live
   AgentsView daemon. Not hermetic; operator-run. Tests that read a live
@@ -59,6 +62,7 @@ One row per SPEC criterion, each tagged by how it is verified:
 | S28 | no default parser; unrecognized schemas skip loudly | `autonomous` | `test` (codex/cursor → skipped_roots) |
 | S29 | producer split on `version`; `UsageProvenance` stamped; four-case cache render | `autonomous` | `test` (`schema_hermes_trace.jsonl` fixture; `detect_parser` → `HermesTraceParser`; `n/a` / `n/a*` / `no` render) |
 | S30 | probe refuses trace at dispatch; `_turn_key` raises `NonIsolableTurns`; no timestamp fallback | `autonomous` | `test` (probe fixtures carry `requestId`; refusal on a stripped fixture) |
+| S31 | gate command collects every test (`TestCase` methods + module-level fns) | `autonomous` | `test` (`test_gate_completeness.py`) |
 
 ## Operator post-merge smoke checkpoints (human-driven)
 

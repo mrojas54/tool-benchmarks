@@ -28,8 +28,10 @@ raw roots + AgentsView exports
 
 ## Test split
 
-- **`test`** — `uv run python -m unittest discover tests` (hermetic,
-  stdlib, fake `agentsview` runner, no `~/.claude` access; ≤60s).
+- **`test`** — `uv run pytest -q` (hermetic, fake `agentsview` runner, no
+  `~/.claude` access; ≤60s). Collects `unittest.TestCase` methods and
+  module-level `test_*` functions uniformly — `unittest discover` silently
+  missed the latter and is no longer the documented command (S31 / TB-19).
 - **`test:full`** — the S25 acceptance-smoke commands against real corpus /
   live daemon; operator-run post-merge.
 
@@ -49,6 +51,7 @@ parallel (T2, T3), then the two consumers (T4, T5), then docs + gate (T6).
 | **T7 — schema dispatch seam** (lattice `TB-13`) | `detect_parser`, `PARSERS` registry, `UnknownSchema` / `AmbiguousSchema`; no default parser | S27, S28 | T2 |
 | **T8 — requestId-keyed arm isolability** (lattice `TB-16`) | turn key is the `requestId`, not the timestamp; response-pooled usage attribution | S26 | T5 |
 | **T9 — usage provenance + probe refusal** (lattice `TB-18`) | `UsageProvenance` enum, `HermesTraceParser` split on `version`, four-case cache render, `NonIsolableTurns` refusal, WAL read-only repair | S29, S30 | T4, T5, T7, T8 |
+| **T10 — pytest as the documented gate** (lattice `TB-19`) | Replace `unittest discover` (silently missed 37/220 module-level tests) with `uv run pytest -q` as the gate command in README/EVALUATION/BUILDPLAN/AGENTS; `testpaths` pytest config; regression test pinning the collection defect | S31 | T6 |
 
 `T1`–`T6` are the original v2 build-contract tickets (board `TB-2`–`TB-7`) and
 predate the lattice board's use as the source of truth. `T7`–`T9` are recorded
@@ -64,8 +67,8 @@ only defers — `codex` and `cursor` land in `skipped_roots` until it exists.
 
 ## Checkpoint sequence
 
-1. **Skeleton (T1)** — `uv run python -m unittest discover tests` green on
-   the record + normalizer; `pyproject.toml` shows empty runtime deps.
+1. **Skeleton (T1)** — `uv run pytest -q` green on the record + normalizer;
+   `pyproject.toml` shows empty runtime deps.
 2. **Substrate (T2 ∥ T3)** — parser joins both key/payload shapes; sources
    page AgentsView via the fake runner. The **join-key on real data**
    (operator checkpoint #1) is de-risked here by the block-local fixture.
