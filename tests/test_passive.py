@@ -156,6 +156,15 @@ class ReducerAbsorbTests(unittest.TestCase):
         reducer.absorb("codex", ParseResult(calls=[make_call(name="Bash", model=None)], malformed=0))
         self.assertIn(("codex", UNKNOWN_MODEL, "Bash"), reducer.tools_by_model)
 
+    def test_absorb_folds_unjoinable_by_agent_and_kind(self) -> None:
+        """TB-24: unjoinable records accumulate per (agent, kind), never as calls."""
+        reducer = Reducer()
+        reducer.absorb("codex", ParseResult(calls=[], malformed=0, unjoinable={"web_search_call": 2}))
+        reducer.absorb("codex", ParseResult(calls=[], malformed=0, unjoinable={"web_search_call": 3}))
+        self.assertEqual(reducer.unjoinable[("codex", "web_search_call")], 5)
+        # Not confused with joined calls: none of those sessions had a call.
+        self.assertEqual(reducer.calls_joined, 0)
+
     def test_tools_by_model_tracks_errors_and_cache_hits(self) -> None:
         reducer = Reducer()
         reducer.absorb(
@@ -387,6 +396,18 @@ class DateRangeFilterTests(unittest.TestCase):
         result = ParseResult(calls=[make_call(ts="")], malformed=0)
         filtered = _apply_date_range(result, "2026-07-01", "2026-07-31")
         self.assertEqual(len(filtered.calls), 1)
+
+    def test_unjoinable_survives_date_filtering(self) -> None:
+        """TB-24: unjoinable is a count of seen records, not date-filterable calls --
+        it passes through the filter intact, exactly as `malformed` does."""
+        result = ParseResult(
+            calls=[make_call(ts="2026-06-01T00:00:00Z")],
+            malformed=0,
+            unjoinable={"web_search_call": 4},
+        )
+        filtered = _apply_date_range(result, "2026-07-01", None)
+        self.assertEqual(len(filtered.calls), 0)  # the one call is filtered out
+        self.assertEqual(filtered.unjoinable, {"web_search_call": 4})  # the count is not
 
 
 class CliParsingTests(unittest.TestCase):
@@ -629,6 +650,35 @@ class RenderReportTests(unittest.TestCase):
         self.assertIn("| claude-code | claude-haiku-4-5 | Read | 1 | 2000 |", section)
         # Ranked by context tokens descending: haiku (2000) outranks opus (100).
         self.assertLess(section.index("claude-haiku-4-5"), section.index("claude-opus-4-8"))
+
+
+class UnjoinableReconciliationRenderTests(unittest.TestCase):
+    """TB-24 / S38: recognized-but-unjoinable tool records are surfaced in the
+    Summary, attributed by agent/kind, so codex's web-search undercount is named."""
+
+    def _summary(self, reducer: Reducer) -> str:
+        report = render_report(
+            reducer,
+            index_source="auto",
+            fallback_reason=None,
+            skips=[],
+            include_subagents=True,
+            since_note=None,
+        )
+        return report[report.index("## Summary") :]
+
+    def test_line_present_with_total_and_attribution(self) -> None:
+        reducer = Reducer()
+        reducer.absorb("codex", ParseResult(calls=[make_call(agent="codex")], malformed=0,
+                                            unjoinable={"web_search_call": 138}))
+        summary = self._summary(reducer)
+        self.assertIn("Unjoinable tool records (seen, not joined): 138", summary)
+        self.assertIn("codex/web_search_call: 138", summary)
+
+    def test_line_absent_when_nothing_unjoinable(self) -> None:
+        reducer = Reducer()
+        reducer.absorb("claude-code", ParseResult(calls=[make_call()], malformed=0))
+        self.assertNotIn("Unjoinable tool records", self._summary(reducer))
 
 
 class MainExitContractTests(unittest.TestCase):
@@ -1305,6 +1355,15 @@ class CorpusFingerprintTests(unittest.TestCase):
         # rendered number differs.
         before = corpus_fingerprint([session_signature("live", 10, 0)])
         after = corpus_fingerprint([session_signature("live", 10, 1)])
+        self.assertNotEqual(before.digest, after.digest)
+
+    def test_an_appended_web_search_call_moves_the_digest(self) -> None:
+        # TB-24 adds a rendered number ("Unjoinable tool records"). A web_search_call
+        # append leaves call_count and malformed unchanged but moves that number, so
+        # the signature must fold the unjoinable total or the fingerprint would falsely
+        # match while a rendered number differs -- the S36 outcome that must not survive.
+        before = corpus_fingerprint([session_signature("live", 10, 0, 0)])
+        after = corpus_fingerprint([session_signature("live", 10, 0, 1)])
         self.assertNotEqual(before.digest, after.digest)
 
 
