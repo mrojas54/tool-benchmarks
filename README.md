@@ -137,7 +137,10 @@ Post-merge hardening covers **TB-8** (subagent `--project` filter), **TB-9**
 **TB-11** (Hermes SQLite direct read — discovery still via AgentsView),
 probe isolability (**S26** / TB-14–16), and schema dispatch (**S27–S28** /
 TB-13). The strict gate (`ruff`, `mypy --strict`, `unittest`) is green —
-**213** tests passing (1 skipped when the live hermes archive is absent).
+**176** tests collected by `unittest discover` (1 skipped when the live
+hermes archive is absent). **37** additional module-level `test_*`
+functions (TB-13 seam coverage) are only collected by `pytest` — **213**
+total — and are silently skipped by the documented gate today (TB-19).
 
 Source-of-truth documents:
 
@@ -213,6 +216,13 @@ uv run python -m unittest discover tests
 - **One tool call per API response.** Usage is keyed by `requestId` (S26).
   Batching, prose, or reasoning in an arm turn blanks the usage column (`—`)
   while keeping real context tokens — it does **not** re-seed the cell.
+- **Usage columns are not yet comparable (TB-17).** `output_tokens` bills
+  the whole emitted `tool_use` block. The bash arm must carry a sentinel
+  comment (and often a `description`) that the tool arm cannot carry, so
+  bash usage is inflated by ~15–20 tokens of instrumentation — enough to
+  swamp the measured gap. Trust the context-token columns; do not conclude
+  "MCP is cheaper on output tokens" from the usage pair until TB-17 lands
+  a stated correction (or drops those columns).
 - **Turn 0 before arms.** Confirm serena has an active project with a
   non-corpus target (`pyproject.toml`) so a failed arm call is not scored as
   a successful match.
@@ -269,7 +279,9 @@ zero count omits the top-offender clause.
 | Empty selection message | No sessions matched filters, or all matched sessions were skipped | Check `--project` / `--since` / `--date-*`, and the skipped-roots suffix on the message. |
 | `toolbench.probe` without `--session` refuses to write | Seeded-only report is blocked (`SeededReportError`) | Pass `--session PATH`, or `--allow-seeded` for the baseline table only. |
 | Probe usage column shows `—` but context tokens are real | Arm matched, but the API response was not isolable (prose, thinking, or batched `tool_use` — S26) | Re-run from [`protocols/probe-run-sheet.md`](protocols/probe-run-sheet.md); one tool call per turn, no surrounding prose. |
+| Bash usage looks ~15–20 tokens higher than the tool arm | Sentinel + optional Bash `description` are billed into bash `output_tokens` only (TB-17) | Expected until TB-17. Compare context-token columns; treat usage as non-comparable. |
 | `codex` / `cursor` sessions appear only in Skipped roots | No parser claims their schema yet (`UnknownSchema`, S28) | Expected until TB-12 lands a `CodexParser`. They must not appear as healthy zero-call agents. |
+| `unittest discover` reports ~176 tests; `pytest` reports ~213 | 37 module-level `test_*` functions are invisible to `unittest.TestLoader.discover` | Known gate gap (TB-19). Until that lands, run `uv run pytest -q` when you need the full seam suite. |
 
 ## Quality gate
 

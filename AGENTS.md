@@ -19,7 +19,10 @@ Non-obvious notes for this environment:
   `uv run mypy --strict toolbench tests`, and `uv run python -m unittest discover tests`.
   The unittest run's OK/FAIL summary is printed to **stderr**, and some tests emit
   report tables to stdout — redirect stdout to `/dev/null` if you only want the
-  pass/fail summary.
+  pass/fail summary. **Caveat:** `unittest discover` collects **176** tests;
+  **37** module-level `test_*` functions (TB-13 seam files) are only visible to
+  `pytest` (**213** total). Until TB-19 switches the documented gate, run
+  `uv run pytest -q` when you need the full suite.
 - **Running the passive analyzer on real data:** there is no `--root` CLI flag;
   raw scanning defaults to `~/.claude/projects` and treats the first path segment
   under the root as the project. To exercise it, drop a `*.jsonl` transcript at
