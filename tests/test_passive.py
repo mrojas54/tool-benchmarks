@@ -823,7 +823,7 @@ class CacheNoteRenderTests(unittest.TestCase):
             include_subagents=True,
             since_note=None,
         )
-        row = next(l for l in report.splitlines() if "| Read |" in l)
+        row = next(line for line in report.splitlines() if "| Read |" in line)
         return row.rstrip("|").rsplit("|", 1)[-1].strip()
 
     def test_yes_when_a_hit_was_observed(self) -> None:
