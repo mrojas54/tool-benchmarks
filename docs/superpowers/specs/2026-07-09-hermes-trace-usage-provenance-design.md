@@ -1,7 +1,7 @@
 # Design: usage provenance and probe turn-key refusal (TB-18)
 
 **Ticket:** TB-18 — *hermes `--format trace` parses as claude but carries no usage or requestId; cache-hit signal silently fabricated*
-**Status:** design, awaiting approval
+**Status:** shipped (PR #20, merged 2026-07-10)
 **Date:** 2026-07-09
 **Depends on:** TB-13 (schema dispatch, PR #19), TB-16 (response-pooled isolability)
 

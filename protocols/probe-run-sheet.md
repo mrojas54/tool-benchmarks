@@ -34,6 +34,10 @@ Everything you need is below. Copy each call exactly.
    exactly that boundary. **Your last prose of the run comes before turn 0, not
    after it.** Once turn 0 passes, say nothing until turn 10 has returned. If
    turn 0 fails, you may speak while you fix it; the run has not started.
+6. **Score the Claude Code session this run produces.** Do not feed a
+   `hermes sessions export --format trace` file to `toolbench.probe` — it
+   raises `NonIsolableTurns` (no `requestId`). Trace exports are for
+   `passive` only.
 
 Rules 1 and 5 are enforced (S26). A non-isolable arm still matches and keeps its
 real context-token columns; only the usage cell shows `—`. It is **not**

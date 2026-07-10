@@ -130,6 +130,16 @@ TB-17 tracks the fix (stated correction, symmetric dead-weight, drop the
 columns, or reconstruct analytically). Until one lands, read usage as
 non-comparable and rank arms on context tokens.
 
+## What `probe.py` will refuse (S30)
+
+Score a **native Claude Code** session JSONL. `hermes sessions export
+--format trace` is valid input to `passive.py` (claimed by
+`HermesTraceParser`, usage stamped `ABSENT_BY_EXPORT`) but invalid input to
+`probe.py`: the export drops `requestId`, and turns are keyed solely by that
+field. `find_probe_calls` raises `NonIsolableTurns` at the door rather than
+falling back to timestamps (the TB-16 defect class). There is no
+partial-corpus mode.
+
 ## Performing vs. mentioning a probe (S17)
 
 A sentinel is a bare string, so a call that *greps for* `TB_PROBE_01_BASH_V2`
