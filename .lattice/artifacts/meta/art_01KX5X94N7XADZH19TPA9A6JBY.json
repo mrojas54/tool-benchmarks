@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-10T11:40:50Z",
+  "created_by": "agent:orchestrator",
+  "custom_fields": {},
+  "id": "art_01KX5X94N7XADZH19TPA9A6JBY",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KX5X94N7XADZH19TPA9A6JBY.md",
+    "size_bytes": 283
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": "Phase 2 RV validated (all rows pass, cache_read caveat recorded). PR #22 (tb-20-cache-read) retargeted to main, rebased (T10\u2192T11 renumbering), MERGED 2026-07-10T11:37:34Z: session-grain cache_read_tok",
+  "tags": [],
+  "title": "Review findings",
+  "token_usage": null,
+  "type": "note"
+}
