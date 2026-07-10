@@ -52,6 +52,7 @@ parallel (T2, T3), then the two consumers (T4, T5), then docs + gate (T6).
 | **T8 — requestId-keyed arm isolability** (lattice `TB-16`) | turn key is the `requestId`, not the timestamp; response-pooled usage attribution | S26 | T5 |
 | **T9 — usage provenance + probe refusal** (lattice `TB-18`) | `UsageProvenance` enum, `HermesTraceParser` split on `version`, four-case cache render, `NonIsolableTurns` refusal, WAL read-only repair | S29, S30 | T4, T5, T7, T8 |
 | **T10 — pytest as the documented gate** (lattice `TB-19`) | Replace `unittest discover` (silently missed 37/220 module-level tests) with `uv run pytest -q` as the gate command in README/EVALUATION/BUILDPLAN/AGENTS; `testpaths` pytest config; regression test pinning the collection defect | S31 | T6 |
+| **T11 — session-grain cache surfaced as a caveat** (lattice `TB-20`) | `parse_hermes_session` reads `cache_read_tokens` off the session row; `ParseResult.session_cache_read_tokens`; `AgentStats` session-grain counters; Agent Breakdown caveat line, orthogonal to the per-call `cache_assisted` column | S32 | T4, T9 |
 
 `T1`–`T6` are the original v2 build-contract tickets (board `TB-2`–`TB-7`) and
 predate the lattice board's use as the source of truth. `T7`–`T9` are recorded
@@ -60,7 +61,8 @@ deliver — S26, S27, S28 — were previously claimed by no row here at all.
 
 Rows are listed in dependency order, not in the order they were minted. Every
 future row carries both IDs; `T9`'s step-by-step lives in
-`docs/superpowers/plans/2026-07-09-tb-18-usage-provenance.md`.
+`docs/superpowers/plans/2026-07-09-tb-18-usage-provenance.md`; `T11`'s lives
+in the lattice plan for `TB-20`.
 
 Still unclaimed by any row: the `CodexParser` itself (board `TB-12`), which S28
 only defers — `codex` and `cursor` land in `skipped_roots` until it exists.
