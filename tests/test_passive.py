@@ -25,7 +25,7 @@ from toolbench.passive import (
     render_report,
 )
 from toolbench.sources import SessionRef
-from toolbench.transcript import ParseResult, ToolCall
+from toolbench.transcript import ParseResult, ToolCall, UsageProvenance
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -69,6 +69,13 @@ def make_call(**overrides: object) -> ToolCall:
         "model": "claude-opus-4-8",
     }
     fields.update(overrides)
+    # Mirrors ClaudeParser._provenance so existing tests keep their meaning.
+    fields.setdefault(
+        "usage_provenance",
+        UsageProvenance.PRESENT
+        if fields["usage"] is not None
+        else UsageProvenance.ABSENT_UNEXPECTED,
+    )
     return ToolCall(**fields)  # type: ignore[arg-type]
 
 
@@ -775,6 +782,85 @@ def test_unknown_schema_lands_in_skipped_roots_not_as_a_zero_row():
         skipped.append(str(exc))
     assert skipped, "an unparseable session must be skipped, never counted as 0 calls"
     assert reducer.calls_joined == 0
+
+
+class UsageMissingCounterTests(unittest.TestCase):
+    def _absorb(self, *calls: ToolCall) -> Reducer:
+        reducer = Reducer()
+        reducer.absorb("claude-code", ParseResult(calls=list(calls), malformed=0))
+        return reducer
+
+    def test_present_usage_does_not_increment(self) -> None:
+        r = self._absorb(make_call(usage={"input_tokens": 1}))
+        self.assertEqual(r.tools[("claude-code", "Read")].usage_missing, 0)
+
+    def test_every_absent_arm_increments(self) -> None:
+        for arm in (
+            UsageProvenance.ABSENT_BY_SCHEMA,
+            UsageProvenance.ABSENT_BY_EXPORT,
+            UsageProvenance.ABSENT_UNEXPECTED,
+        ):
+            with self.subTest(arm=arm):
+                r = self._absorb(make_call(usage=None, usage_provenance=arm))
+                self.assertEqual(r.tools[("claude-code", "Read")].usage_missing, 1)
+
+    def test_empty_usage_dict_is_a_measured_zero_not_a_miss(self) -> None:
+        r = self._absorb(make_call(usage={}))
+        stats = r.tools[("claude-code", "Read")]
+        self.assertEqual(stats.usage_missing, 0)
+        self.assertEqual(stats.cache_hits, 0)
+
+
+class CacheNoteRenderTests(unittest.TestCase):
+    def _note(self, *calls: ToolCall) -> str:
+        reducer = Reducer()
+        reducer.absorb("claude-code", ParseResult(calls=list(calls), malformed=0))
+        report = render_report(
+            reducer,
+            index_source="raw",
+            fallback_reason=None,
+            skipped_roots=[],
+            include_subagents=True,
+            since_note=None,
+        )
+        row = next(line for line in report.splitlines() if "| Read |" in line)
+        return row.rstrip("|").rsplit("|", 1)[-1].strip()
+
+    def test_yes_when_a_hit_was_observed(self) -> None:
+        self.assertEqual(self._note(make_call(usage={"cache_read_input_tokens": 5})), "yes")
+
+    def test_no_when_usage_was_available_and_zero_hits(self) -> None:
+        self.assertEqual(self._note(make_call(usage={"input_tokens": 1})), "no")
+
+    def test_na_when_no_call_could_be_measured(self) -> None:
+        self.assertEqual(
+            self._note(make_call(usage=None, usage_provenance=UsageProvenance.ABSENT_BY_EXPORT)),
+            "n/a",
+        )
+
+    def test_na_star_when_only_some_calls_could_be_measured(self) -> None:
+        """A trace export and a real transcript share one (agent, tool) bucket.
+
+        Synthetic by necessity: no natural trace corpus carries enough tool calls
+        to form a mixed bucket. This is the case a scalar enum cannot express.
+        """
+        self.assertEqual(
+            self._note(
+                make_call(usage={"input_tokens": 1}),
+                make_call(usage=None, usage_provenance=UsageProvenance.ABSENT_BY_EXPORT),
+            ),
+            "n/a*",
+        )
+
+    def test_yes_survives_surrounding_blindness(self) -> None:
+        """One observed hit is a positive existence proof."""
+        self.assertEqual(
+            self._note(
+                make_call(usage={"cache_read_input_tokens": 5}),
+                make_call(usage=None, usage_provenance=UsageProvenance.ABSENT_BY_EXPORT),
+            ),
+            "yes",
+        )
 
 
 if __name__ == "__main__":

@@ -158,7 +158,7 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   response. Claude Code writes one response as several JSONL entries
   (`thinking` / `text` / each `tool_use`) that share a `requestId` and a
   single `usage` figure but carry distinct timestamps. A turn is therefore
-  the `requestId` (falling back to timestamp when absent). An arm's usage is
+  the `requestId`; there is no timestamp fallback (superseded by S30). An arm's usage is
   attributable only when that response emitted exactly one `tool_use` and no
   non-empty `text` / `thinking` / `redacted_thinking` block. Batching,
   prose, or reasoning in the arm turn keeps the match and the context-token
@@ -183,3 +183,22 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 - **S28 — no parser is the default.** An unrecognized transcript is never parsed
   by `ClaudeParser`, and never reported as an agent with zero tool calls. `codex`
   and `cursor` land in `skipped_roots` pending a `CodexParser` (TB-12).
+
+## Usage provenance — `toolbench/parsers.py` + `toolbench/probe.py`
+
+- **S29 — producer provenance for usage.** Schema and producer are separate
+  axes. A transcript claimed by the claude schema is routed by producer:
+  `version == "hermes-agent"` selects `HermesTraceParser`, otherwise
+  `ClaudeParser`. The two claim predicates partition, so `AmbiguousSchema`
+  never fires between them. Every `ToolCall` carries a `UsageProvenance` of
+  `PRESENT`, `ABSENT_BY_SCHEMA`, `ABSENT_BY_EXPORT`, or `ABSENT_UNEXPECTED`,
+  stamped by its producer. The passive cache-hit flag renders `n/a` when no
+  call in a bucket could be measured, `n/a*` when only some could, and `no`
+  only when usage was available and zero hits were observed. Per S19 the flag
+  remains caveat-only and never affects ranking (TB-18).
+- **S30 — probe requires the billing unit.** `probe.py` groups turns solely by
+  `requestId`, amending S26. It rejects `hermes-trace` input at dispatch, and
+  `_turn_key` raises `NonIsolableTurns` on any entry lacking `requestId`.
+  There is no timestamp fallback and no partial-corpus mode.
+  `hermes sessions export --format trace` output is therefore valid input to
+  `passive.py` and invalid input to `probe.py` (TB-18).

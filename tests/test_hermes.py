@@ -4,8 +4,11 @@ import sqlite3
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
+from unittest import mock
 
 from toolbench.hermes import (
+    _connect,
     hermes_home,
     iter_profile_dbs,
     parse_hermes_session,
@@ -390,6 +393,8 @@ class LiveArchive(unittest.TestCase):
     """Guards the schema compatibility envelope against the real DBs (v16 and v19)."""
 
     def test_live_archive_schema_envelope(self) -> None:
+        if not os.environ.get("TOOLBENCH_LIVE"):
+            self.skipTest("external-oracle test; set TOOLBENCH_LIVE=1 (see EVALUATION.md)")
         home = Path("~/.hermes").expanduser()
         if not home.is_dir():
             self.skipTest("no live hermes archive")
@@ -397,7 +402,7 @@ class LiveArchive(unittest.TestCase):
         if not dbs:
             self.skipTest("no hermes profile databases")
         for db in dbs:
-            conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            conn = _connect(db)  # an idle profile has no -shm; raw mode=ro cannot read it
             try:
                 scols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
                 mcols = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
@@ -405,6 +410,114 @@ class LiveArchive(unittest.TestCase):
                 conn.close()
             self.assertLessEqual(set(_SESSION_COLS), scols, f"{db} sessions")
             self.assertLessEqual(set(_MESSAGE_COLS), mcols, f"{db} messages")
+
+
+class ConnectWalWithoutShm(unittest.TestCase):
+    """A WAL database whose -wal/-shm sidecars are absent must still open read-only.
+
+    This is the state of ~/.hermes/profiles/aphrodite-mood/state.db: the WAL flag
+    is set in the file header, but neither sidecar is on disk. SQLite cannot take a
+    read lock without recreating the -shm, which `mode=ro` forbids.
+    """
+
+    def _make_wal_db(self, path: Path, *, sidecars: bool = False) -> None:
+        """Build a WAL database, then model an idle profile by removing the sidecars.
+
+        SQLite does *not* delete -wal/-shm on close here (sqlite 3.43.2, macOS), so
+        the sidecar-less state has to be produced explicitly rather than assumed.
+        """
+        conn = sqlite3.connect(path)
+        conn.execute("PRAGMA journal_mode=WAL").fetchone()
+        conn.execute("CREATE TABLE messages (id INTEGER)")
+        conn.execute("INSERT INTO messages VALUES (1)")
+        conn.commit()
+        conn.close()
+        if not sidecars:
+            for suffix in ("-wal", "-shm"):
+                path.with_name(path.name + suffix).unlink(missing_ok=True)
+
+    def test_fixture_models_an_idle_profile(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state.db"
+            self._make_wal_db(db)
+            self.assertFalse(db.with_name(db.name + "-wal").exists())
+            self.assertFalse(db.with_name(db.name + "-shm").exists())
+            header = db.read_bytes()[:20]
+            self.assertEqual((header[18], header[19]), (2, 2), "not a WAL header")
+
+    def test_plain_mode_ro_cannot_read_such_a_db(self) -> None:
+        """Pins the bug itself, and pins why `SELECT 1` is not a health check.
+
+        `SELECT 1` is a constant expression: it reads no page, opens no read
+        transaction, and therefore succeeds on a database SQLite cannot read.
+        """
+        with TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state.db"
+            self._make_wal_db(db)
+            conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            conn.execute("SELECT 1").fetchone()  # succeeds — proves the probe is useless
+            with self.assertRaises(sqlite3.OperationalError):
+                conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+
+    def test_connect_reads_a_wal_db_with_no_shm(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state.db"
+            self._make_wal_db(db)
+            conn = _connect(db)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 1)
+
+    def test_mode_ro_tolerates_a_present_wal(self) -> None:
+        """Pins the real SQLite behaviour the guard is written against.
+
+        `mode=ro` fails only when the -wal is *absent* while the header says WAL.
+        A -wal that is present -- empty, truncated, or carrying frames -- reads
+        fine. So the guard below defends a state that cannot arise naturally.
+        """
+        with TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state.db"
+            self._make_wal_db(db)
+            db.with_name(db.name + "-wal").touch()
+            conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 1)
+
+    def test_connect_refuses_immutable_when_wal_frames_may_be_pending(self) -> None:
+        """Defensive invariant, exercised by fault injection.
+
+        Should `mode=ro` ever fail while a -wal exists, `immutable=1` would ignore
+        that WAL and could return stale rows. `_connect` must re-raise instead.
+        """
+        with TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state.db"
+            self._make_wal_db(db, sidecars=True)
+            self.assertTrue(db.with_name(db.name + "-wal").exists())
+
+            real_connect = sqlite3.connect
+
+            def fail_mode_ro(dsn: str, *args: Any, **kwargs: Any) -> sqlite3.Connection:
+                if "mode=ro" in dsn:
+                    raise sqlite3.OperationalError("unable to open database file")
+                conn: sqlite3.Connection = real_connect(dsn, *args, **kwargs)
+                return conn
+
+            with mock.patch.object(sqlite3, "connect", side_effect=fail_mode_ro):
+                with self.assertRaises(sqlite3.OperationalError):
+                    _connect(db)
+
+    def test_connect_reads_a_healthy_wal_db_without_falling_back(self) -> None:
+        """Sidecars present: `mode=ro` works and the immutable path must not engage."""
+        with TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state.db"
+            self._make_wal_db(db, sidecars=True)
+            conn = _connect(db)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 1)
+
+    def test_connect_never_opens_writable(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state.db"
+            self._make_wal_db(db)
+            conn = _connect(db)
+            with self.assertRaises(sqlite3.OperationalError):
+                conn.execute("INSERT INTO messages VALUES (2)")
 
 
 if __name__ == "__main__":

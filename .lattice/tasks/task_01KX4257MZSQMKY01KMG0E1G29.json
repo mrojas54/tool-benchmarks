@@ -1,0 +1,51 @@
+{
+  "assigned_to": null,
+  "branch_links": [],
+  "comment_count": 7,
+  "complexity": "medium",
+  "created_at": "2026-07-09T18:27:36Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "description": "HAZARD. `hermes sessions export --format trace` (v0.18.2, upstream daedf4f6) emits Claude Code-shaped JSONL. toolbench's TB-13 schema dispatch detects the claude schema by `\"sessionId\" in entry` (parsers.py:83). Hermes trace records carry `sessionId`. Therefore hermes trace exports dropped into the corpus parse CLEANLY as ClaudeParser, yield real ToolCall rows, and raise no error -- while silently carrying `usage=None` on every call.\n\nThis is not TB-12's silent zero (calls dropped). It is the inverse: calls are KEPT, and the usage channel is silently null.\n\nEVIDENCE. Exported 47 live sessions (`--min-tool-calls 3 --newer-than 2d`) to scratch, 650 records total:\n\n  lines with message.usage : 0   (0.0%)\n  lines with requestId     : 0   (0.0%)\n  tool_use blocks          : 280\n\nRan the real detector and parser against one trace file (20260709_122716_09e9bb):\n\n  detect_parser(...)  -> ClaudeParser        # not an error, not a skip\n  parser.parse(...)   -> 13 tool calls, 0 malformed\n  first call: name='skill_view' input_chars=24 output_chars=53679\n              usage=None  duration_ms=None  no_result=False\n              model='zai/GLM-5.1:US'  result_source='block_local'\n\nRecord envelope is genuinely Claude-shaped: parentUuid, isSidechain, sessionId, uuid, cwd, gitBranch, version, userType, timestamp, type. Only `message.usage` and `requestId` are absent.\n\nBLAST RADIUS (narrow, but real -- verified, not assumed):\n\n1. Cache-hit false negatives. `_is_cache_hit(usage)` (passive.py:174) returns False on `not usage`. Every hermes-trace call is therefore silently counted as a cache MISS. S19 says this signal is caveat-only and never used for ranking, which caps the damage -- but the denominator is still quietly contaminated.\n\n2. requestId absent -> TB-16 arm isolability is IMPOSSIBLE on trace exports. TB-16 established that batches must be grouped by requestId, not timestamp. Trace exports carry neither. Any probe run over trace data silently regresses to the pre-TB-16 defect.\n\n3. `tokens` is NOT poisoned. `ToolCall.tokens` = `output_chars // 4` (transcript.py:62), a char proxy independent of `usage`. The token leaderboard does not dilute. This is the one thing that survives.\n\nNON-FINDING (do not \"fix\"). Payload-based dispatch classifying hermes traces as `claude` is CORRECT by design -- ClaudeParser's own docstring says \"detection is by payload, not by producer: one parser, two agents\". Schema and agent are separate axes. The bug is not the dispatch; it is that nothing marks the resulting rows as usage-less.\n\nDO NOT MIGRATE hermes.py TO TRACE. Verified against the live DB (~/.hermes/state.db, read-only), NOT inferred:\n\n  sessions            : 779\n  input_tokens  > 0   : 734\n  output_tokens > 0   : 734\n  cache_read_tokens>0 : 705\n  tool_call_count > 0 : 724\n  estimated_cost_usd>0: 199\n\nThe `sessions` table carries input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, api_call_count, estimated_cost_usd, actual_cost_usd, cost_source, pricing_version. The trace export drops ALL of it -- there is no `usage` anywhere in trace output. Migrating hermes.py from SQLite to trace would therefore destroy the only real token, cache, and cost data hermes has. Trace is a viewer/sharing format, not a measurement format.\n\nCORRECTION TO toolbench/hermes.py:116. Its docstring justifies `usage=None` by saying \"hermes records `token_count` per message, not per tool call.\" That is inaccurate. `messages.token_count` EXISTS as a column but is NULL in 6,672 / 6,672 rows -- it is a dead column, never written by any code path (grep of upstream finds no INSERT/UPDATE writing it). The correct rationale is: hermes records tokens at SESSION grain only; there is no per-message or per-tool-call token record to attribute. The conclusion (`usage=None`) is right; the stated reason is wrong and should be fixed so a future reader does not go looking for message-level tokens that were never there.\n\nOPPORTUNITY (out of scope here, may deserve its own ticket). Session-grain `cache_read_tokens` (705/779 populated) is a real cache signal that toolbench currently ignores for hermes -- `_is_cache_hit` only ever consults per-call `usage`. hermes sessions are thus reported as 100% cache-miss today, from the SQLite path as well as the trace path.\n\nSPEC SHEET CORRECTIONS (the pasted summary overstates):\n  - \"Six formats\" is FIVE: `--format {jsonl,md,qmd,html,trace}`. PROMPTS is not a format; it is `--only {user-prompts}`, a filter flag layered on jsonl/md.\n  - \"+15 more\" filters undercounts; there are 23 filter flags.\n  - Confirmed accurate: shared filter engine w/ prune+archive (both subcommands exist); trace redacts by default (`--no-redact` is opt-out, trace-only); `--lineage {single,logical}`; `--delete-after-verified`; `--upload` to HF.\n\nCANDIDATE FIXES (not chosen):\n  a. Give ParseResult/ToolCall an explicit `usage_available: bool` (or make `usage` tri-state) so a usage-less corpus is loud rather than null-by-omission. Cheapest, matches the \"skip loudly\" precedent from TB-13.\n  b. Have detect_parser emit a provenance warning when a claude-schema file has 0/N `message.usage` across the detect window. Detects the hazard at ingest, not at report time.\n  c. Refuse trace-shaped input in probe.py specifically (requestId is mandatory there), while allowing it in passive.py.\n  d. Do nothing; document that trace exports are passive-only input.\n\nACCEPTANCE. Either (i) a usage-less transcript is structurally distinguishable from a usage-bearing one at parse time -- so `_is_cache_hit` cannot silently fabricate misses and probe.py cannot silently regress past TB-16 -- or (ii) SPEC.md states that `--format trace` output is out-of-corpus and the loader rejects it. A hermes trace export must not be able to enter the corpus and quietly report 280 tool calls whose cache-hit rate is a fiction.",
+  "done_at": null,
+  "evidence_refs": [
+    {
+      "id": "art_01KX5QSRWQXFM17FCP7K39WH1H",
+      "role": "review",
+      "source_type": "artifact"
+    }
+  ],
+  "id": "task_01KX4257MZSQMKY01KMG0E1G29",
+  "last_event_id": "ev_01KX5R0ZWY7CPE5KF8RSWXV1GP",
+  "last_status_changed_at": "2026-07-10T10:08:27Z",
+  "priority": "medium",
+  "relationships_out": [
+    {
+      "created_at": "2026-07-09T18:28:03Z",
+      "created_by": "agent:claude",
+      "note": "TB-13's payload-based dispatch (sessionId discriminator) is what admits hermes trace exports as claude",
+      "target_task_id": "task_01KX2JEP7PZRAK8CXY3ZN8YT6M",
+      "type": "related_to"
+    },
+    {
+      "created_at": "2026-07-09T18:28:03Z",
+      "created_by": "agent:claude",
+      "note": "TB-16 established requestId as the arm-isolability key; trace exports carry no requestId, so probe runs over trace data silently regress",
+      "target_task_id": "task_01KX2RNB10KDDBGSCNFJXBFSE6",
+      "type": "related_to"
+    }
+  ],
+  "reopened_count": 0,
+  "schema_version": 1,
+  "short_id": "TB-18",
+  "status": "review",
+  "tags": [
+    "hermes",
+    "integrity",
+    "schema-dispatch"
+  ],
+  "title": "hermes --format trace parses as claude but carries no usage or requestId; cache-hit signal silently fabricated",
+  "type": "bug",
+  "updated_at": "2026-07-10T10:09:00Z",
+  "urgency": null
+}
