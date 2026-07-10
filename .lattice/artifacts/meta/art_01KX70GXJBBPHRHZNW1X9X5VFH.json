@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-10T21:56:45Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "id": "art_01KX70GXJBBPHRHZNW1X9X5VFH",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KX70GXJBBPHRHZNW1X9X5VFH.md",
+    "size_bytes": 596
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": "Code review (Sonnet) found one high-confidence issue: session_signature folded call_count but not result.malformed, so an append landing as a malformed line would leave the fingerprint matching while ",
+  "tags": [],
+  "title": "Review findings",
+  "token_usage": null,
+  "type": "note"
+}
