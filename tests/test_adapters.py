@@ -34,10 +34,12 @@ def test_detect_skips_preamble_before_the_discriminating_line():
     assert len(list(replayed)) == 4  # nothing is consumed away
 
 
-def test_detect_raises_unknown_schema_on_a_codex_line():
+def test_detect_claims_a_codex_line():
+    """Was `..._raises_unknown_schema_on_a_codex_line`. TB-12 registered the parser;
+    `..._on_a_cursor_line` below still guards the UnknownSchema path."""
     lines = iter(['{"type":"session_meta","payload":{},"timestamp":"t"}\n'])
-    with pytest.raises(UnknownSchema):
-        detect_parser(lines)
+    parser, _ = detect_parser(lines)
+    assert type(parser) is CodexParser
 
 
 def test_detect_raises_unknown_schema_on_a_cursor_line():

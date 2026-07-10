@@ -123,6 +123,8 @@ def test_codex_parser_joins_function_call_to_output_on_call_id():
     assert call.input_chars == 13  # len('{"cmd":"pwd"}') -- from `arguments`
     assert call.output_chars == 2  # len("ok")
     assert call.no_result is False
+    # claude has two possible result locations and must say which; codex has one.
+    assert call.result_source == "payload"
 
 
 def test_codex_parser_joins_custom_tool_call_reading_input_not_arguments():

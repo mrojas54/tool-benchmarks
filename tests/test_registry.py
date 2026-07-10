@@ -50,11 +50,32 @@ def test_composed_adapter_parses_a_raw_claude_session(tmp_path):
     assert result.calls[0].project == "p"
 
 
-def test_composed_adapter_raises_unknown_schema_for_codex():
+def test_composed_adapter_parses_codex_end_to_end():
+    """Was `..._raises_unknown_schema_for_codex`. TB-12: the seam now carries codex."""
     ref = SessionRef(
         agent="codex", source="agentsview", project="p", session_id="codex:1", path=None
     )
-    adapter = ComposedAdapter(runner=lambda argv: _ok('{"type":"session_meta","payload":{}}\n'))
+    body = (
+        '{"type":"session_meta","payload":{"session_id":"c1"}}\n'
+        '{"type":"response_item","timestamp":"t","payload":'
+        '{"type":"function_call","name":"exec_command","arguments":"{}","call_id":"k1"}}\n'
+        '{"type":"response_item","timestamp":"t","payload":'
+        '{"type":"function_call_output","call_id":"k1","output":"ok"}}\n'
+    )
+    adapter = ComposedAdapter(runner=lambda argv: _ok(body))
+    result = adapter.parse(ref)
+    assert len(result.calls) == 1
+    assert result.calls[0].name == "exec_command"
+    assert result.calls[0].agent == "codex"  # ref fields flow through
+    assert result.calls[0].session_id == "c1"  # lifted from session_meta
+
+
+def test_composed_adapter_still_raises_unknown_schema_for_an_unregistered_schema():
+    """cursor remains unregistered; the terminal fallback must stay loud."""
+    ref = SessionRef(
+        agent="cursor", source="agentsview", project="p", session_id="cursor:1", path=None
+    )
+    adapter = ComposedAdapter(runner=lambda argv: _ok('{"role":"user","message":{}}\n'))
     with pytest.raises(UnknownSchema):
         adapter.parse(ref)
 

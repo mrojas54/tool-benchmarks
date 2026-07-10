@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from itertools import chain
 
-from toolbench.parsers import ClaudeParser, HermesTraceParser, TranscriptParser
+from toolbench.parsers import ClaudeParser, CodexParser, HermesTraceParser, TranscriptParser
 from toolbench.sources import (
     AgentsViewLoader,
     RawFileLoader,
@@ -25,11 +25,9 @@ from toolbench.sources import (
 from toolbench.transcript import ParseResult
 
 # Ordered by nothing in particular: detection asserts exactly one parser claims a
-# line, so order cannot silently decide a tie. `CodexParser` joins here in TB-12.
-# Ordered by nothing in particular: detection asserts exactly one parser claims a
 # line, so order cannot silently decide a tie. ClaudeParser and HermesTraceParser
-# partition on `version`. `CodexParser` joins here in TB-12.
-PARSERS: tuple[type[TranscriptParser], ...] = (ClaudeParser, HermesTraceParser)
+# partition on `version`; CodexParser partitions from both on top-level `type`.
+PARSERS: tuple[type[TranscriptParser], ...] = (ClaudeParser, HermesTraceParser, CodexParser)
 
 # Transcripts open with control/metadata preamble, so the discriminating record is
 # not guaranteed to be the first decodable line. Measured across all 2142

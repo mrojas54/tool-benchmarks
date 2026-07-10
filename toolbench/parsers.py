@@ -229,18 +229,171 @@ class ClaudeParser(TranscriptParser):
 
 
 class CodexParser(TranscriptParser):
-    """STUB (TB-12 RED). Deliberately inert so each test fails on its own assertion."""
+    """codex JSONL: `response_item` records joined on `payload.call_id` (TB-12).
+
+    A well-formed schema that shares nothing with claude's. Two calls shapes join
+    to two output shapes on `call_id` -- never `tool_use_id`, which is why a
+    claude-only parser once read 60 codex sessions as 2089 dropped calls and a
+    healthy zero.
+
+    Two fields are session-scoped rather than call-scoped and must be carried
+    forward as the transcript streams:
+
+      * `session_id` is stamped once on `session_meta`, not on every record.
+      * `model` lives on `turn_context` and may change between turns, so a call
+        is attributed to the last `turn_context` that preceded it.
+
+    codex reports token usage as per-TURN `token_count` events. A turn routinely
+    contains several tool calls, so those totals cannot be divided across calls
+    without inventing an attribution the producer never made. Usage is therefore
+    ABSENT_BY_SCHEMA (S29) -- a producer assertion, not a failure to look.
+
+    There is likewise no per-call error channel: codex encodes exit status inside
+    the output TEXT ("Process exited with code 1"), and `custom_tool_call.status`
+    is `completed` even for a tool that failed. `error` is always None rather than
+    guessed from prose.
+    """
 
     schema_tag: ClassVar[str] = "codex"
 
+    # Every top-level record kind codex emits. Disjoint from claude's
+    # user/assistant/system/summary, and codex never carries `sessionId`.
+    RECORD_TYPES: ClassVar[frozenset[str]] = frozenset(
+        {"session_meta", "response_item", "event_msg", "turn_context", "compacted"}
+    )
+
+    # Call shape -> the payload field holding its serialized input. The two shapes
+    # differ in that field alone: `function_call` says `arguments`, `custom_tool_call`
+    # says `input`. Reading `arguments` on both silently zeroes apply_patch's size.
+    CALL_INPUT_FIELD: ClassVar[dict[str, str]] = {
+        "function_call": "arguments",
+        "custom_tool_call": "input",
+    }
+    OUTPUT_TYPES: ClassVar[frozenset[str]] = frozenset(
+        {"function_call_output", "custom_tool_call_output"}
+    )
+
     @classmethod
     def claims_line(cls, entry: dict[str, object]) -> bool:
-        return False
+        # A positive declaration: codex names its record kind in top-level `type`
+        # and always pairs it with a `payload` object.
+        return entry.get("type") in cls.RECORD_TYPES and isinstance(
+            entry.get("payload"), dict
+        )
 
     def parse(
         self, lines: Iterable[str], *, agent: str, source: str, project: str
     ) -> ParseResult:
-        return ParseResult(calls=[], malformed=0)
+        """Join calls to their outputs on `call_id`, streaming.
+
+        Mirrors ClaudeParser's contract: malformed lines are counted and skipped,
+        never fatal (S5); a call with no matching output by end-of-input is kept
+        with `output_chars=0, no_result=True` rather than dropped (S6).
+        """
+        pending: dict[str, _PendingCall] = {}
+        calls: list[ToolCall] = []
+        malformed = 0
+        session_id = ""
+        model: str | None = None
+
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                malformed += 1
+                continue
+            if not isinstance(entry, dict):
+                malformed += 1
+                continue
+
+            payload = entry.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            kind = entry.get("type")
+
+            if kind == "session_meta":
+                found_id = payload.get("session_id")
+                if isinstance(found_id, str):
+                    session_id = found_id
+                continue
+
+            if kind == "turn_context":
+                found_model = payload.get("model")
+                if isinstance(found_model, str):
+                    model = found_model
+                continue
+
+            if kind != "response_item":
+                continue
+
+            ts = entry.get("timestamp")
+            ts_str = ts if isinstance(ts, str) else ""
+            payload_type = payload.get("type")
+            call_id = payload.get("call_id")
+            if not isinstance(call_id, str):
+                continue
+
+            if payload_type in self.CALL_INPUT_FIELD:
+                name = payload.get("name")
+                if not isinstance(name, str):
+                    continue
+                input_field = self.CALL_INPUT_FIELD[payload_type]
+                pending[call_id] = _PendingCall(
+                    name=name,
+                    input_chars=result_len(payload.get(input_field)),
+                    session_id=session_id,
+                    ts=ts_str,
+                    usage=None,
+                    usage_provenance=UsageProvenance.ABSENT_BY_SCHEMA,
+                    model=model,
+                )
+            elif payload_type in self.OUTPUT_TYPES and call_id in pending:
+                pending_call = pending.pop(call_id)
+                calls.append(
+                    ToolCall(
+                        agent=agent,
+                        source=source,
+                        project=project,
+                        name=pending_call.name,
+                        input_chars=pending_call.input_chars,
+                        output_chars=result_len(payload.get("output")),
+                        session_id=pending_call.session_id,
+                        ts=pending_call.ts,
+                        usage=pending_call.usage,
+                        usage_provenance=pending_call.usage_provenance,
+                        duration_ms=None,
+                        error=None,
+                        model=pending_call.model,
+                        result_source="payload",
+                    )
+                )
+
+        # S6: an unmatched call at EOF is kept, never dropped.
+        for pending_call in pending.values():
+            calls.append(
+                ToolCall(
+                    agent=agent,
+                    source=source,
+                    project=project,
+                    name=pending_call.name,
+                    input_chars=pending_call.input_chars,
+                    output_chars=0,
+                    session_id=pending_call.session_id,
+                    ts=pending_call.ts,
+                    usage=pending_call.usage,
+                    usage_provenance=pending_call.usage_provenance,
+                    duration_ms=None,
+                    error=None,
+                    model=pending_call.model,
+                    no_result=True,
+                    result_source=None,
+                )
+            )
+
+        return ParseResult(calls=calls, malformed=malformed)
 
 
 class HermesTraceParser(ClaudeParser):
