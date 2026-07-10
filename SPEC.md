@@ -130,10 +130,9 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   imports nothing third-party; the project is uv-managed (`pyproject.toml`
   + `uv.lock`, empty runtime deps, `dev` group `ruff`/`mypy`/`pytest`).
 - **S21 — entry points.** Runnable as `uv run python -m toolbench.passive`
-  and `… toolbench.probe`; tests via `uv run python -m unittest discover
-  tests`.
+  and `… toolbench.probe`; tests via `uv run pytest -q` (S31).
 - **S22 — strict gate.** `uv run ruff check .`, `uv run mypy --strict
-  toolbench tests`, and the full unittest suite are green before any PR.
+  toolbench tests`, and the full pytest suite are green before any PR.
 - **S23 — error handling.** Empty session selection → clear message,
   exit 0. Missing selected raw root → exit 1 for a strict source; but
   `--agent all --index-source auto` continues with other sources and
@@ -165,6 +164,12 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   prose, or reasoning in the arm turn keeps the match and the context-token
   columns, and blanks usage (`—`). Only a fresh session recovers the number
   (TB-16).
+- **S31 — gate collects every test.** The documented and enforced fast-suite
+  command is `uv run pytest -q`, not `uv run python -m unittest discover
+  tests`. `unittest.TestLoader.discover` only finds `unittest.TestCase`
+  methods; it is blind to module-level `test_*` functions, which pytest
+  collects uniformly alongside `TestCase` methods. A test added as a bare
+  module-level function cannot silently escape the gate (TB-19).
 
 ## Schema dispatch — `toolbench/adapters.py` + `toolbench/registry.py`
 

@@ -28,8 +28,10 @@ raw roots + AgentsView exports
 
 ## Test split
 
-- **`test`** — `uv run python -m unittest discover tests` (hermetic,
-  stdlib, fake `agentsview` runner, no `~/.claude` access; ≤60s).
+- **`test`** — `uv run pytest -q` (hermetic, fake `agentsview` runner, no
+  `~/.claude` access; ≤60s). Collects `unittest.TestCase` methods and
+  module-level `test_*` functions uniformly — `unittest discover` silently
+  missed the latter and is no longer the documented command (S31 / TB-19).
 - **`test:full`** — the S25 acceptance-smoke commands against real corpus /
   live daemon; operator-run post-merge.
 
@@ -46,11 +48,12 @@ parallel (T2, T3), then the two consumers (T4, T5), then docs + gate (T6).
 | **T4 — `passive.py` reducer + report + CLI** | incremental reducer, four report sections + provenance, full CLI, error/exit contract | S11, S12, S13, S14, S15, S19, S23 | T2, T3 |
 | **T5 — `probe.py` + `active-probes.md`** | 5-file corpus under `tools/` (done), `_V2` sentinels + tool-name verify, comparison table + #8376 seeds → `reports/` | S16, S17, S18 | T2 |
 | **T6 — README + strict gate** | README (agents/targets/run/index/metrics), then ruff + mypy --strict + full suite green; PR | S22 | T4, T5 |
+| **TB-19 — pytest as the documented gate** | Replace `unittest discover` (silently missed 37/220 module-level tests) with `uv run pytest -q` as the gate command in README/EVALUATION/BUILDPLAN/AGENTS; `testpaths` pytest config; regression test pinning the collection defect | S31 | T6 |
 
 ## Checkpoint sequence
 
-1. **Skeleton (T1)** — `uv run python -m unittest discover tests` green on
-   the record + normalizer; `pyproject.toml` shows empty runtime deps.
+1. **Skeleton (T1)** — `uv run pytest -q` green on the record + normalizer;
+   `pyproject.toml` shows empty runtime deps.
 2. **Substrate (T2 ∥ T3)** — parser joins both key/payload shapes; sources
    page AgentsView via the fake runner. The **join-key on real data**
    (operator checkpoint #1) is de-risked here by the block-local fixture.

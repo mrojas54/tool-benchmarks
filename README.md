@@ -135,9 +135,12 @@ multi-agent source layer, the passive analyzer, and the active probes.
 Post-merge hardening covers **TB-8** (subagent `--project` filter), **TB-9**
 (callout denominators), **TB-10** (non-UTF-8 / non-transcript exports),
 **TB-11** (Hermes SQLite direct read — discovery still via AgentsView),
-probe isolability (**S26** / TB-14–16), and schema dispatch (**S27–S28** /
-TB-13). The strict gate (`ruff`, `mypy --strict`, `unittest`) is green —
-**213** tests passing (1 skipped when the live hermes archive is absent).
+probe isolability (**S26** / TB-14–16), schema dispatch (**S27–S28** /
+TB-13), and the gate itself running every test (**S31** / TB-19: the
+documented command is `pytest`, not `unittest discover`, which silently
+missed 37 module-level tests). The strict gate (`ruff`, `mypy --strict`,
+`pytest`) is green — **215** tests passing (1 skipped when the live hermes
+archive is absent).
 
 Source-of-truth documents:
 
@@ -203,7 +206,7 @@ uv run python -m toolbench.probe --session /path/to/probe-session.jsonl --out re
 uv run python -m toolbench.probe --allow-seeded   # baseline table only; measures nothing
 
 # Tests
-uv run python -m unittest discover tests
+uv run pytest -q
 ```
 
 ### Probe scoring pitfalls
@@ -274,4 +277,6 @@ zero count omits the top-offender clause.
 ## Quality gate
 
 Before any PR: `uv run ruff check .`, `uv run mypy --strict toolbench tests`,
-and the full unittest suite must be green.
+and the full `pytest -q` suite must be green (S31 — the documented command
+must collect every test, including module-level `test_*` functions that
+`unittest discover` silently misses).

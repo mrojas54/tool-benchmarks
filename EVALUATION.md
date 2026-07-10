@@ -12,9 +12,12 @@ One row per SPEC criterion, each tagged by how it is verified:
 
 ## Harness commands
 
-- **`test` (fast, hermetic, parallel, ≤60s)** — `uv run python -m unittest
-  discover tests`. The delegators' inner-loop clock. Pure stdlib, no daemon,
-  no `~/.claude` access; fixtures + fake `agentsview` runner only.
+- **`test` (fast, hermetic, parallel, ≤60s)** — `uv run pytest -q`. The
+  delegators' inner-loop clock. No daemon, no `~/.claude` access; fixtures +
+  fake `agentsview` runner only. Collects `unittest.TestCase` methods and
+  module-level `test_*` functions uniformly (S31) — `unittest discover`
+  silently missed the latter (37 of 220 tests, TB-19) and is no longer the
+  documented command.
 - **`test:full` (slow, real corpus / daemon)** — the S25 smoke commands run
   against a real `~/.claude/projects` and, where healthy, the live
   AgentsView daemon. Not hermetic; operator-run.
@@ -55,6 +58,7 @@ One row per SPEC criterion, each tagged by how it is verified:
 | S26 | requestId-keyed isolability; prose/thinking/batch blank usage | `autonomous` | `test` (prose + pooled fixtures) |
 | S27 | schema dispatch (`detect_parser`); UnknownSchema / AmbiguousSchema | `autonomous` | `test` (`test_adapters` / `test_registry`) |
 | S28 | no default parser; unrecognized schemas skip loudly | `autonomous` | `test` (codex/cursor → skipped_roots) |
+| S31 | gate command collects every test (`TestCase` methods + module-level fns) | `autonomous` | `test` (`test_gate_completeness.py`) |
 
 ## Operator post-merge smoke checkpoints (human-driven)
 
