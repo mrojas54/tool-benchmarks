@@ -135,13 +135,16 @@ multi-agent source layer, the passive analyzer, and the active probes.
 Post-merge hardening covers **TB-8** (subagent `--project` filter), **TB-9**
 (callout denominators), **TB-10** (non-UTF-8 / non-transcript exports),
 **TB-11** (Hermes SQLite direct read — discovery still via AgentsView),
-probe isolability (**S26** / TB-14–16), and schema dispatch (**S27–S28** /
-TB-13). The strict gate (`ruff`, `mypy --strict`, `unittest`) is green —
-**213** tests passing (1 skipped when the live hermes archive is absent).
+probe isolability (**S26** / TB-14–16), schema dispatch (**S27–S28** /
+TB-13), and usage provenance (**S29–S30** / TB-18: producer-aware
+`UsageProvenance` on every `ToolCall`, and `probe.py` refusing corpora it
+cannot key to the billing unit). The strict gate (`ruff`, `mypy --strict`,
+`unittest`) is green — **247** tests passing, 1 skipped when the live hermes
+archive is absent.
 
 Source-of-truth documents:
 
-- [`SPEC.md`](SPEC.md) — 28 numbered acceptance criteria (S1–S28).
+- [`SPEC.md`](SPEC.md) — 30 numbered acceptance criteria (S1–S30).
 - [`EVALUATION.md`](EVALUATION.md) — verification map for every criterion.
 - [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the T1–T6 tickets.
 - [`docs/2026-07-07-tool-benchmarks-design.md`](docs/2026-07-07-tool-benchmarks-design.md)
