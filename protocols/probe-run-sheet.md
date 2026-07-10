@@ -202,6 +202,12 @@ number for that arm is gone, and only a fresh session can recover it. An arm is
 spent once its call is in the transcript — re-running it adds a second match
 rather than replacing the first, which is the same reason turn 0 exists.
 
+When both usage cells *are* filled, do **not** treat them as a fair comparison.
+The bash arm's sentinel (and any Bash `description` you typed) is billed into
+bash `output_tokens` only — roughly 15–20 tokens of instrumentation that the
+tool arm cannot carry (TB-17). Prefer the context-token columns for ranking
+until that ticket lands a stated correction.
+
 ## Deviation from `active-probes.md`
 
 That protocol says the bash arm uses `grep`/`find`. This sheet uses `rg`/`fd`,
