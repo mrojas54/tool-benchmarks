@@ -118,6 +118,36 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   a typed tally `(skipped K: <reason>=<count>, …)` rather than joining every id. A
   report whose skip line its own author could not tally is the defect this closes
   (TB-21).
+- **S36 — the Summary carries a corpus fingerprint.** The corpus is not stable
+  between runs: claude-mem observer transcripts age out of a ~30-day sliding
+  window *mid-scan*, so its tail deletes itself at roughly re-run cadence, and the
+  live session appends calls while it is read. Two reports were therefore not
+  diffable — a delta could not be attributed to a code change. The Summary now
+  emits `Corpus fingerprint: <digest> (<N> sessions scanned)`, a `sha256` (16 hex)
+  over a sorted set of per-session **signatures**, one per *scanned* session
+  (`session_signature(id, call_count)`). The basis is the scanned set — the
+  sessions that produced the numbers — not the discovered set, which could match
+  while transcripts slid `scanned → skipped`. The signature folds both drift
+  mechanisms: identity catches a vanished tail (an id leaves the set) and call
+  count catches an append (transcripts are append-only, so count is an exact proxy
+  for content growth). An id-only digest would match across an append and let a
+  reader mis-attribute the delta to code — the one outcome the ticket forbids. The
+  fingerprint is order-independent (sorted before hashing) so paging order never
+  moves it, and the count travels alongside so a collision cannot hide a size
+  change (TB-22).
+- **S37 — `--freeze <manifest>` pins the corpus for reproducibility.** Absent the
+  manifest, the first `--freeze` run discovers as usual and writes the discovered
+  ref list once (`toolbench/freeze.py`, JSON, `SessionRef` round-tripped, an
+  identity fingerprint over the discovered ids stored alongside); the Summary notes
+  `Corpus frozen to: <path>`. When the manifest exists, the run **replays** it:
+  live discovery is bypassed and the frozen refs are scanned directly, so the input
+  set cannot drift. Refs that no longer load — a raw file gone or an
+  `agentsview export` that reports `source file not found`, both raising the typed
+  `MissingSourceExport` — are counted as `Replaying frozen corpus: <path>
+  (<V> vanished since freeze)`, with their ids listed under `--verbose` via the S35
+  skip detail. Over an unchanged corpus a replay is byte-identical (the fingerprint
+  line included); when the tail has moved, the vanished count names the mechanism
+  rather than letting the delta pass as code (TB-22).
 
 ## Active probes — `toolbench/probe.py` + `protocols/active-probes.md`
 
