@@ -1,0 +1,21 @@
+{
+  "created_at": "2026-07-10T16:34:22Z",
+  "created_by": "agent:claude",
+  "custom_fields": {
+    "url": "https://github.com/mrojas54/tool-benchmarks/pull/28"
+  },
+  "id": "art_01KX6E2KR8Q5R0JM5RTG4B30YZ",
+  "model": null,
+  "payload": {
+    "content_type": null,
+    "file": null,
+    "size_bytes": null
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": "TB-21: Summary reconciles discovery; typed histogram",
+  "tags": [],
+  "title": "PR #28",
+  "token_usage": null,
+  "type": "reference"
+}

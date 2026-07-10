@@ -479,7 +479,7 @@ class RenderReportTests(unittest.TestCase):
             self._reducer(),
             index_source="auto",
             fallback_reason=None,
-            skipped_roots=[],
+            skips=[],
             include_subagents=True,
             since_note=None,
         )
@@ -498,18 +498,21 @@ class RenderReportTests(unittest.TestCase):
             self._reducer(),
             index_source="raw",
             fallback_reason="agentsview exited 1: daemon down",
-            skipped_roots=["/nonexistent"],
+            skips=[SkipRecord("nonexistent", "claude", SkipReason.MISSING_SOURCE, "/nonexistent")],
             include_subagents=False,
             since_note="2026-07-01",
         )
         for expected in (
             "Index source: raw",
-            "Sessions scanned:",
+            "Sessions discovered:",
+            "scanned:",
+            "skipped:",
+            "Skipped by reason:",
+            "missing_source: 1",
             "Tool calls joined:",
             "Malformed lines:",
             "Subagents included: no",
             "AgentsView fallback reason: agentsview exited 1: daemon down",
-            "/nonexistent",
             "--since is file-mtime based",
         ):
             self.assertIn(expected, report)
@@ -535,7 +538,7 @@ class RenderReportTests(unittest.TestCase):
             reducer,
             index_source="auto",
             fallback_reason=None,
-            skipped_roots=[],
+            skips=[],
             include_subagents=True,
             since_note=None,
         )
@@ -590,7 +593,7 @@ class RenderReportTests(unittest.TestCase):
             reducer,
             index_source="auto",
             fallback_reason=None,
-            skipped_roots=[],
+            skips=[],
             include_subagents=True,
             since_note=None,
         )
@@ -613,7 +616,7 @@ class RenderReportTests(unittest.TestCase):
             reducer,
             index_source="auto",
             fallback_reason=None,
-            skipped_roots=[],
+            skips=[],
             include_subagents=True,
             since_note=None,
         )
@@ -646,7 +649,9 @@ class MainExitContractTests(unittest.TestCase):
         with redirect_stdout(out):
             code = main(["--index-source", "auto"], runner=runner, root="/definitely/not/a/real/root")
         self.assertEqual(code, 0)
-        self.assertIn("skipped roots", out.getvalue())
+        message = out.getvalue()
+        self.assertIn("no sessions matched", message)
+        self.assertIn("skipped 1: missing_source=1", message)
 
     def test_end_to_end_raw_report(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -743,7 +748,7 @@ class NonUtf8SessionTests(unittest.TestCase):
         self.assertEqual(code, 0)
         report = out.getvalue()
         self.assertIn("## Summary", report)
-        self.assertIn("Sessions scanned: 2", report)
+        self.assertIn("scanned: 2", report)
 
     def test_export_decode_error_demotes_session_to_skipped_root(self) -> None:
         # Guards the injected-runner seam: a caller supplying a strict-decode
@@ -765,13 +770,15 @@ class NonUtf8SessionTests(unittest.TestCase):
             ]
         )
         out = io.StringIO()
-        with redirect_stdout(out):
-            code = main(["--index-source", "agentsview"], runner=runner)
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            code = main(["--index-source", "agentsview", "--verbose"], runner=runner)
         self.assertEqual(code, 0)
         report = out.getvalue()
         self.assertIn("## Summary", report)
+        self.assertIn("scanned: 1", report)
+        self.assertIn("decode_error: 1", report)
+        # the skipped id is available under --verbose
         self.assertIn("bad-session", report)
-        self.assertIn("Sessions scanned: 1", report)
 
 
 class NonTranscriptExportTests(unittest.TestCase):
@@ -801,12 +808,14 @@ class NonTranscriptExportTests(unittest.TestCase):
             ]
         )
         out = io.StringIO()
-        with redirect_stdout(out):
-            code = main(["--index-source", "agentsview"], runner=runner)
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            code = main(["--index-source", "agentsview", "--verbose"], runner=runner)
         self.assertEqual(code, 0)
         report = out.getvalue()
+        self.assertIn("non_transcript: 1", report)
+        self.assertIn("scanned: 1", report)
+        # the skipped id is available under --verbose
         self.assertIn("cowork-1", report)
-        self.assertIn("Sessions scanned: 1", report)
         # The 1 malformed line is the fixture's own; none of the binary leaks in.
         self.assertIn("Malformed lines: 1", report)
 
@@ -1000,7 +1009,7 @@ class CacheNoteRenderTests(unittest.TestCase):
             reducer,
             index_source="raw",
             fallback_reason=None,
-            skipped_roots=[],
+            skips=[],
             include_subagents=True,
             since_note=None,
         )
@@ -1053,7 +1062,7 @@ class SessionGrainCacheCaveatRenderTests(unittest.TestCase):
             reducer,
             index_source="raw",
             fallback_reason=None,
-            skipped_roots=[],
+            skips=[],
             include_subagents=True,
             since_note=None,
         )
@@ -1099,7 +1108,7 @@ class SessionGrainCacheCaveatRenderTests(unittest.TestCase):
             reducer,
             index_source="raw",
             fallback_reason=None,
-            skipped_roots=[],
+            skips=[],
             include_subagents=True,
             since_note=None,
         )
@@ -1137,7 +1146,7 @@ class SessionGrainCacheCaveatRenderTests(unittest.TestCase):
             reducer,
             index_source="raw",
             fallback_reason=None,
-            skipped_roots=[],
+            skips=[],
             include_subagents=True,
             since_note=None,
         )
@@ -1145,6 +1154,108 @@ class SessionGrainCacheCaveatRenderTests(unittest.TestCase):
         row = next(line for line in leaderboard.splitlines() if "| hermes |" in line)
         cache_note = row.rstrip("|").rsplit("|", 1)[-1].strip()
         self.assertEqual(cache_note, "n/a")
+
+
+class DiscoveryReconciliationRenderTests(unittest.TestCase):
+    """TB-21: the Summary reconciles discovery and renders skips as a per-reason
+    histogram keyed on the typed SkipReason (S34), not a one-line 1600-entry blob."""
+
+    def _reducer(self, scanned: int) -> Reducer:
+        reducer = Reducer()
+        for _ in range(scanned):
+            reducer.absorb("claude-code", ParseResult(calls=[make_call()], malformed=0))
+        return reducer
+
+    def _summary(
+        self, reducer: Reducer, skips: list[SkipRecord], *, verbose: bool = False
+    ) -> str:
+        report = render_report(
+            reducer,
+            index_source="agentsview",
+            fallback_reason=None,
+            skips=skips,
+            include_subagents=True,
+            since_note=None,
+            verbose=verbose,
+        )
+        return report[report.index("## Summary") :]
+
+    def test_summary_reconciles_discovered_scanned_skipped(self) -> None:
+        skips = [
+            SkipRecord("a", "claude", SkipReason.MISSING_SOURCE, "x"),
+            SkipRecord("b", "codex", SkipReason.UNKNOWN_SCHEMA, "y"),
+            SkipRecord("c", "cursor", SkipReason.UNKNOWN_SCHEMA, "z"),
+        ]
+        summary = self._summary(self._reducer(2), skips)
+        self.assertIn("Sessions discovered: 5 / scanned: 2 / skipped: 3", summary)
+
+    def test_histogram_lists_each_reason_sorted_by_count_desc(self) -> None:
+        skips = [
+            SkipRecord("a", "claude", SkipReason.MISSING_SOURCE, "x"),
+            SkipRecord("b", "codex", SkipReason.UNKNOWN_SCHEMA, "y"),
+            SkipRecord("c", "cursor", SkipReason.UNKNOWN_SCHEMA, "z"),
+        ]
+        summary = self._summary(self._reducer(1), skips)
+        self.assertIn("Skipped by reason:", summary)
+        self.assertIn("unknown_schema: 2", summary)
+        self.assertIn("missing_source: 1", summary)
+        # the actionable bucket (2) outranks the dead-index bucket (1)
+        self.assertLess(summary.index("unknown_schema: 2"), summary.index("missing_source: 1"))
+
+    def test_no_histogram_when_nothing_skipped(self) -> None:
+        summary = self._summary(self._reducer(1), [])
+        self.assertNotIn("Skipped by reason:", summary)
+        self.assertIn("Sessions discovered: 1 / scanned: 1 / skipped: 0", summary)
+
+    def test_old_single_line_skipped_roots_blob_is_gone(self) -> None:
+        skips = [SkipRecord("a", "claude", SkipReason.MISSING_SOURCE, "x")]
+        summary = self._summary(self._reducer(1), skips)
+        self.assertNotIn("Skipped roots:", summary)
+
+    def test_individual_ids_appear_only_under_verbose(self) -> None:
+        skips = [SkipRecord("sess-xyz", "codex", SkipReason.UNKNOWN_SCHEMA, "no parser claimed")]
+        default = self._summary(self._reducer(1), skips, verbose=False)
+        self.assertNotIn("sess-xyz", default)
+        verbose = self._summary(self._reducer(1), skips, verbose=True)
+        self.assertIn("Skipped sessions (detail)", verbose)
+        self.assertIn("sess-xyz", verbose)
+        self.assertIn("no parser claimed", verbose)
+
+
+class DiscoveryReconciliationMainTests(unittest.TestCase):
+    """TB-21 end-to-end: a scanned session, a dead index entry, and an unparseable
+    session must reconcile in the Summary, with reasons typed and ids off by default."""
+
+    def test_main_report_reconciles_a_mixed_discovery(self) -> None:
+        good = (FIXTURES / "sample.jsonl").read_text()
+        payload = {
+            "sessions": [
+                {"id": "good-1", "project": "p", "agent": "claude"},
+                {"id": "dead-1", "project": "p", "agent": "claude"},
+                {"id": "cursor-1", "project": "p", "agent": "cursor"},
+            ],
+            "next_cursor": "",
+            "total": 3,
+        }
+        runner = FakeRunner(
+            [
+                _completed(stdout=json.dumps(payload)),
+                _completed(stdout=good),
+                _completed(returncode=1, stderr="fatal: source file not found: /x/dead-1.jsonl"),
+                _completed(stdout='{"role":"user","message":{}}\n'),
+            ]
+        )
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = main(["--index-source", "agentsview"], runner=runner)
+        self.assertEqual(code, 0)
+        report = out.getvalue()
+        self.assertIn("Sessions discovered: 3 / scanned: 1 / skipped: 2", report)
+        self.assertIn("missing_source: 1", report)
+        self.assertIn("unknown_schema: 1", report)
+        # the skipped session ids stay out of the default report
+        self.assertNotIn("dead-1", report)
+        self.assertNotIn("cursor-1", report)
 
 
 if __name__ == "__main__":

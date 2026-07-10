@@ -273,13 +273,6 @@ def tally_skips(skips: Iterable[SkipRecord]) -> dict[SkipReason, int]:
     return dict(Counter(s.reason for s in skips))
 
 
-def _skip_detail_line(skip: SkipRecord) -> str:
-    """Flatten one skip to the legacy `<id>: <detail>` prose (root-level skips
-    carry no id). Kept only for the current single-line render; TB-21 replaces it
-    with a per-reason histogram keyed on `skip.reason`."""
-    return f"{skip.session_id}: {skip.detail}" if skip.session_id else skip.detail
-
-
 @dataclass
 class CliArgs:
     """Parsed CLI flags (S12)."""
@@ -395,9 +388,10 @@ def render_report(
     *,
     index_source: str,
     fallback_reason: str | None,
-    skipped_roots: list[str],
+    skips: list[SkipRecord],
     include_subagents: bool,
     since_note: str | None,
+    verbose: bool = False,
 ) -> str:
     """Render the five-section report (S14) with provenance (S15)."""
     lines: list[str] = ["# Tool Usage Report", ""]
@@ -496,17 +490,47 @@ def render_report(
     lines.append("## Summary")
     lines.append("")
     lines.append(f"- Index source: {index_source}")
-    lines.append(f"- Sessions scanned: {reducer.sessions_scanned}")
+    # Reconcile discovery so `scanned` is never mistaken for the corpus size: a
+    # discovered session either scanned or skipped, and every skip is one SkipRecord
+    # (TB-21). `discovered` is derived, not a separate count that could drift.
+    scanned = reducer.sessions_scanned
+    skipped = len(skips)
+    lines.append(
+        f"- Sessions discovered: {scanned + skipped} / scanned: {scanned} / skipped: {skipped}"
+    )
+    if skips:
+        # Keyed on the typed SkipReason (S34), not a substring scan of prose. A dead
+        # index entry (missing_source) and a parser gap (unknown_schema) are counted
+        # in separate buckets so the actionable one is never buried under the rest.
+        lines.append("- Skipped by reason:")
+        for reason, count in _reasons_by_count(skips):
+            lines.append(f"  - {reason.value}: {count}")
     lines.append(f"- Tool calls joined: {reducer.calls_joined}")
     lines.append(f"- Malformed lines: {reducer.malformed_total}")
     lines.append(f"- Subagents included: {'yes' if include_subagents else 'no'}")
     lines.append(f"- AgentsView fallback reason: {fallback_reason if fallback_reason else 'none'}")
-    lines.append(f"- Skipped roots: {'; '.join(skipped_roots) if skipped_roots else 'none'}")
     lines.append("- Note: --since is file-mtime based.")
     if since_note:
         lines.append(f"- --since value used: {since_note}")
 
+    if verbose and skips:
+        # Individual ids live here, never in the default report -- 1600 ids on one
+        # line is what made the pre-TB-21 report impossible to tally (TB-21).
+        lines.append("")
+        lines.append("### Skipped sessions (detail)")
+        lines.append("")
+        for skip in skips:
+            ident = skip.session_id or "(root)"
+            lines.append(f"- {ident} [{skip.agent}] {skip.reason.value}: {skip.detail}")
+
     return "\n".join(lines) + "\n"
+
+
+def _reasons_by_count(skips: list[SkipRecord]) -> list[tuple[SkipReason, int]]:
+    """Skip reasons highest-count-first; ties break on the reason's value so the
+    histogram is deterministic."""
+    tally = tally_skips(skips)
+    return sorted(tally.items(), key=lambda kv: (-kv[1], kv[0].value))
 
 
 def main(
@@ -543,11 +567,11 @@ def main(
         reducer.absorb(ref.agent, filtered)
 
     if reducer.calls_joined == 0:
-        suffix = (
-            f" (skipped roots: {'; '.join(_skip_detail_line(s) for s in skips)})"
-            if skips
-            else ""
-        )
+        if skips:
+            tally = ", ".join(f"{r.value}={c}" for r, c in _reasons_by_count(skips))
+            suffix = f" (skipped {len(skips)}: {tally})"
+        else:
+            suffix = ""
         print(f"toolbench.passive: no sessions matched the given selection.{suffix}")
         return 0
 
@@ -555,9 +579,10 @@ def main(
         reducer,
         index_source=args.index_source,
         fallback_reason=fallback_reason,
-        skipped_roots=[_skip_detail_line(s) for s in skips],
+        skips=skips,
         include_subagents=not args.exclude_subagents,
         since_note=args.since,
+        verbose=args.verbose,
     )
     if args.out:
         Path(args.out).write_text(report)

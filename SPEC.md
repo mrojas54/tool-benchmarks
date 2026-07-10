@@ -104,6 +104,20 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   roots (including per-session `NonTranscriptExport` / decode failures, each
   now carrying a typed `SkipReason` — S34); it notes `--since` is file-mtime
   based.
+- **S35 — the Summary reconciles discovery.** `scanned` is not the corpus
+  size and must never read as it. The Summary opens with
+  `Sessions discovered: D / scanned: M / skipped: K`, where `D = M + K` is
+  derived (`M = reducer.sessions_scanned`, `K = len(skips)`) — never a third
+  count that could drift. When any session skipped, a `Skipped by reason:`
+  histogram follows, one `<reason>: <count>` line per `SkipReason` (S34) present,
+  sorted count-descending with ties broken on the reason's value, zero-count
+  reasons omitted. The pre-TB-21 single `Skipped roots:` line — 1639 ids joined by
+  `; ` — is gone; individual session ids move behind `--verbose`, which appends a
+  `### Skipped sessions (detail)` subsection (`<id> [<agent>] <reason>: <detail>`,
+  root-level skips shown as `(root)`). The empty-selection message likewise reports
+  a typed tally `(skipped K: <reason>=<count>, …)` rather than joining every id. A
+  report whose skip line its own author could not tally is the defect this closes
+  (TB-21).
 
 ## Active probes — `toolbench/probe.py` + `protocols/active-probes.md`
 
