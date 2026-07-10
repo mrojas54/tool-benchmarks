@@ -51,6 +51,8 @@ class AgentStats:
     input_tokens: int = 0
     errors: int = 0
     no_result: int = 0
+    sessions_with_cache_data: int = 0  # S32: session-grain, counted once per session
+    sessions_with_cache_hit: int = 0
 
 
 @dataclass
@@ -95,6 +97,13 @@ class Reducer:
         self.malformed_total += result.malformed
         agent_stats = self.agents.setdefault(agent, AgentStats())
         agent_stats.sessions += 1
+
+        # S32: session-grain, incremented once per session here -- never inside
+        # the per-call loop below, which would fabricate a per-call denominator.
+        if result.session_cache_read_tokens is not None:
+            agent_stats.sessions_with_cache_data += 1
+            if result.session_cache_read_tokens > 0:
+                agent_stats.sessions_with_cache_hit += 1
 
         prev_name: str | None = None
         prev_bad = False
