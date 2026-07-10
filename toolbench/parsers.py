@@ -246,9 +246,11 @@ class CodexParser(TranscriptParser):
       * `model` lives on `turn_context` and may change between turns, so a call
         is attributed to the last `turn_context` that preceded it.
 
-    `web_search_call` is deliberately unclaimed: it carries no `call_id` and has
-    no matching output record, so it cannot be joined by this parser's key. It is
-    a real tool call that this parser does not report, tracked separately.
+    `web_search_call` is not JOINED as a call: it carries no `call_id` and has no
+    matching output record, so this parser's key cannot reach it. But it is a real
+    tool call, so it is counted in `ParseResult.unjoinable` by kind (S38, TB-24) and
+    surfaced in the report Summary -- named, not silently dropped, and not faked into
+    a `no_result` orphan that would inflate codex's call count.
 
     codex reports token usage as per-TURN `token_count` events. A turn routinely
     contains several tool calls, so those totals cannot be divided across calls
@@ -291,6 +293,12 @@ class CodexParser(TranscriptParser):
         "tool_search_output": "tools",
     }
 
+    # Record kinds that are real tool calls but carry no `call_id` and have no
+    # paired output, so this parser's join key cannot reach them. Counted as
+    # `ParseResult.unjoinable` rather than dropped, so codex's ~4% web-search
+    # undercount is named in the Summary, not silently absent (S38, TB-24).
+    UNJOINABLE_TYPES: ClassVar[frozenset[str]] = frozenset({"web_search_call"})
+
     @classmethod
     def claims_line(cls, entry: dict[str, object]) -> bool:
         # A positive declaration: codex names its record kind in top-level `type`
@@ -310,6 +318,7 @@ class CodexParser(TranscriptParser):
         """
         pending: dict[str, _PendingCall] = {}
         calls: list[ToolCall] = []
+        unjoinable: dict[str, int] = {}
         malformed = 0
         session_id = ""
         model: str | None = None
@@ -356,6 +365,14 @@ class CodexParser(TranscriptParser):
             ts = entry.get("timestamp")
             ts_str = ts if isinstance(ts, str) else ""
             payload_type = payload.get("type")
+
+            if isinstance(payload_type, str) and payload_type in self.UNJOINABLE_TYPES:
+                # A real tool call with no `call_id` and no paired output. Count it
+                # by kind before the join guard below (which would silently drop it)
+                # so the Summary can name the gap rather than report a silent zero.
+                unjoinable[payload_type] = unjoinable.get(payload_type, 0) + 1
+                continue
+
             call_id = payload.get("call_id")
             if not isinstance(call_id, str):
                 continue
@@ -418,7 +435,7 @@ class CodexParser(TranscriptParser):
                 )
             )
 
-        return ParseResult(calls=calls, malformed=malformed)
+        return ParseResult(calls=calls, malformed=malformed, unjoinable=unjoinable)
 
 
 class HermesTraceParser(ClaudeParser):

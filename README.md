@@ -83,7 +83,9 @@ matched nothing, and reported a healthy zero. `codex` is now claimed by
 `function_call`, `custom_tool_call`, and `tool_search_call` — on `payload.call_id`
 (S33 / TB-12). `cursor` still lands in `skipped_roots`, pending a parser of its own.
 codex's `web_search_call` has no `call_id` and no output record, so it is not
-joined and not reported (TB-24).
+joined as a call; instead it is counted in `ParseResult.unjoinable` and named in the
+Summary (`Unjoinable tool records`), so codex's ~4% web-search undercount is surfaced
+rather than silently absent (S38 / TB-24).
 
 - **`transcript.py`** — the schema-neutral records: `ToolCall` (with
   `UsageProvenance`), `ParseResult` (optional `session_cache_read_tokens`),
@@ -297,10 +299,12 @@ moving, not your code (TB-22).
 
 - **`Corpus fingerprint: <digest> (<N> sessions scanned)`** (always emitted in the
   Summary, S36) is a hash over the *scanned* set — the sessions that produced the
-  numbers. It folds each session's identity **and** its call count, so both a
-  vanished tail (an id leaves the set) and an append (a session grows) move it.
-  **Two reports whose fingerprints match are diffable; if they differ, do not
-  attribute the delta to code** until you know why the input set moved.
+  numbers. It folds each session's identity **and** every content count the Summary
+  renders (calls, malformed lines, unjoinable records), so a vanished tail (an id
+  leaves the set) and any kind of append (a new call, a malformed line, or a
+  `web_search_call`) all move it. **Two reports whose fingerprints match are
+  diffable; if they differ, do not attribute the delta to code** until you know why
+  the input set moved.
 - **`--freeze <manifest>`** (S37) makes a before/after actually reproducible. The
   first run writes the discovered ref list to the manifest; every later run
   *replays* it — scanning exactly the frozen set instead of re-discovering — and
@@ -363,7 +367,7 @@ rate and never mixed into `cache_assisted`.
 | `cursor` sessions appear only under the `unknown_schema` skip reason | No parser claims cursor's schema yet (`UnknownSchema`, S28) | Expected until a `CursorParser` lands. It must not appear as a healthy zero-call agent; `tally_skips`/`--verbose` surface the count and ids (S34). |
 | `cache_assisted` shows `n/a` for every `codex` tool | codex has no per-call usage channel; it bills per turn via `token_count` events (`ABSENT_BY_SCHEMA`, S33) | Expected. Do not read `n/a` as "no cache hits". |
 | `codex` reports 0 errors no matter what failed | codex encodes exit status in the output text and sets `status: completed` even for failed tools (S33) | Expected. `error` is never inferred from output prose. Use `output_chars` / the raw transcript to inspect failures. |
-| `codex` web searches never appear in the leaderboard | `web_search_call` carries no `call_id` and emits no output record, so it cannot be joined (S33 / TB-24) | Known gap. codex's reported call count understates its true tool usage. |
+| `codex` web searches never appear in the leaderboard | `web_search_call` carries no `call_id` and emits no output record, so it cannot be joined (S33 / TB-24) | Expected. They are not joinable calls, so leaderboard/ratio counts exclude them. The count is not lost: the Summary's `Unjoinable tool records (seen, not joined)` line names it as `codex/web_search_call` (S38). |
 
 ## Quality gate
 

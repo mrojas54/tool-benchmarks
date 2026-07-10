@@ -232,3 +232,42 @@ def test_codex_parser_joins_a_minimal_tool_search_pair() -> None:
     assert len(result.calls) == 1
     assert result.calls[0].name == "ToolSearch"
     assert result.malformed == 0
+
+
+# The real live shape: `web_search_call` carries an `id` (a `ws_` handle) but never
+# a `call_id`, and there is no `web_search_output` record to pair with (TB-24).
+_WEB_SEARCH_LINE = (
+    '{"type":"response_item","timestamp":"t","payload":'
+    '{"type":"web_search_call","id":"ws_abc","status":"completed",'
+    '"action":{"type":"search","query":"x"}}}\n'
+)
+
+
+def test_codex_parser_counts_web_search_call_as_unjoinable() -> None:
+    """TB-24 (b): a recognized-but-unjoinable tool record is counted by kind, not
+    dropped -- so codex's ~4% web-search undercount is named, not silently absent."""
+    lines = [
+        '{"type":"session_meta","payload":{"id":"c1"}}\n',
+        _WEB_SEARCH_LINE,
+        _WEB_SEARCH_LINE,
+    ]
+    result = CodexParser().parse(iter(lines), agent="codex", source="raw", project="p")
+    assert result.unjoinable == {"web_search_call": 2}
+
+
+def test_codex_parser_does_not_emit_web_search_call_as_a_joined_call() -> None:
+    """Decision (b): corpus call counts stay unchanged. web_search_call is counted
+    apart from `.calls`, never as a `no_result` orphan (option (a), rejected)."""
+    lines = [
+        '{"type":"session_meta","payload":{"id":"c1"}}\n',
+        _WEB_SEARCH_LINE,
+    ]
+    result = CodexParser().parse(iter(lines), agent="codex", source="raw", project="p")
+    assert result.calls == []
+    assert result.malformed == 0
+
+
+def test_codex_parser_leaves_unjoinable_empty_when_no_web_search() -> None:
+    """The base fixture has no web_search_call: the field defaults to an empty map,
+    so a parser with nothing to report renders no reconciliation line."""
+    assert _codex_calls().unjoinable == {}

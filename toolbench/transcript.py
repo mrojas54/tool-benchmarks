@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
@@ -94,11 +94,21 @@ class ParseResult:
     an int -- including `0` -- means the session was measured. It is never
     attributed to an individual `ToolCall` or folded into `UsageProvenance`,
     which answers a different, per-call question this field cannot answer.
+
+    `unjoinable` (S38, TB-24) is a third bucket alongside joined `calls` and
+    `malformed` lines: tool records a parser RECOGNIZED as real calls but
+    structurally CANNOT join -- no join key and no output record -- keyed by the
+    record kind. Emitting them as calls would fabricate a join or leave permanent
+    `no_result` orphans; dropping them would silently understate the producer's
+    tool usage. Counting them by kind lets the Summary name the gap instead
+    (codex `web_search_call`: no `call_id`, no paired output). Empty for every
+    parser with nothing to report.
     """
 
     calls: list[ToolCall]
     malformed: int
     session_cache_read_tokens: int | None = None
+    unjoinable: dict[str, int] = field(default_factory=dict)
 
 
 def parse_session(

@@ -95,6 +95,10 @@ class Reducer:
     sessions_scanned: int = 0
     calls_joined: int = 0
     malformed_total: int = 0
+    # (agent, record kind) -> count of tool records a parser saw but could not join
+    # (TB-24). Never folded into `calls_joined`: these are surfaced apart, not counted
+    # as calls, so corpus counts and every inefficiency ratio stay unchanged.
+    unjoinable: dict[tuple[str, str], int] = field(default_factory=dict)
     agents: dict[str, AgentStats] = field(default_factory=dict)
     tools: dict[tuple[str, str], ToolStats] = field(default_factory=dict)
     tools_by_model: dict[tuple[str, str, str], ToolStats] = field(default_factory=dict)
@@ -108,6 +112,11 @@ class Reducer:
         """
         self.sessions_scanned += 1
         self.malformed_total += result.malformed
+        # TB-24: fold recognized-but-unjoinable records by (agent, kind). Kept out
+        # of the per-call loop below so they never touch a call-derived counter.
+        for kind, count in result.unjoinable.items():
+            key = (agent, kind)
+            self.unjoinable[key] = self.unjoinable.get(key, 0) + count
         agent_stats = self.agents.setdefault(agent, AgentStats())
         agent_stats.sessions += 1
 
@@ -224,17 +233,22 @@ def corpus_fingerprint(signatures: Iterable[str]) -> CorpusFingerprint:
     return CorpusFingerprint(digest=h.hexdigest()[:16], count=len(items))
 
 
-def session_signature(session_id: str, call_count: int, malformed: int) -> str:
+def session_signature(
+    session_id: str, call_count: int, malformed: int, unjoinable: int = 0
+) -> str:
     """One scanned session's fingerprint contribution: identity + content (S36).
 
-    Tab-joins the id with both numbers the Summary renders for this session's
-    content -- its call count and its malformed-line count -- so a session that
-    grows moves the corpus fingerprint even though its id is unchanged
-    (append-only transcripts -> both counts are exact). Folding `call_count`
-    alone would miss an append that lands as a malformed line: `len(calls)` would
-    be unchanged while "Malformed lines" moved, and the digest would falsely match.
+    Tab-joins the id with every number the Summary renders for this session's
+    content -- its call count, its malformed-line count, and its unjoinable-record
+    count -- so a session that grows moves the corpus fingerprint even though its id
+    is unchanged (append-only transcripts -> every count is exact). Folding
+    `call_count` alone would miss an append that lands as a malformed line;
+    likewise, folding only calls and malformed would miss an appended
+    `web_search_call`, which moves "Unjoinable tool records" while `len(calls)` and
+    "Malformed lines" stay put -- and the digest would falsely match while a rendered
+    number differs, the one outcome S36 forbids (TB-24).
     """
-    return f"{session_id}\t{call_count}\t{malformed}"
+    return f"{session_id}\t{call_count}\t{malformed}\t{unjoinable}"
 
 
 def _bump(counter: dict[str, int], tool: str) -> None:
@@ -276,7 +290,9 @@ def _apply_date_range(
     if date_from is None and date_to is None:
         return result
     kept = [call for call in result.calls if _call_in_range(call.ts, date_from, date_to)]
-    return ParseResult(calls=kept, malformed=result.malformed)
+    # `unjoinable` is a count of seen records, not date-filterable calls -- it passes
+    # through intact, exactly as `malformed` does (TB-24).
+    return ParseResult(calls=kept, malformed=result.malformed, unjoinable=result.unjoinable)
 
 
 def _call_in_range(ts: str, date_from: str | None, date_to: str | None) -> bool:
@@ -587,6 +603,15 @@ def render_report(
             lines.append(f"  - {reason.value}: {count}")
     lines.append(f"- Tool calls joined: {reducer.calls_joined}")
     lines.append(f"- Malformed lines: {reducer.malformed_total}")
+    if reducer.unjoinable:
+        # Records a parser saw but structurally could not join (TB-24): named here so
+        # codex's ~4% web-search undercount is never a silent zero. Attributed by
+        # agent/kind (TB-23's typed-bucket ethos), sorted for a stable diff. Absent
+        # entirely when there is nothing to report.
+        total = sum(reducer.unjoinable.values())
+        lines.append(f"- Unjoinable tool records (seen, not joined): {total}")
+        for (agent_name, kind), count in sorted(reducer.unjoinable.items()):
+            lines.append(f"  - {agent_name}/{kind}: {count}")
     lines.append(f"- Subagents included: {'yes' if include_subagents else 'no'}")
     lines.append(f"- AgentsView fallback reason: {fallback_reason if fallback_reason else 'none'}")
     lines.append("- Note: --since is file-mtime based.")
@@ -666,10 +691,16 @@ def main(
         filtered = _apply_date_range(result, args.date_from, args.date_to)
         reducer.absorb(ref.agent, filtered)
         # Signature after date filtering: the report counts these calls, so the
-        # fingerprint must fold the same post-filter count -- plus the malformed
-        # count, which the Summary also renders and date-filtering leaves intact (S36).
+        # fingerprint must fold the same post-filter count -- plus the malformed and
+        # unjoinable counts, which the Summary also renders and date-filtering leaves
+        # intact (S36, TB-24).
         scanned_sigs.append(
-            session_signature(ref.session_id, len(filtered.calls), filtered.malformed)
+            session_signature(
+                ref.session_id,
+                len(filtered.calls),
+                filtered.malformed,
+                sum(filtered.unjoinable.values()),
+            )
         )
 
     fingerprint = corpus_fingerprint(scanned_sigs)

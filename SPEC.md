@@ -125,15 +125,17 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   diffable — a delta could not be attributed to a code change. The Summary now
   emits `Corpus fingerprint: <digest> (<N> sessions scanned)`, a `sha256` (16 hex)
   over a sorted set of per-session **signatures**, one per *scanned* session
-  (`session_signature(id, call_count)`). The basis is the scanned set — the
-  sessions that produced the numbers — not the discovered set, which could match
-  while transcripts slid `scanned → skipped`. The signature folds both drift
-  mechanisms: identity catches a vanished tail (an id leaves the set) and the
-  call **and** malformed-line counts catch an append (transcripts are append-only,
-  so both are exact proxies for content growth — including an append that lands as
-  a malformed line). An id-only digest, or one folding calls alone, would match
-  across an append while a rendered number moved and let a reader mis-attribute the
-  delta to code — the one outcome the ticket forbids. The
+  (`session_signature(id, call_count, malformed, unjoinable)`). The basis is the
+  scanned set — the sessions that produced the numbers — not the discovered set,
+  which could match while transcripts slid `scanned → skipped`. The signature folds
+  every drift mechanism: identity catches a vanished tail (an id leaves the set) and
+  the call, malformed-line, **and** unjoinable-record counts catch an append
+  (transcripts are append-only, so each is an exact proxy for content growth —
+  including an append that lands as a malformed line, or an appended
+  `web_search_call` that moves "Unjoinable tool records" alone, S38/TB-24). An
+  id-only digest, or one folding only some of these counts, would match across an
+  append while a rendered number moved and let a reader mis-attribute the delta to
+  code — the one outcome the ticket forbids. The
   fingerprint is order-independent (sorted before hashing) so paging order never
   moves it, and the count travels alongside so a collision cannot hide a size
   change (TB-22).
@@ -150,6 +152,23 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   skip detail. Over an unchanged corpus a replay is byte-identical (the fingerprint
   line included); when the tail has moved, the vanished count names the mechanism
   rather than letting the delta pass as code (TB-22).
+- **S38 — unjoinable tool records are counted and surfaced, not dropped.** A tool
+  record a parser RECOGNIZES as a real call but structurally CANNOT join — no join
+  key and no output record — is neither a joined call nor a malformed line. It is
+  counted in `ParseResult.unjoinable` (record kind → count) and folded in the
+  `Reducer` by `(agent, kind)`. `CodexParser`'s `web_search_call` is the case: it
+  carries no `call_id` and has no `web_search_output`, so codex's own reporting
+  omits it (~4% of codex tool calls, web search invisible). It is **not** emitted as
+  a joined call — corpus call counts and every inefficiency ratio (S19) are
+  unchanged — nor as a `no_result` orphan (which would fabricate a call and inflate
+  codex's count). Instead the Summary, when the total is non-zero, renders
+  `Unjoinable tool records (seen, not joined): <T>` followed by one
+  `<agent>/<kind>: <count>` line per pair, sorted, and the line is absent entirely
+  when there is nothing to report. The count is a rendered number, so
+  `session_signature` folds it (S36): an appended `web_search_call` moves the
+  fingerprint even though the call and malformed counts are unchanged. This is the
+  no-silent-zeros stance applied to a record that cannot be joined, so the gap is
+  named rather than absent (TB-24; the home is TB-21's Summary reconciliation).
 
 ## Active probes — `toolbench/probe.py` + `protocols/active-probes.md`
 
@@ -325,9 +344,10 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   `spawn_agent` (but not `wait_agent`, which awaits an already-spawned subagent),
   so the fan-out callout is no longer measured with its most relevant agent absent.
 
-  `web_search_call` is **not** claimed: it carries no `call_id` and has no matching
-  output record, so this parser's join key cannot reach it. It is a real tool call
-  that codex reporting omits, tracked as TB-24 rather than papered over.
+  `web_search_call` is **not** joined as a call: it carries no `call_id` and has no
+  matching output record, so this parser's join key cannot reach it. It is a real
+  tool call that codex reporting omits, so it is counted in `ParseResult.unjoinable`
+  and surfaced in the Summary (S38) rather than papered over (TB-24).
 
   The claim predicate is disjoint from `ClaudeParser`'s and `HermesTraceParser`'s,
   so `AmbiguousSchema` never fires between them (TB-12).
