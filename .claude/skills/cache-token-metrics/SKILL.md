@@ -35,11 +35,13 @@ checkout, so the read doesn't bill an unrelated project's cache.
    `--tickets N`, reports per-ticket figures.
 
 ```bash
-# from ~ , per run:
-uv run --project ~/tool-benchmarks python -m toolbench.cache_tokens \
+# from ~ , per run. Invoke the reader BY FILE PATH: `-m toolbench.cache_tokens` only
+# resolves from the repo root (toolbench isn't installed into the venv), whereas this
+# skill runs from ~ for cwd hygiene — so the module form fails here, the path form works.
+uv run --project ~/tool-benchmarks python ~/tool-benchmarks/toolbench/cache_tokens.py \
     --manifest run-A.manifest --tickets 12
 # or pass transcript paths directly:
-uv run --project ~/tool-benchmarks python -m toolbench.cache_tokens \
+uv run --project ~/tool-benchmarks python ~/tool-benchmarks/toolbench/cache_tokens.py \
     ~/.claude/projects/<proj>/*.jsonl --tickets 12 --json
 ```
 
@@ -77,6 +79,7 @@ per-ticket normalization (and its `tickets > 0` guard), and the prefix-sharing t
 ## Engine & scope
 
 `toolbench/cache_tokens.py` — dependency-free; `sum_session` / `sum_run` / `per_ticket` +
-a `python -m` CLI. It does **not** touch `passive.py`; integrating cache sums into the
+a CLI (run by path — `python toolbench/cache_tokens.py …` — or `-m toolbench.cache_tokens`
+from the repo root). It does **not** touch `passive.py`; integrating cache sums into the
 production analyzer is TB-26, and per-run grouping via `--run-manifest` is TB-27 (this skill
 is TB-27's manual precursor).
