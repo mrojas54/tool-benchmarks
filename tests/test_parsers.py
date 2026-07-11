@@ -90,6 +90,44 @@ def test_claude_parser_counts_malformed_lines_without_raising() -> None:
     assert result.calls == []
 
 
+def test_claude_parser_sums_session_cache_tokens_from_message_usage() -> None:
+    """CQ 1.2 / S39: ClaudeParser is the sole Claude JSONL reader for cache sums."""
+    fix = Path(__file__).parent / "fixtures" / "cache_tokens"
+    lines = (fix / "measured.jsonl").read_text(encoding="utf-8").splitlines(keepends=True)
+    result = ClaudeParser().parse(lines, agent="claude-code", source="raw", project="p")
+    assert result.session_cache_read_tokens == 300
+    assert result.session_cache_creation_tokens == 30
+
+
+def test_claude_parser_zero_cache_is_measured_zero_not_none() -> None:
+    fix = Path(__file__).parent / "fixtures" / "cache_tokens"
+    lines = (fix / "zero_cache.jsonl").read_text(encoding="utf-8").splitlines(keepends=True)
+    result = ClaudeParser().parse(lines, agent="claude-code", source="raw", project="p")
+    assert result.session_cache_read_tokens == 0
+    assert result.session_cache_creation_tokens == 0
+
+
+def test_claude_parser_no_usage_leaves_cache_fields_none() -> None:
+    fix = Path(__file__).parent / "fixtures" / "cache_tokens"
+    lines = (fix / "no_usage.jsonl").read_text(encoding="utf-8").splitlines(keepends=True)
+    result = ClaudeParser().parse(lines, agent="claude-code", source="raw", project="p")
+    assert result.session_cache_read_tokens is None
+    assert result.session_cache_creation_tokens is None
+
+
+def test_claude_parser_sums_cache_on_messages_without_tool_use() -> None:
+    """Cache lives on assistant turns; summing only at tool_use would undercount."""
+    lines = [
+        '{"sessionId":"s1","type":"assistant","message":{"usage":'
+        '{"cache_read_input_tokens":50,"cache_creation_input_tokens":5,'
+        '"input_tokens":1,"output_tokens":1}}}\n',
+    ]
+    result = ClaudeParser().parse(lines, agent="claude-code", source="raw", project="p")
+    assert result.calls == []
+    assert result.session_cache_read_tokens == 50
+    assert result.session_cache_creation_tokens == 5
+
+
 def test_claude_parser_is_a_transcript_parser() -> None:
     assert issubclass(ClaudeParser, TranscriptParser)
     assert ClaudeParser.schema_tag == "claude"

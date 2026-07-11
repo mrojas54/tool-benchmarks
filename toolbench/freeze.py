@@ -32,23 +32,28 @@ class CorpusManifest:
     refs: list[SessionRef]
 
 
-def _ref_to_dict(ref: SessionRef) -> dict[str, str | None]:
+def _ref_to_dict(ref: SessionRef) -> dict[str, str | bool | None]:
     return {
         "agent": ref.agent,
         "source": ref.source,
         "project": ref.project,
         "session_id": ref.session_id,
         "path": ref.path,
+        "is_subagent": ref.is_subagent,
     }
 
 
-def _ref_from_dict(d: dict[str, str | None]) -> SessionRef:
+def _ref_from_dict(d: dict[str, str | bool | None]) -> SessionRef:
+    # Pre-CQ-3.2 manifests omit is_subagent; default False so old freezes still load.
+    raw_flag = d.get("is_subagent", False)
+    is_subagent = raw_flag if isinstance(raw_flag, bool) else False
     return SessionRef(
         agent=str(d["agent"]),
         source=str(d["source"]),
         project=str(d["project"]),
         session_id=str(d["session_id"]),
         path=d["path"] if d["path"] is None else str(d["path"]),
+        is_subagent=is_subagent,
     )
 
 

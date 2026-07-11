@@ -34,6 +34,17 @@ def test_measured_session_sums_read_and_creation() -> None:
     assert session.total_billed == 300 + 30 + 10 + 3
 
 
+def test_sum_session_does_not_reparse_jsonl() -> None:
+    """CQ 1.2: the standalone reader is a façade over ClaudeParser, not a second interpreter."""
+    import inspect
+
+    import toolbench.cache_tokens as mod
+
+    source = inspect.getsource(mod.sum_session)
+    assert "json.loads" not in source
+    assert "ClaudeParser" in source
+
+
 def test_zero_cache_is_measured_zero_not_none() -> None:
     session = sum_session(_lines("zero_cache.jsonl"))
     assert session.read == 0 and session.creation == 0

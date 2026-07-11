@@ -30,6 +30,17 @@ DEFERRAL_TOOL_NAMES = frozenset({"ToolSearch"})
 SUBAGENT_TOOL_NAMES = frozenset({"Agent", "Task", "spawn_agent"})
 
 
+def _as_usage_int(value: object) -> int:
+    """Coerce a usage field to int; bools and non-numerics read as 0."""
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return 0
+
+
 @dataclass
 class _PendingCall:
     """A call awaiting its matching result (or EOF drain)."""
@@ -182,6 +193,9 @@ class ClaudeParser(TranscriptParser):
         pending: dict[str, _PendingCall] = {}
         calls: list[ToolCall] = []
         malformed = 0
+        # S39 / CQ 1.2: session-grain usage summed over every message that carries
+        # `usage`, not only tool_use turns — assistant turns without tools still bill.
+        cache_read = cache_creation = input_tokens = output_tokens = usage_messages = 0
 
         for raw_line in lines:
             line = raw_line.strip()
@@ -202,6 +216,15 @@ class ClaudeParser(TranscriptParser):
             ts = entry.get("timestamp")
             session_id_str = session_id if isinstance(session_id, str) else ""
             ts_str = ts if isinstance(ts, str) else ""
+
+            if isinstance(message, dict):
+                usage = message.get("usage")
+                if isinstance(usage, dict):
+                    usage_messages += 1
+                    cache_read += _as_usage_int(usage.get("cache_read_input_tokens"))
+                    cache_creation += _as_usage_int(usage.get("cache_creation_input_tokens"))
+                    input_tokens += _as_usage_int(usage.get("input_tokens"))
+                    output_tokens += _as_usage_int(usage.get("output_tokens"))
 
             if isinstance(content, list):
                 for tool_use_block in content:
@@ -258,7 +281,17 @@ class ClaudeParser(TranscriptParser):
         calls.extend(
             _drain_pending(pending, agent=agent, source=source, project=project)
         )
-        return ParseResult(calls=calls, malformed=malformed)
+        if usage_messages == 0:
+            return ParseResult(calls=calls, malformed=malformed)
+        return ParseResult(
+            calls=calls,
+            malformed=malformed,
+            session_cache_read_tokens=cache_read,
+            session_cache_creation_tokens=cache_creation,
+            session_input_tokens=input_tokens,
+            session_output_tokens=output_tokens,
+            session_usage_messages=usage_messages,
+        )
 
 
 class CodexParser(TranscriptParser):

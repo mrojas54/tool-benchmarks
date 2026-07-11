@@ -39,6 +39,9 @@ class AgentStats:
     no_result: int = 0
     sessions_with_cache_data: int = 0  # S32: session-grain, counted once per session
     sessions_with_cache_hit: int = 0
+    # S39: summed session-grain cache tokens (caveat only; never ranks).
+    cache_read_tokens_total: int = 0
+    cache_creation_tokens_total: int = 0
 
 
 @dataclass
@@ -93,11 +96,20 @@ class Reducer:
         agent_stats = self.agents.setdefault(agent, AgentStats())
         agent_stats.sessions += 1
 
-        # S32: session-grain, incremented once per session here -- never inside
+        # S32/S39: session-grain, incremented once per session here -- never inside
         # the per-call loop below, which would fabricate a per-call denominator.
-        if result.session_cache_read_tokens is not None:
+        # Measured when either cache field is non-None (Claude stamps both;
+        # hermes stamps read only).
+        if (
+            result.session_cache_read_tokens is not None
+            or result.session_cache_creation_tokens is not None
+        ):
             agent_stats.sessions_with_cache_data += 1
-            if result.session_cache_read_tokens > 0:
+            read = result.session_cache_read_tokens or 0
+            creation = result.session_cache_creation_tokens or 0
+            agent_stats.cache_read_tokens_total += read
+            agent_stats.cache_creation_tokens_total += creation
+            if read > 0 or creation > 0:
                 agent_stats.sessions_with_cache_hit += 1
 
         prev_name: str | None = None

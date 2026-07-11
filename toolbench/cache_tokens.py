@@ -1,17 +1,10 @@
-"""Standalone per-run cache-token metrics — steps 1-4 of the lattice token benchmark.
+"""Per-run cache-token metrics — façade over ClaudeParser (S39 / CQ 1.2).
 
-A *benchmark reader*, deliberately separate from the passive analyzer's
-`ParseResult`/Summary path: it reads raw Claude Code transcript JSONL directly, sums
-per-message `usage`, aggregates a run's session set, and normalizes per ticket. This
-is the "run now, before TB-26 lands" path (TB-26 wires cache sums into the production
-analyzer; TB-27's `--run-manifest` will automate the run-grain grouping this does by
-hand). Kept dependency-free so it runs anywhere a transcript does.
-
-`read`/`creation` follow S39 NULL-vs-measured semantics: `None` when a session carried
-no `usage` at all (unmeasured, SQL NULL), an int — including `0` — once at least one
-message did. Read and creation are reported together on purpose: a prefix-sharing
-change (per-ticket context extracts vs a shared contract) trades one for the other, so
-a cache-read delta read alone misleads.
+Once a temporary second JSONL interpreter; now delegates session summing to
+`ClaudeParser` so the production parse path is the sole Claude schema reader.
+This module keeps run aggregation (`sum_run`), per-ticket normalization, and the
+CLI that the cache-token-metrics skill invokes until TB-27's `--run-manifest`
+lands on the passive analyzer.
 """
 
 from __future__ import annotations
@@ -22,6 +15,8 @@ import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+
+from toolbench.parsers import ClaudeParser
 
 
 @dataclass(frozen=True)
@@ -61,48 +56,18 @@ class RunUsage:
         return self.read + self.creation + self.input + self.output
 
 
-def _as_int(value: object) -> int:
-    """Coerce a usage field to int; anything non-numeric (or a bool) reads as 0."""
-    if isinstance(value, bool):
-        return 0
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    return 0
-
-
 def sum_session(lines: Iterable[str]) -> SessionUsage:
-    """Sum `message.usage` over one transcript's JSONL lines.
-
-    A line that is blank, non-JSON, or carries no `message.usage` is skipped rather
-    than aborting the pass (mirrors the analyzer's S5 malformed-tolerance).
-    """
-    read = creation = inp = out = msgs = 0
-    for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            obj = json.loads(stripped)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(obj, dict):
-            continue
-        message = obj.get("message")
-        if not isinstance(message, dict):
-            continue
-        usage = message.get("usage")
-        if not isinstance(usage, dict):
-            continue
-        msgs += 1
-        read += _as_int(usage.get("cache_read_input_tokens"))
-        creation += _as_int(usage.get("cache_creation_input_tokens"))
-        inp += _as_int(usage.get("input_tokens"))
-        out += _as_int(usage.get("output_tokens"))
-    if msgs == 0:
-        return SessionUsage(read=None, creation=None, input=0, output=0, usage_messages=0)
-    return SessionUsage(read=read, creation=creation, input=inp, output=out, usage_messages=msgs)
+    """Sum session-grain usage via ClaudeParser — no second JSONL interpreter."""
+    result = ClaudeParser().parse(
+        lines, agent="claude-code", source="raw", project="cache-tokens"
+    )
+    return SessionUsage(
+        read=result.session_cache_read_tokens,
+        creation=result.session_cache_creation_tokens,
+        input=result.session_input_tokens,
+        output=result.session_output_tokens,
+        usage_messages=result.session_usage_messages,
+    )
 
 
 def sum_run(session_files: Iterable[Path]) -> RunUsage:

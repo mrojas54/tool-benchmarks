@@ -17,7 +17,6 @@ from toolbench.passive import (
     Reducer,
     _apply_date_range,
     _discover_refs,
-    _is_subagent_path,
     _parse_ref,
     classify_skip,
     corpus_fingerprint,
@@ -147,25 +146,51 @@ class CliParsingTests(unittest.TestCase):
         self.assertTrue(args.verbose)
 
 class SubagentFilterTests(unittest.TestCase):
-    def test_is_subagent_path(self) -> None:
-        ref = SessionRef(agent="claude-code", source="raw", project="p", session_id="s1", path="/x/subagents/y.jsonl")
-        self.assertTrue(_is_subagent_path(ref))
-
-    def test_non_subagent_path(self) -> None:
-        ref = SessionRef(agent="claude-code", source="raw", project="p", session_id="s1", path="/x/y.jsonl")
-        self.assertFalse(_is_subagent_path(ref))
-
-    def test_no_path_is_not_subagent(self) -> None:
-        ref = SessionRef(agent="claude", source="agentsview", project="p", session_id="s1", path=None)
-        self.assertFalse(_is_subagent_path(ref))
-
-    def test_filter_subagents_removes_matching_paths(self) -> None:
+    def test_filter_subagents_uses_is_subagent_flag(self) -> None:
+        """CQ 3.2: exclude-subagents filters the discovery flag, not a path substring."""
         refs = [
-            SessionRef(agent="claude-code", source="raw", project="p", session_id="s1", path="/x/subagents/y.jsonl"),
-            SessionRef(agent="claude-code", source="raw", project="p", session_id="s2", path="/x/y.jsonl"),
+            SessionRef(
+                agent="claude-code",
+                source="raw",
+                project="proj",
+                session_id="s1",
+                path="/x/proj/session.jsonl",
+                is_subagent=True,
+            ),
+            SessionRef(
+                agent="claude-code",
+                source="raw",
+                project="proj",
+                session_id="s2",
+                path="/x/proj/session.jsonl",
+                is_subagent=False,
+            ),
+            SessionRef(
+                agent="claude",
+                source="agentsview",
+                project="p",
+                session_id="s3",
+                path=None,
+                is_subagent=False,
+            ),
         ]
         kept = filter_subagents(refs)
-        self.assertEqual([r.session_id for r in kept], ["s2"])
+        self.assertEqual([r.session_id for r in kept], ["s2", "s3"])
+
+    def test_filter_subagents_does_not_infer_from_path_substring(self) -> None:
+        """A path containing /subagents/ without the flag is kept — discovery owns the tag."""
+        refs = [
+            SessionRef(
+                agent="claude-code",
+                source="raw",
+                project="proj",
+                session_id="s1",
+                path="/x/proj/subagents/y.jsonl",
+                is_subagent=False,
+            ),
+        ]
+        kept = filter_subagents(refs)
+        self.assertEqual([r.session_id for r in kept], ["s1"])
 
 class MainExitContractTests(unittest.TestCase):
     def test_strict_raw_missing_root_exits_1(self) -> None:

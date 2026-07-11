@@ -88,6 +88,19 @@ class SessionRef:
     project: str
     session_id: str
     path: str | None
+    # Set at discovery (CQ 3.2). Raw scans stamp it from the path layout;
+    # AgentsView refs default False (the index does not expose the nesting).
+    is_subagent: bool = False
+
+
+def _project_and_subagent(root: Path, path: Path) -> tuple[str, bool]:
+    """Owning project = first segment under `root`; subagent = nested under `subagents/`."""
+    rel = path.relative_to(root)
+    if not rel.parts:
+        raise ValueError(f"session path is not under root: {path}")
+    project = rel.parts[0]
+    is_subagent = len(rel.parts) >= 3 and rel.parts[1] == "subagents"
+    return project, is_subagent
 
 
 def _run_agentsview(argv: list[str]) -> subprocess.CompletedProcess[str]:
@@ -108,10 +121,12 @@ def iter_session_files(
     since_ts = datetime.fromisoformat(since).timestamp() if since is not None else None
     for path in sorted(base.rglob("*.jsonl")):
         if project is not None:
-            # Match the owning project dir, not `path.parent.name`: subagent
-            # transcripts live at <project>/subagents/*.jsonl (S13).
+            # Match the owning project dir by equality on the first segment under
+            # root (CQ 3.2). Subagent transcripts live at <project>/subagents/*.jsonl
+            # and still match because their first segment is the project, not
+            # "subagents".
             rel = path.relative_to(base)
-            if len(rel.parts) < 2 or project not in rel.parts[0]:
+            if len(rel.parts) < 2 or rel.parts[0] != project:
                 continue
         if since_ts is not None and path.stat().st_mtime < since_ts:
             continue
@@ -242,13 +257,16 @@ def _raw_session_refs(
     project: str | None,
     since: str | None,
 ) -> Iterator[SessionRef]:
+    base = Path(root).expanduser()
     for path in iter_session_files(root=root, project=project, since=since):
+        owning_project, is_subagent = _project_and_subagent(base, path)
         yield SessionRef(
             agent="claude-code",
             source="raw",
-            project=path.parent.name,
+            project=owning_project,
             session_id=path.stem,
             path=str(path),
+            is_subagent=is_subagent,
         )
 
 
