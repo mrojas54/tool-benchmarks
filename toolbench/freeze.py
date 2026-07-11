@@ -44,15 +44,21 @@ def _ref_to_dict(ref: SessionRef) -> dict[str, str | bool | None]:
 
 
 def _ref_from_dict(d: dict[str, str | bool | None]) -> SessionRef:
-    # Pre-CQ-3.2 manifests omit is_subagent; default False so old freezes still load.
-    raw_flag = d.get("is_subagent", False)
-    is_subagent = raw_flag if isinstance(raw_flag, bool) else False
+    path_raw = d.get("path")
+    path = None if path_raw is None else str(path_raw)
+    if "is_subagent" in d:
+        raw_flag = d["is_subagent"]
+        is_subagent = raw_flag if isinstance(raw_flag, bool) else False
+    else:
+        # Pre-CQ-3.2 manifests omit the flag; recover it from the nested path
+        # so `--exclude-subagents` still drops them on freeze replay (S13).
+        is_subagent = path is not None and "/subagents/" in path
     return SessionRef(
         agent=str(d["agent"]),
         source=str(d["source"]),
         project=str(d["project"]),
         session_id=str(d["session_id"]),
-        path=d["path"] if d["path"] is None else str(d["path"]),
+        path=path,
         is_subagent=is_subagent,
     )
 

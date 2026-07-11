@@ -3,6 +3,7 @@ discovered fingerprint so a later run can replay identical inputs."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -62,3 +63,29 @@ def test_manifest_preserves_agentsview_none_path_and_raw_path() -> None:
         by_id = {r.session_id: r for r in m.refs}
         assert by_id["good-1"].path is None  # agentsview ref exports by id
         assert by_id["good-2"].path == "/tmp/proj-b/good-2.jsonl"
+
+
+def test_manifest_legacy_derives_is_subagent_from_path() -> None:
+    """Pre-flag manifests omitted is_subagent; replay still excludes nested paths."""
+    with TemporaryDirectory() as d:
+        path = Path(d) / "corpus.manifest"
+        path.write_text(
+            json.dumps(
+                {
+                    "version": MANIFEST_VERSION,
+                    "fingerprint": "x",
+                    "count": 1,
+                    "refs": [
+                        {
+                            "agent": "claude-code",
+                            "source": "raw",
+                            "project": "subagents",
+                            "session_id": "child",
+                            "path": "/tmp/proj-b/subagents/child.jsonl",
+                        }
+                    ],
+                }
+            )
+        )
+        m = read_manifest(str(path))
+        assert m.refs[0].is_subagent is True

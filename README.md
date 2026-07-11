@@ -286,8 +286,9 @@ discovery root is Claude Code sessions, so `--agent` is a no-op there.
 
 `--project` matches the **owning project directory** under the raw root
 (first path segment after the root), not `path.parent.name`. Nested
-subagent transcripts at `<project>/subagents/*.jsonl` therefore survive
-`--project` and are only dropped when you pass `--exclude-subagents`.
+subagent transcripts at `<project>/subagents/*.jsonl` are attributed to that
+owning project with `SessionRef.is_subagent=True`, and are only dropped when
+you pass `--exclude-subagents`.
 
 ### Corpus reproducibility (`Corpus fingerprint` + `--freeze`)
 
