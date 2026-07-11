@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from toolbench.adapters import SessionAdapter
+from toolbench.parsers import _PendingCall
 from toolbench.sources import NonTranscriptExport, SessionRef
 from toolbench.transcript import ParseResult, ToolCall, UsageProvenance, result_len
 
@@ -63,18 +64,22 @@ def _connect(db: Path) -> sqlite3.Connection:
 
     mode=ro: a running hermes owns this file. Never open it writable.
 
-    A WAL database with no `-shm` sidecar cannot be read under `mode=ro` at all --
-    SQLite needs the shared-memory file to take a read lock, and read-only mode may
-    not create it. An idle hermes profile is in exactly this state, so it is a
-    normal condition, not a corrupt one.
+    On some SQLite builds (observed 3.43.x), a WAL-header database with no `-shm`
+    sidecar cannot be read under `mode=ro` at all -- SQLite needs the shared-memory
+    file to take a read lock, and read-only mode may not create it. Idle hermes
+    profiles have been found in exactly that state. Newer builds (observed 3.45.x)
+    can read the same on-disk shape under `mode=ro`; the fallback below is then
+    unused but still correct.
 
-    `immutable=1` opens such a file, but it ignores the WAL entirely and will
-    silently return stale rows if frames are pending. Fall back to it only when no
-    `-wal` sidecar exists, which is precisely when there are no frames to miss.
+    `immutable=1` opens a sidecar-less WAL file on the older builds, but it ignores
+    the WAL entirely and will silently return stale rows if frames are pending.
+    Fall back to it only when no `-wal` sidecar exists, which is precisely when
+    there are no frames to miss.
 
     The probe must touch a page. `sqlite3.connect` is lazy, and `SELECT 1` is a
     constant expression that never opens a read transaction -- both succeed on a
-    database that cannot actually be read. Reading `sqlite_master` is what fails.
+    database that cannot actually be read. Reading `sqlite_master` is what fails
+    on builds that still reject the sidecar-less shape.
     """
     try:
         conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
@@ -201,23 +206,24 @@ def parse_hermes_session(
             arguments = function.get("arguments")
             found = call_id in results
             payload = results.get(call_id)
+            model_str = model if isinstance(model, str) else None
             calls.append(
-                ToolCall(
-                    agent=agent,
-                    source=source,
-                    project=project,
+                _PendingCall(
                     name=name,
                     input_chars=result_len(arguments) if arguments is not None else 0,
-                    output_chars=result_len(payload) if found and payload is not None else 0,
                     session_id=bare,
                     ts=_iso(timestamp),
                     usage=None,
                     usage_provenance=UsageProvenance.ABSENT_BY_SCHEMA,
-                    duration_ms=None,
+                    model=model_str,
+                ).finish(
+                    agent=agent,
+                    source=source,
+                    project=project,
+                    output_chars=result_len(payload) if found and payload is not None else 0,
                     error=_error_of(payload) if found else None,
-                    model=model,
-                    no_result=not found,
                     result_source="hermes_sqlite" if found else None,
+                    no_result=not found,
                 )
             )
 

@@ -259,19 +259,22 @@ def iter_sessions(
     since: str | None = None,
     limit: int = 500,
     root: str = "~/.claude/projects",
-    runner: Runner = _run_agentsview,
+    runner: Runner | None = None,
 ) -> tuple[Iterator[SessionRef], str | None]:
     """Resolve the `--index-source` policy; return (refs, fallback_reason) (S10)."""
+    run = runner if runner is not None else _run_agentsview
     if index_source == "raw":
         return _raw_session_refs(root, project, since), None
     if index_source == "agentsview":
-        refs = iter_agentsview_sessions(agent=agent, project=project, since=since, limit=limit, runner=runner)
+        refs = iter_agentsview_sessions(
+            agent=agent, project=project, since=since, limit=limit, runner=run
+        )
         return refs, None
     if index_source == "auto":
-        reason = _probe_agentsview(runner)
+        reason = _probe_agentsview(run)
         if reason is None:
             refs = iter_agentsview_sessions(
-                agent=agent, project=project, since=since, limit=limit, runner=runner
+                agent=agent, project=project, since=since, limit=limit, runner=run
             )
             return refs, None
         return _raw_session_refs(root, project, since), reason

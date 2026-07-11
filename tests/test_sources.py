@@ -9,6 +9,7 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
+from tests.fakes import FakeRunner, completed
 from toolbench.sources import (
     AgentsViewLoader,
     MissingSourceExport,
@@ -34,29 +35,6 @@ _SQLITE_MAGIC = b"SQLite format 3\x00"
 _EMIT_NON_UTF8 = 'import sys; sys.stdout.buffer.write(b\'{"note": "caf\\xa0"}\\n\')'
 
 
-def _completed(
-    stdout: str = "", stderr: str = "", returncode: int = 0
-) -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
-
-
-class FakeRunner:
-    """Scripted subprocess-runner seam (S24): argv -> CompletedProcess, in call order."""
-
-    def __init__(self, responses: list[subprocess.CompletedProcess[str] | Exception]) -> None:
-        self._responses = list(responses)
-        self.calls: list[list[str]] = []
-
-    def __call__(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
-        self.calls.append(argv)
-        if not self._responses:
-            raise AssertionError(f"FakeRunner exhausted, unexpected call: {argv}")
-        response = self._responses.pop(0)
-        if isinstance(response, Exception):
-            raise response
-        return response
-
-
 class IterAgentsviewSessionsTests(unittest.TestCase):
     def test_single_page(self) -> None:
         payload = {
@@ -67,7 +45,7 @@ class IterAgentsviewSessionsTests(unittest.TestCase):
             "next_cursor": "",
             "total": 2,
         }
-        runner = FakeRunner([_completed(stdout=json.dumps(payload))])
+        runner = FakeRunner([completed(stdout=json.dumps(payload))])
         refs = list(iter_agentsview_sessions(runner=runner))
         self.assertEqual(len(refs), 2)
         self.assertEqual(
@@ -88,7 +66,7 @@ class IterAgentsviewSessionsTests(unittest.TestCase):
             "next_cursor": "",
             "total": 2,
         }
-        runner = FakeRunner([_completed(stdout=json.dumps(page1)), _completed(stdout=json.dumps(page2))])
+        runner = FakeRunner([completed(stdout=json.dumps(page1)), completed(stdout=json.dumps(page2))])
         refs = list(iter_agentsview_sessions(runner=runner))
         self.assertEqual([r.session_id for r in refs], ["s1", "s2"])
         self.assertEqual(len(runner.calls), 2)
@@ -98,14 +76,14 @@ class IterAgentsviewSessionsTests(unittest.TestCase):
 
     def test_pagination_stops_when_cursor_key_absent(self) -> None:
         page1 = {"sessions": [{"id": "s1", "project": "p", "agent": "claude"}], "total": 1}
-        runner = FakeRunner([_completed(stdout=json.dumps(page1))])
+        runner = FakeRunner([completed(stdout=json.dumps(page1))])
         refs = list(iter_agentsview_sessions(runner=runner))
         self.assertEqual(len(refs), 1)
         self.assertEqual(len(runner.calls), 1)
 
     def test_argv_includes_agent_project_since_limit(self) -> None:
         payload = {"sessions": [], "next_cursor": "", "total": 0}
-        runner = FakeRunner([_completed(stdout=json.dumps(payload))])
+        runner = FakeRunner([completed(stdout=json.dumps(payload))])
         list(
             iter_agentsview_sessions(
                 agent="codex", project="tool-benchmarks", since="2026-07-01", limit=50, runner=runner
@@ -123,12 +101,12 @@ class IterAgentsviewSessionsTests(unittest.TestCase):
 
     def test_agent_all_omits_agent_flag(self) -> None:
         payload = {"sessions": [], "next_cursor": "", "total": 0}
-        runner = FakeRunner([_completed(stdout=json.dumps(payload))])
+        runner = FakeRunner([completed(stdout=json.dumps(payload))])
         list(iter_agentsview_sessions(agent="all", runner=runner))
         self.assertNotIn("--agent", runner.calls[0])
 
     def test_nonzero_exit_raises(self) -> None:
-        runner = FakeRunner([_completed(stdout="", stderr="boom", returncode=1)])
+        runner = FakeRunner([completed(stdout="", stderr="boom", returncode=1)])
         with self.assertRaises(RuntimeError):
             list(iter_agentsview_sessions(runner=runner))
 
@@ -202,14 +180,14 @@ class OpenSessionJsonlTests(unittest.TestCase):
 
     def test_shells_to_export_when_no_path(self) -> None:
         ref = SessionRef(agent="claude", source="agentsview", project="p", session_id="abc123", path=None)
-        runner = FakeRunner([_completed(stdout='{"a": 1}\n{"b": 2}\n')])
+        runner = FakeRunner([completed(stdout='{"a": 1}\n{"b": 2}\n')])
         lines = list(open_session_jsonl(ref, runner=runner))
         self.assertEqual(lines, ['{"a": 1}\n', '{"b": 2}\n'])
         self.assertEqual(runner.calls[0], ["agentsview", "session", "export", "abc123"])
 
     def test_export_nonzero_exit_raises(self) -> None:
         ref = SessionRef(agent="claude", source="agentsview", project="p", session_id="abc123", path=None)
-        runner = FakeRunner([_completed(stderr="not found", returncode=1)])
+        runner = FakeRunner([completed(stderr="not found", returncode=1)])
         with self.assertRaises(RuntimeError):
             list(open_session_jsonl(ref, runner=runner))
 
@@ -238,7 +216,7 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
             "next_cursor": "",
             "total": 1,
         }
-        runner = FakeRunner([_completed(stdout=json.dumps(payload)), _completed(stdout=json.dumps(payload))])
+        runner = FakeRunner([completed(stdout=json.dumps(payload)), completed(stdout=json.dumps(payload))])
         refs, reason = iter_sessions(index_source="auto", runner=runner)
         ref_list = list(refs)
         self.assertIsNone(reason)
@@ -263,7 +241,7 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             proj = Path(tmp) / "proj"
             proj.mkdir()
-            runner = FakeRunner([_completed(stderr="daemon down", returncode=1)])
+            runner = FakeRunner([completed(stderr="daemon down", returncode=1)])
             refs, reason = iter_sessions(index_source="auto", root=tmp, runner=runner)
             list(refs)
             self.assertIsNotNone(reason)
@@ -307,7 +285,7 @@ class NonTranscriptExportTests(unittest.TestCase):
 
     def test_export_of_binary_payload_is_rejected(self) -> None:
         payload = _SQLITE_MAGIC.decode("utf-8", errors="replace") + "\x10\x00\x02tablemessages"
-        runner = FakeRunner([_completed(stdout=payload)])
+        runner = FakeRunner([completed(stdout=payload)])
         ref = SessionRef(agent="hermes", source="agentsview", project="p", session_id="cron_1", path=None)
         with self.assertRaises(NonTranscriptExport):
             list(open_session_jsonl(ref, runner=runner))
@@ -329,7 +307,7 @@ class NonTranscriptExportTests(unittest.TestCase):
 
     def test_stray_byte_without_nul_is_not_treated_as_binary(self) -> None:
         # A good session with one bad byte must still parse; only NUL means binary.
-        runner = FakeRunner([_completed(stdout='{"note": "caf�"}\n')])
+        runner = FakeRunner([completed(stdout='{"note": "caf�"}\n')])
         ref = SessionRef(agent="claude", source="agentsview", project="p", session_id="s1", path=None)
         self.assertEqual(len(list(open_session_jsonl(ref, runner=runner))), 1)
 

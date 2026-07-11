@@ -416,25 +416,15 @@ def _discover_refs(
     project = None if args.all_projects else args.project
     page_limit = args.limit if args.limit is not None else 500
     index_source = cast(IndexSource, args.index_source)
-    if runner is not None:
-        refs_iter, fallback_reason = iter_sessions(
-            index_source=index_source,
-            agent=args.agent,
-            project=project,
-            since=args.since,
-            limit=page_limit,
-            root=root,
-            runner=runner,
-        )
-    else:
-        refs_iter, fallback_reason = iter_sessions(
-            index_source=index_source,
-            agent=args.agent,
-            project=project,
-            since=args.since,
-            limit=page_limit,
-            root=root,
-        )
+    refs_iter, fallback_reason = iter_sessions(
+        index_source=index_source,
+        agent=args.agent,
+        project=project,
+        since=args.since,
+        limit=page_limit,
+        root=root,
+        runner=runner,
+    )
 
     refs: list[SessionRef] = []
     skips: list[SkipRecord] = []
