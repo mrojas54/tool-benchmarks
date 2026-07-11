@@ -70,9 +70,73 @@ def test_claude_parser_joins_tool_use_to_tool_result_from_lines() -> None:
     assert call.no_result is False
     assert call.result_source == "block_local"
     assert result.malformed == 0
+    assert call.raw_input is None
+    assert call.turn_key is None
+    assert result.turns == {}
 
 
-def test_claude_parser_drains_unmatched_call_at_eof() -> None:
+def test_claude_parser_keep_raw_input_stamps_serialized_tool_input() -> None:
+    """CQ 7.1: optional keep-raw so probe can drop its Claude-shaped join walker."""
+    lines = [
+        '{"type":"assistant","sessionId":"s1","timestamp":"t0","requestId":"req_1",'
+        '"message":{"role":"assistant","content":'
+        '[{"type":"tool_use","id":"u1","name":"Bash","input":{"command":"ls"}}]}}\n',
+        '{"type":"user","sessionId":"s1","timestamp":"t1","message":{"role":"user",'
+        '"content":[{"type":"tool_result","tool_use_id":"u1","content":"ok"}]}}\n',
+    ]
+    result = ClaudeParser().parse(
+        lines, agent="claude", source="raw", project="p", keep_raw_input=True
+    )
+    assert result.calls[0].raw_input == '{"command": "ls"}'
+
+
+def test_claude_parser_track_turns_stamps_turn_key_and_stats() -> None:
+    """CQ 7.1: optional turn tracking for probe isolability (S26)."""
+    lines = [
+        '{"type":"assistant","sessionId":"s1","timestamp":"t0","requestId":"req_a",'
+        '"message":{"role":"assistant","content":['
+        '{"type":"tool_use","id":"u1","name":"Bash","input":{"command":"echo hi"}},'
+        '{"type":"text","text":"prose"}'
+        ']}}\n',
+        '{"type":"user","sessionId":"s1","timestamp":"t1","message":{"role":"user",'
+        '"content":[{"type":"tool_result","tool_use_id":"u1","content":"hi"}]}}\n',
+    ]
+    result = ClaudeParser().parse(
+        lines, agent="claude", source="raw", project="p", track_turns=True
+    )
+    assert result.calls[0].turn_key == "req:req_a"
+    assert "req:req_a" in result.turns
+    assert result.turns["req:req_a"].tool_uses == 1
+    assert result.turns["req:req_a"].non_tool_output is True
+
+
+def test_claude_parser_track_turns_raises_without_request_id() -> None:
+    from toolbench.parsers import TurnKeyError
+
+    lines = [
+        '{"type":"assistant","sessionId":"s1","timestamp":"t0",'
+        '"message":{"role":"assistant","content":'
+        '[{"type":"tool_use","id":"u1","name":"Bash","input":{}}]}}\n',
+    ]
+    try:
+        ClaudeParser().parse(
+            lines, agent="claude", source="raw", project="p", track_turns=True
+        )
+    except TurnKeyError:
+        return
+    raise AssertionError("expected TurnKeyError")
+
+
+def test_probe_scan_does_not_construct_pending_calls() -> None:
+    """CQ 7.1: probe must consume ClaudeParser, not re-join with _PendingCall."""
+    import inspect
+
+    import toolbench.probe as probe
+
+    source = inspect.getsource(probe._scan_tool_use_blocks)
+    assert "_PendingCall" not in source
+    assert "ClaudeParser" in source
+
     lines = [
         '{"sessionId":"s1","timestamp":"t0","message":{"content":'
         '[{"type":"tool_use","id":"u1","name":"Read","input":{}}]}}\n',
