@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 
 
 def result_len(payload: object) -> int:
@@ -79,6 +77,10 @@ class ToolCall:
     # them from tool names.
     is_deferral: bool = False
     is_subagent_fanout: bool = False
+    # Optional parse enrichments (CQ 7.1). Default None/absent so passive
+    # reduction ignores them; probe opts in via ClaudeParser flags.
+    raw_input: str | None = None
+    turn_key: str | None = None
 
     @property
     def tokens(self) -> int:
@@ -90,8 +92,16 @@ class ToolCall:
 
 
 @dataclass
+class TurnStats:
+    """Per-API-response emission counts for isolability (S26 / CQ 7.1)."""
+
+    tool_uses: int = 0
+    non_tool_output: bool = False
+
+
+@dataclass
 class ParseResult:
-    """Output of `parse_session` (S5): joined calls plus a malformed-line count.
+    """Output of a `TranscriptParser.parse` pass (S5): joined calls plus a malformed-line count.
 
     `session_cache_read_tokens` (S32) is session-grain, not per-call: hermes
     populates it from the `sessions` row; ClaudeParser (S39 / CQ 1.2) sums it
@@ -126,33 +136,5 @@ class ParseResult:
     session_output_tokens: int = 0
     session_usage_messages: int = 0
     unjoinable: dict[str, int] = field(default_factory=dict)
-
-
-def parse_session(
-    path: str | os.PathLike[str],
-    *,
-    agent: str = "claude-code",
-    source: str = "raw",
-    project: str | None = None,
-) -> ParseResult:
-    """Deprecated: parse a Claude Code session JSONL by path.
-
-    Retained as a documented / test entry point. Live callers should prefer
-    `registry.pick_adapter(ref).parse(ref)`, which detects the schema instead of
-    assuming Claude's. `probe.py` no longer uses this shim (single-pass scan).
-
-    A `TranscriptParser` consumes an `Iterable[str]` and so cannot derive
-    `project` from a path; this shim resolves it before delegating, preserving
-    the historical `project=None -> path.parent.name` default.
-
-    errors="replace": a stray non-UTF-8 byte degrades to U+FFFD rather than
-    aborting the session (S5, TB-10).
-    """
-    from toolbench.parsers import ClaudeParser  # local: avoids an import cycle
-
-    session_path = Path(path)
-    resolved_project = project if project is not None else session_path.parent.name
-    with session_path.open(encoding="utf-8", errors="replace") as handle:
-        return ClaudeParser().parse(
-            handle, agent=agent, source=source, project=resolved_project
-        )
+    # Populated only when ClaudeParser(track_turns=True); empty otherwise.
+    turns: dict[str, TurnStats] = field(default_factory=dict)

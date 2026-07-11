@@ -6,8 +6,8 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 
 ## Parser & records — `toolbench/transcript.py`
 
-- **S1 — id-join.** `parse_session(path)` joins each assistant `tool_use`
-  block to its result by id. The join key is `message.content[].id`
+- **S1 — id-join.** `ClaudeParser.parse(lines, …)` joins each assistant
+  `tool_use` block to its result by id. The join key is `message.content[].id`
   (assistant, `type=="tool_use"`), matched against either top-level
   `toolUseID` or block-local `message.content[].tool_use_id` (user side).
 - **S2 — payload resolution.** The result payload resolves from top-level

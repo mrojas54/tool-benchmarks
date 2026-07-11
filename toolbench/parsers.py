@@ -13,7 +13,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import ClassVar
 
-from toolbench.transcript import ParseResult, ToolCall, UsageProvenance, result_len
+from toolbench.transcript import ParseResult, ToolCall, TurnStats, UsageProvenance, result_len
 
 # `hermes sessions export --format trace` stamps this on every record. It is a
 # positive producer declaration, not an inference from a missing field: verified
@@ -28,6 +28,34 @@ HERMES_TRACE_VERSION = "hermes-agent"
 # `wait_agent` awaits an already-spawned subagent and is not itself a fan-out.
 DEFERRAL_TOOL_NAMES = frozenset({"ToolSearch"})
 SUBAGENT_TOOL_NAMES = frozenset({"Agent", "Task", "spawn_agent"})
+
+
+class TurnKeyError(ValueError):
+    """Raised when `track_turns=True` but a turn cannot be keyed to `requestId`."""
+
+
+def _claude_turn_key(entry: dict[str, object]) -> str:
+    """Billing-unit key for an assistant record (S26). Requires `requestId`."""
+    request_id = entry.get("requestId")
+    if not isinstance(request_id, str) or not request_id:
+        raise TurnKeyError(
+            "assistant turn lacks requestId; cannot key usage to the billing unit (S26)"
+        )
+    return f"req:{request_id}"
+
+
+def _is_assistant_message(entry: dict[str, object], message: dict[str, object]) -> bool:
+    """User records carry `text` blocks too (tool results); they are not model output."""
+    return entry.get("type") != "user" and message.get("role") != "user"
+
+
+def _emits_non_tool_output(block: dict[str, object]) -> bool:
+    """True for a block that costs `output_tokens` without being the tool call."""
+    kind = block.get("type")
+    if kind == "text":
+        text = block.get("text")
+        return isinstance(text, str) and bool(text.strip())
+    return kind in ("thinking", "redacted_thinking")
 
 
 def _as_usage_int(value: object) -> int:
@@ -52,6 +80,8 @@ class _PendingCall:
     usage: dict[str, object] | None
     usage_provenance: UsageProvenance
     model: str | None
+    raw_input: str | None = None
+    turn_key: str | None = None
 
     def finish(
         self,
@@ -83,6 +113,8 @@ class _PendingCall:
             result_source=result_source,
             is_deferral=self.name in DEFERRAL_TOOL_NAMES,
             is_subagent_fanout=self.name in SUBAGENT_TOOL_NAMES,
+            raw_input=self.raw_input,
+            turn_key=self.turn_key,
         )
 
 
@@ -180,7 +212,14 @@ class ClaudeParser(TranscriptParser):
         )
 
     def parse(
-        self, lines: Iterable[str], *, agent: str, source: str, project: str
+        self,
+        lines: Iterable[str],
+        *,
+        agent: str,
+        source: str,
+        project: str,
+        keep_raw_input: bool = False,
+        track_turns: bool = False,
     ) -> ParseResult:
         """Join tool_use blocks to their results, streaming.
 
@@ -189,10 +228,18 @@ class ClaudeParser(TranscriptParser):
         `output_chars=0, no_result=True` rather than dropped (S6). `duration_ms`
         is always `None`: raw Claude Code JSONL carries no per-tool-call duration
         field to derive it from.
+
+        `keep_raw_input` (CQ 7.1) stamps `ToolCall.raw_input` with `json.dumps` of
+        the tool input so probe matching can reuse this pass.
+
+        `track_turns` (CQ 7.1 / S26) keys assistant emissions by `requestId`,
+        fills `ParseResult.turns`, and stamps `ToolCall.turn_key`. When set,
+        only assistant-message `tool_use` blocks are enqueued (probe semantics).
         """
         pending: dict[str, _PendingCall] = {}
         calls: list[ToolCall] = []
         malformed = 0
+        turns: dict[str, TurnStats] = {}
         # S39 / CQ 1.2: session-grain usage summed over every message that carries
         # `usage`, not only tool_use turns — assistant turns without tools still bill.
         cache_read = cache_creation = input_tokens = output_tokens = usage_messages = 0
@@ -226,11 +273,31 @@ class ClaudeParser(TranscriptParser):
                     input_tokens += _as_usage_int(usage.get("input_tokens"))
                     output_tokens += _as_usage_int(usage.get("output_tokens"))
 
+            turn_key: str | None = None
+            if (
+                track_turns
+                and isinstance(message, dict)
+                and isinstance(content, list)
+                and _is_assistant_message(entry, message)
+            ):
+                turn_key = _claude_turn_key(entry)
+                stats = turns.setdefault(turn_key, TurnStats())
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") == "tool_use":
+                        stats.tool_uses += 1
+                    else:
+                        stats.non_tool_output |= _emits_non_tool_output(block)
+
             if isinstance(content, list):
                 for tool_use_block in content:
                     if not isinstance(tool_use_block, dict):
                         continue
                     if tool_use_block.get("type") != "tool_use":
+                        continue
+                    if track_turns and turn_key is None:
+                        # User-side or non-assistant content: probe mode skips.
                         continue
                     tool_use_id = tool_use_block.get("id")
                     name = tool_use_block.get("name")
@@ -238,6 +305,9 @@ class ClaudeParser(TranscriptParser):
                         continue
                     usage = message.get("usage") if isinstance(message, dict) else None
                     model = message.get("model") if isinstance(message, dict) else None
+                    raw_input = (
+                        json.dumps(tool_use_block.get("input")) if keep_raw_input else None
+                    )
                     pending[tool_use_id] = _PendingCall(
                         name=name,
                         input_chars=result_len(tool_use_block.get("input")),
@@ -246,6 +316,8 @@ class ClaudeParser(TranscriptParser):
                         usage=usage if isinstance(usage, dict) else None,
                         usage_provenance=self._provenance(usage),
                         model=model if isinstance(model, str) else None,
+                        raw_input=raw_input,
+                        turn_key=turn_key,
                     )
 
             result_blocks: list[dict[str, object] | None] = []
@@ -282,7 +354,7 @@ class ClaudeParser(TranscriptParser):
             _drain_pending(pending, agent=agent, source=source, project=project)
         )
         if usage_messages == 0:
-            return ParseResult(calls=calls, malformed=malformed)
+            return ParseResult(calls=calls, malformed=malformed, turns=turns)
         return ParseResult(
             calls=calls,
             malformed=malformed,
@@ -291,6 +363,7 @@ class ClaudeParser(TranscriptParser):
             session_input_tokens=input_tokens,
             session_output_tokens=output_tokens,
             session_usage_messages=usage_messages,
+            turns=turns,
         )
 
 

@@ -3,21 +3,14 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
-from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from toolbench.adapters import detect_parser
-from toolbench.parsers import (
-    HermesTraceParser,
-    _PendingCall,
-    _result_id,
-    _result_payload,
-)
-from toolbench.transcript import ToolCall, UsageProvenance, result_len
+from toolbench.parsers import ClaudeParser, HermesTraceParser, TurnKeyError, _claude_turn_key
+from toolbench.transcript import ToolCall, TurnStats
 
 BASH_TOOL_NAME = "Bash"
 
@@ -137,14 +130,6 @@ class ComparisonRow:
     bash_seeded: bool
 
 
-@dataclass
-class _TurnStats:
-    """What one API response emitted, for deciding whether its usage is attributable."""
-
-    tool_uses: int = 0
-    non_tool_output: bool = False
-
-
 @dataclass(frozen=True)
 class _ProbeHit:
     """One tool_use joined (or EOF-drained) with the raw input text probe matching needs."""
@@ -160,60 +145,32 @@ class _ScanResult:
     """`hits` carry joined calls + raw input; `turns` is keyed by `turn_key`."""
 
     hits: list[_ProbeHit]
-    turns: dict[str, _TurnStats]
+    turns: dict[str, TurnStats]
 
 
 def _turn_key(entry: dict[str, object]) -> str:
     """The unit `output_tokens` is billed against: the API response (S26).
 
-    Claude Code writes one API response as several JSONL entries -- `thinking`,
-    `text`, and each `tool_use` -- sharing a `requestId` and a single `usage`
-    figure, but carrying *distinct* timestamps. Grouping by timestamp therefore
-    sees every response as a lone block, which is the TB-16 defect. There is no
-    timestamp fallback: an entry that cannot be keyed to a response is refused.
+    Thin wrapper over the parser seam so probe's public error type stays
+    `NonIsolableTurns` (tests and callers depend on it).
     """
-    request_id = entry.get("requestId")
-    if not (isinstance(request_id, str) and request_id):
+    try:
+        return _claude_turn_key(entry)
+    except TurnKeyError as exc:
         raise NonIsolableTurns(
             "probe requires requestId to group turns by the billing unit (S26); "
             "this entry has none. hermes --format trace exports never carry it."
-        )
-    return f"req:{request_id}"
-
-
-def _is_assistant(entry: dict[str, object], message: dict[str, object]) -> bool:
-    """User records carry `text` blocks too (tool results); they are not model output."""
-    return entry.get("type") != "user" and message.get("role") != "user"
-
-
-def _emits_non_tool_output(block: dict[str, object]) -> bool:
-    """True for a block that costs `output_tokens` without being the tool call.
-
-    Prose and reasoning are both billed to `output_tokens`. A whitespace-only
-    text block costs nothing and must not disqualify an otherwise clean arm.
-    """
-    kind = block.get("type")
-    if kind == "text":
-        text = block.get("text")
-        return isinstance(text, str) and bool(text.strip())
-    return kind in ("thinking", "redacted_thinking")
+        ) from exc
 
 
 def _scan_tool_use_blocks(path: str | os.PathLike[str]) -> _ScanResult:
-    """Single pass: join tool_use→result like ClaudeParser, keep raw input for matching.
-
-    Previously this walked the file once for sentinels and again via
-    `parse_session` for joined `ToolCall`s, then glued them on `(ts, name)`.
-    One pass deletes that join and the Claude-only shim dependency.
+    """Join via ClaudeParser with keep-raw + turn tracking (CQ 7.1).
 
     Routes through `adapters.detect_parser` to refuse a hermes trace export by
-    name before it silently produces a plausible, wrong answer. The `_turn_key`
-    guard is still the load-bearing S26 check for any corpus.
+    name before it silently produces a plausible, wrong answer. Turn-key
+    refusal (S26) is raised from the parser seam as `TurnKeyError` and mapped
+    to `NonIsolableTurns`.
     """
-    hits: list[_ProbeHit] = []
-    turns: dict[str, _TurnStats] = defaultdict(_TurnStats)
-    # tool_use id -> (pending call, serialized input, turn_key)
-    pending: dict[str, tuple[_PendingCall, str, str]] = {}
     session_path = Path(path)
     project = session_path.parent.name
 
@@ -225,113 +182,32 @@ def _scan_tool_use_blocks(path: str | os.PathLike[str]) -> _ScanResult:
                 "keyed to the billing unit (S30). Trace exports are valid input to "
                 "passive.py but not to probe.py. Use a native Claude transcript."
             )
-        for raw_line in replayed:
-            line = raw_line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(entry, dict):
-                continue
-
-            message = entry.get("message")
-            content = message.get("content") if isinstance(message, dict) else None
-            session_id = entry.get("sessionId")
-            ts = entry.get("timestamp")
-            session_id_str = session_id if isinstance(session_id, str) else ""
-            ts_str = ts if isinstance(ts, str) else ""
-
-            if (
-                isinstance(message, dict)
-                and isinstance(content, list)
-                and _is_assistant(entry, message)
-            ):
-                key = _turn_key(entry)
-                stats = turns[key]
-                usage = message.get("usage")
-                model = message.get("model")
-                for block in content:
-                    if not isinstance(block, dict):
-                        continue
-                    if block.get("type") != "tool_use":
-                        stats.non_tool_output |= _emits_non_tool_output(block)
-                        continue
-                    stats.tool_uses += 1
-                    tool_use_id = block.get("id")
-                    name = block.get("name")
-                    if not isinstance(tool_use_id, str) or not isinstance(name, str):
-                        continue
-                    pending[tool_use_id] = (
-                        _PendingCall(
-                            name=name,
-                            input_chars=result_len(block.get("input")),
-                            session_id=session_id_str,
-                            ts=ts_str,
-                            usage=usage if isinstance(usage, dict) else None,
-                            usage_provenance=(
-                                UsageProvenance.PRESENT
-                                if isinstance(usage, dict)
-                                else UsageProvenance.ABSENT_UNEXPECTED
-                            ),
-                            model=model if isinstance(model, str) else None,
-                        ),
-                        json.dumps(block.get("input")),
-                        key,
-                    )
-
-            result_blocks: list[dict[str, object] | None] = []
-            if isinstance(content, list):
-                result_blocks = [
-                    block
-                    for block in content
-                    if isinstance(block, dict) and block.get("type") == "tool_result"
-                ]
-            if not result_blocks and "toolUseID" in entry:
-                result_blocks = [None]
-
-            for result_block in result_blocks:
-                result_id = _result_id(entry, result_block)
-                if result_id is None or result_id not in pending:
-                    continue
-                payload, payload_source = _result_payload(entry, result_block)
-                pending_call, serialized_input, turn_key = pending.pop(result_id)
-                error = None
-                if isinstance(result_block, dict) and result_block.get("is_error"):
-                    error = "tool_error"
-                hits.append(
-                    _ProbeHit(
-                        name=pending_call.name,
-                        serialized_input=serialized_input,
-                        turn_key=turn_key,
-                        call=pending_call.finish(
-                            agent="claude-code",
-                            source="raw",
-                            project=project,
-                            output_chars=result_len(payload),
-                            error=error,
-                            result_source=payload_source,
-                        ),
-                    )
-                )
-
-    for pending_call, serialized_input, turn_key in pending.values():
-        hits.append(
-            _ProbeHit(
-                name=pending_call.name,
-                serialized_input=serialized_input,
-                turn_key=turn_key,
-                call=pending_call.finish(
-                    agent="claude-code",
-                    source="raw",
-                    project=project,
-                    output_chars=0,
-                    no_result=True,
-                ),
+        try:
+            result = ClaudeParser().parse(
+                replayed,
+                agent="claude-code",
+                source="raw",
+                project=project,
+                keep_raw_input=True,
+                track_turns=True,
             )
+        except TurnKeyError as exc:
+            raise NonIsolableTurns(
+                "probe requires requestId to group turns by the billing unit (S26); "
+                "this entry has none. hermes --format trace exports never carry it."
+            ) from exc
+
+    hits = [
+        _ProbeHit(
+            name=call.name,
+            serialized_input=call.raw_input or "",
+            turn_key=call.turn_key or "",
+            call=call,
         )
-    return _ScanResult(hits=hits, turns=dict(turns))
+        for call in result.calls
+        if call.raw_input is not None and call.turn_key is not None
+    ]
+    return _ScanResult(hits=hits, turns=result.turns)
 
 
 def _mentions_probe_machinery(serialized_input: str) -> bool:

@@ -5,15 +5,41 @@ from tempfile import TemporaryDirectory
 
 # S1/S2 join and payload-resolution moved to `parsers.py` in TB-13. The
 # assertions below are unchanged: only the import site moved.
+import toolbench.transcript as transcript_mod
 from toolbench.parsers import ClaudeParser, _result_id, _result_payload
 from toolbench.transcript import (
+    ParseResult,
     ToolCall,
     UsageProvenance,
-    parse_session,
     result_len,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _parse_claude_path(
+    path: Path,
+    *,
+    agent: str = "claude-code",
+    source: str = "raw",
+    project: str | None = None,
+) -> ParseResult:
+    """Open a session path the way live loaders do (errors=replace) and parse."""
+    resolved = project if project is not None else path.parent.name
+    with path.open(encoding="utf-8", errors="replace") as handle:
+        return ClaudeParser().parse(
+            handle, agent=agent, source=source, project=resolved
+        )
+
+
+class ParseSessionRetirementTests(unittest.TestCase):
+    """CQ 1.3: path shim is gone; callers use ClaudeParser / pick_adapter."""
+
+    def test_parse_session_not_exported_from_transcript(self) -> None:
+        self.assertFalse(
+            hasattr(transcript_mod, "parse_session"),
+            "parse_session must be deleted — use ClaudeParser.parse over lines",
+        )
 
 
 class ResultLenTests(unittest.TestCase):
@@ -127,9 +153,9 @@ class ResultIdPayloadTests(unittest.TestCase):
         self.assertEqual(_result_payload({}, None), (None, None))
 
 
-class ParseSessionTests(unittest.TestCase):
+class ClaudeParserFixtureTests(unittest.TestCase):
     def setUp(self) -> None:
-        result = parse_session(FIXTURES / "sample.jsonl")
+        result = _parse_claude_path(FIXTURES / "sample.jsonl")
         self.result = result
         self.by_name = {call.name: call for call in result.calls}
 
@@ -182,8 +208,8 @@ class ParseSessionTests(unittest.TestCase):
 class NonUtf8SessionTests(unittest.TestCase):
     """Raw sessions carrying a stray byte parse to completion (TB-10).
 
-    `_parse_ref` sends raw sessions straight to `parse_session`, bypassing
-    `open_session_jsonl` — so this is the decode boundary the raw CLI path hits.
+    Live loaders open with errors=\"replace\" before handing lines to the parser —
+    that decode boundary is what this exercises.
     """
 
     def test_non_utf8_byte_does_not_abort_parse(self) -> None:
@@ -191,7 +217,7 @@ class NonUtf8SessionTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "sess-bad.jsonl"
             path.write_bytes(good + b'{"type": "assistant", "note": "caf\xa0"}\n')
-            result = parse_session(str(path), agent="claude-code", source="raw", project="p")
+            result = _parse_claude_path(path, project="p")
         # The undamaged calls still land; the mangled line is JSON-valid, so it is
         # simply an entry with no tool_use rather than a malformed-line bump.
         self.assertGreater(len(result.calls), 0)
@@ -201,7 +227,7 @@ class NonUtf8SessionTests(unittest.TestCase):
             path = Path(tmp) / "sess-bad.jsonl"
             # 0xa0 lands on the closing quote, so U+FFFD leaves the JSON unparseable.
             path.write_bytes(b'{"type": "assistant"\xa0\n')
-            result = parse_session(str(path), agent="claude-code", source="raw", project="p")
+            result = _parse_claude_path(path, project="p")
         self.assertEqual(result.calls, [])
         self.assertEqual(result.malformed, 1)
 
