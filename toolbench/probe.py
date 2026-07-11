@@ -11,8 +11,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from toolbench.adapters import detect_parser
-from toolbench.parsers import HermesTraceParser
-from toolbench.transcript import ToolCall, parse_session
+from toolbench.parsers import (
+    HermesTraceParser,
+    _PendingCall,
+    _result_id,
+    _result_payload,
+)
+from toolbench.transcript import ToolCall, UsageProvenance, result_len
 
 BASH_TOOL_NAME = "Bash"
 
@@ -141,10 +146,20 @@ class _TurnStats:
 
 
 @dataclass(frozen=True)
-class _ScanResult:
-    """`records` are `(ts, name, serialized_input, turn_key)`; `turns` is keyed by `turn_key`."""
+class _ProbeHit:
+    """One tool_use joined (or EOF-drained) with the raw input text probe matching needs."""
 
-    records: list[tuple[str, str, str, str]]
+    name: str
+    serialized_input: str
+    turn_key: str
+    call: ToolCall
+
+
+@dataclass
+class _ScanResult:
+    """`hits` carry joined calls + raw input; `turns` is keyed by `turn_key`."""
+
+    hits: list[_ProbeHit]
     turns: dict[str, _TurnStats]
 
 
@@ -185,20 +200,23 @@ def _emits_non_tool_output(block: dict[str, object]) -> bool:
 
 
 def _scan_tool_use_blocks(path: str | os.PathLike[str]) -> _ScanResult:
-    """Raw pass over a session JSONL, grouping blocks by the response that emitted them.
+    """Single pass: join tool_use→result like ClaudeParser, keep raw input for matching.
 
-    Deliberately independent of `transcript.parse_session`, which normalizes
-    tool input to a character count (`result_len`) and drops the raw text a
-    sentinel would live in.
+    Previously this walked the file once for sentinels and again via
+    `parse_session` for joined `ToolCall`s, then glued them on `(ts, name)`.
+    One pass deletes that join and the Claude-only shim dependency.
 
-    Routes through `adapters.detect_parser` for one reason: to refuse a hermes
-    trace export by name before it silently produces a plausible, wrong answer.
-    The `_turn_key` guard below is the load-bearing check -- it defends S26 for any
-    corpus, whatever parser claimed it -- but a refusal at the door can say why.
+    Routes through `adapters.detect_parser` to refuse a hermes trace export by
+    name before it silently produces a plausible, wrong answer. The `_turn_key`
+    guard is still the load-bearing S26 check for any corpus.
     """
-    records: list[tuple[str, str, str, str]] = []
+    hits: list[_ProbeHit] = []
     turns: dict[str, _TurnStats] = defaultdict(_TurnStats)
+    # tool_use id -> (pending call, serialized input, turn_key)
+    pending: dict[str, tuple[_PendingCall, str, str]] = {}
     session_path = Path(path)
+    project = session_path.parent.name
+
     with session_path.open(encoding="utf-8") as handle:
         parser, replayed = detect_parser(handle)
         if parser.schema_tag == HermesTraceParser.schema_tag:
@@ -217,28 +235,103 @@ def _scan_tool_use_blocks(path: str | os.PathLike[str]) -> _ScanResult:
                 continue
             if not isinstance(entry, dict):
                 continue
+
             message = entry.get("message")
-            if not isinstance(message, dict):
-                continue
-            content = message.get("content")
-            if not isinstance(content, list) or not _is_assistant(entry, message):
-                continue
+            content = message.get("content") if isinstance(message, dict) else None
+            session_id = entry.get("sessionId")
             ts = entry.get("timestamp")
+            session_id_str = session_id if isinstance(session_id, str) else ""
             ts_str = ts if isinstance(ts, str) else ""
-            key = _turn_key(entry)
-            stats = turns[key]
-            for block in content:
-                if not isinstance(block, dict):
+
+            if (
+                isinstance(message, dict)
+                and isinstance(content, list)
+                and _is_assistant(entry, message)
+            ):
+                key = _turn_key(entry)
+                stats = turns[key]
+                usage = message.get("usage")
+                model = message.get("model")
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") != "tool_use":
+                        stats.non_tool_output |= _emits_non_tool_output(block)
+                        continue
+                    stats.tool_uses += 1
+                    tool_use_id = block.get("id")
+                    name = block.get("name")
+                    if not isinstance(tool_use_id, str) or not isinstance(name, str):
+                        continue
+                    pending[tool_use_id] = (
+                        _PendingCall(
+                            name=name,
+                            input_chars=result_len(block.get("input")),
+                            session_id=session_id_str,
+                            ts=ts_str,
+                            usage=usage if isinstance(usage, dict) else None,
+                            usage_provenance=(
+                                UsageProvenance.PRESENT
+                                if isinstance(usage, dict)
+                                else UsageProvenance.ABSENT_UNEXPECTED
+                            ),
+                            model=model if isinstance(model, str) else None,
+                        ),
+                        json.dumps(block.get("input")),
+                        key,
+                    )
+
+            result_blocks: list[dict[str, object] | None] = []
+            if isinstance(content, list):
+                result_blocks = [
+                    block
+                    for block in content
+                    if isinstance(block, dict) and block.get("type") == "tool_result"
+                ]
+            if not result_blocks and "toolUseID" in entry:
+                result_blocks = [None]
+
+            for result_block in result_blocks:
+                result_id = _result_id(entry, result_block)
+                if result_id is None or result_id not in pending:
                     continue
-                if block.get("type") != "tool_use":
-                    stats.non_tool_output |= _emits_non_tool_output(block)
-                    continue
-                stats.tool_uses += 1
-                name = block.get("name")
-                if not isinstance(name, str):
-                    continue
-                records.append((ts_str, name, json.dumps(block.get("input")), key))
-    return _ScanResult(records=records, turns=dict(turns))
+                payload, payload_source = _result_payload(entry, result_block)
+                pending_call, serialized_input, turn_key = pending.pop(result_id)
+                error = None
+                if isinstance(result_block, dict) and result_block.get("is_error"):
+                    error = "tool_error"
+                hits.append(
+                    _ProbeHit(
+                        name=pending_call.name,
+                        serialized_input=serialized_input,
+                        turn_key=turn_key,
+                        call=pending_call.finish(
+                            agent="claude-code",
+                            source="raw",
+                            project=project,
+                            output_chars=result_len(payload),
+                            error=error,
+                            result_source=payload_source,
+                        ),
+                    )
+                )
+
+    for pending_call, serialized_input, turn_key in pending.values():
+        hits.append(
+            _ProbeHit(
+                name=pending_call.name,
+                serialized_input=serialized_input,
+                turn_key=turn_key,
+                call=pending_call.finish(
+                    agent="claude-code",
+                    source="raw",
+                    project=project,
+                    output_chars=0,
+                    no_result=True,
+                ),
+            )
+        )
+    return _ScanResult(hits=hits, turns=dict(turns))
 
 
 def _mentions_probe_machinery(serialized_input: str) -> bool:
@@ -295,32 +388,28 @@ def find_probe_calls(
     """
     scan = _scan_tool_use_blocks(path)
 
-    calls_by_key: dict[tuple[str, str], ToolCall] = {}
-    for call in parse_session(path).calls:
-        calls_by_key.setdefault((call.ts, call.name), call)
-
     matches: dict[str, ArmMatch] = {spec.id: ArmMatch() for spec in probes}
-    for ts, name, serialized_input, turn_key in scan.records:
-        if _mentions_probe_machinery(serialized_input):
+    for hit in scan.hits:
+        if _mentions_probe_machinery(hit.serialized_input):
             continue
-        present = _sentinels_in(serialized_input, probes)
+        present = _sentinels_in(hit.serialized_input, probes)
         if len(present) > 1:
             continue
         sentinel = next(iter(present), None)
-        turn = scan.turns[turn_key]
+        turn = scan.turns[hit.turn_key]
         isolable = turn.tool_uses == 1 and not turn.non_tool_output
         for spec in probes:
             arm = matches[spec.id]
             is_tool_arm = (
-                name in spec.tool_names
-                and spec.target in serialized_input
+                hit.name in spec.tool_names
+                and spec.target in hit.serialized_input
                 and sentinel in (None, spec.tool_sentinel)
             )
             if is_tool_arm:
-                arm.tool = calls_by_key.get((ts, name))
+                arm.tool = hit.call
                 arm.tool_isolable = isolable
-            elif name == BASH_TOOL_NAME and sentinel == spec.bash_sentinel:
-                arm.bash = calls_by_key.get((ts, name))
+            elif hit.name == BASH_TOOL_NAME and sentinel == spec.bash_sentinel:
+                arm.bash = hit.call
                 arm.bash_isolable = isolable
     return matches
 
