@@ -1,0 +1,4 @@
+{"type":"user","message":{"content":"hi"}}
+{"type":"system","subtype":"init"}
+
+not-json-degrades-to-skipped
