@@ -169,6 +169,22 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   fingerprint even though the call and malformed counts are unchanged. This is the
   no-silent-zeros stance applied to a record that cannot be joined, so the gap is
   named rather than absent (TB-24; the home is TB-21's Summary reconciliation).
+- **S39 — session-grain cache-token sums for Claude, read and creation.**
+  `session_cache_read_tokens` (S32) is populated for Claude sessions too — summed
+  over the session's per-message `usage.cache_read_input_tokens`, not only from the
+  hermes `sessions` row — and a parallel `session_cache_creation_tokens` is added,
+  summed from `cache_creation_input_tokens`. Both are `None` when no message in the
+  session carried `usage` (unmeasured, SQL NULL) and an int — including `0` — once
+  at least one did (measured). This promotes the `_is_cache_hit` boolean (S19, a
+  caveat-only per-message cache signal) to a session total the token-cost benchmark
+  can diff, without touching ranking: the sums render as a Summary caveat line
+  (read + creation), never folded into an inefficiency ratio. The hermes path is
+  unchanged (still the `sessions` row, no double-count), and the TB-25 survival
+  invariant extends — `_apply_date_range` reconstructs via `replace()`, so the new
+  field passes `--date-from`/`--date-to` intact. Read and creation are surfaced
+  together deliberately: a prefix-sharing change (per-ticket context extracts vs a
+  shared contract) trades one for the other, so a read delta read alone misleads
+  (TB-26; foundation for the per-run `--run-manifest` grouping, TB-27).
 
 ## Active probes — `toolbench/probe.py` + `protocols/active-probes.md`
 
