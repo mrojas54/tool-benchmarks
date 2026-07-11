@@ -126,10 +126,21 @@ class ReducerAbsorbTests(unittest.TestCase):
 
     def test_tool_search_tracked_as_deferral_tax(self) -> None:
         reducer = Reducer()
-        calls = [make_call(name="ToolSearch", output_chars=4000)]
+        calls = [make_call(name="ToolSearch", output_chars=4000, is_deferral=True)]
         reducer.absorb("claude-code", ParseResult(calls=calls, malformed=0))
         self.assertEqual(reducer.inefficiency.tool_search_calls, 1)
         self.assertEqual(reducer.inefficiency.tool_search_tokens, 1000)
+
+    def test_deferral_tax_counts_flag_not_tool_name(self) -> None:
+        """CQ 3.1: reducer is schema-neutral — only the parse-time tag counts."""
+        reducer = Reducer()
+        calls = [
+            make_call(name="ToolSearch", output_chars=4000, is_deferral=False),
+            make_call(name="deferred_lookup", output_chars=800, is_deferral=True),
+        ]
+        reducer.absorb("claude-code", ParseResult(calls=calls, malformed=0))
+        self.assertEqual(reducer.inefficiency.tool_search_calls, 1)
+        self.assertEqual(reducer.inefficiency.tool_search_tokens, 200)
 
     def test_oversized_output_counted(self) -> None:
         reducer = Reducer()
@@ -140,9 +151,21 @@ class ReducerAbsorbTests(unittest.TestCase):
 
     def test_subagent_fanout_counted(self) -> None:
         reducer = Reducer()
-        calls = [make_call(name="Agent"), make_call(name="Read")]
+        calls = [make_call(name="Agent", is_subagent_fanout=True), make_call(name="Read")]
         reducer.absorb("claude-code", ParseResult(calls=calls, malformed=0))
         self.assertEqual(reducer.inefficiency.subagent_fanout, 1)
+
+    def test_subagent_fanout_counts_flag_not_tool_name(self) -> None:
+        """CQ 3.1: Agent/Task/spawn_agent policy lives at parse time, not absorb."""
+        reducer = Reducer()
+        calls = [
+            make_call(name="Agent", is_subagent_fanout=False),
+            make_call(name="spawn_agent", is_subagent_fanout=False),
+            make_call(name="custom_fanout", is_subagent_fanout=True),
+        ]
+        reducer.absorb("codex", ParseResult(calls=calls, malformed=0))
+        self.assertEqual(reducer.inefficiency.subagent_fanout, 1)
+        self.assertEqual(reducer.inefficiency.subagent_by_tool, {"custom_fanout": 1})
 
     def test_subagent_fanout_counts_codex_spawn_agent(self) -> None:
         """codex is the only agent in the corpus that spawns subagents, and the
@@ -150,13 +173,19 @@ class ReducerAbsorbTests(unittest.TestCase):
         awaits an existing subagent and is not a fan-out."""
         reducer = Reducer()
         calls = [
-            make_call(name="spawn_agent"),
+            make_call(name="spawn_agent", is_subagent_fanout=True),
             make_call(name="wait_agent"),
             make_call(name="exec_command"),
         ]
         reducer.absorb("codex", ParseResult(calls=calls, malformed=0))
         self.assertEqual(reducer.inefficiency.subagent_fanout, 1)
         self.assertEqual(reducer.inefficiency.subagent_by_tool, {"spawn_agent": 1})
+
+    def test_reducer_does_not_export_subagent_name_policy(self) -> None:
+        """CQ 3.1: agent-specific frozensets must not live on the reducer."""
+        import toolbench.reducer as reducer_mod
+
+        self.assertFalse(hasattr(reducer_mod, "SUBAGENT_TOOL_NAMES"))
 
     def test_churn_counts_consecutive_same_tool_bad_repeats(self) -> None:
         reducer = Reducer()

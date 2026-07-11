@@ -125,15 +125,24 @@ class IterSessionFilesTests(unittest.TestCase):
             paths = list(iter_session_files(root=tmp))
             self.assertEqual([p.name for p in paths], ["session1.jsonl"])
 
-    def test_filters_by_project_substring(self) -> None:
+    def test_filters_by_project_equality_on_first_segment(self) -> None:
+        """CQ 3.2: --project matches the owning dir exactly, not a substring."""
         with TemporaryDirectory() as tmp:
             (Path(tmp) / "-Users-me-tool-benchmarks").mkdir()
             (Path(tmp) / "-Users-me-tool-benchmarks" / "s1.jsonl").write_text("{}\n")
+            (Path(tmp) / "-Users-me-tool-benchmarks-extra").mkdir()
+            (Path(tmp) / "-Users-me-tool-benchmarks-extra" / "s2.jsonl").write_text("{}\n")
             (Path(tmp) / "-Users-me-other-project").mkdir()
-            (Path(tmp) / "-Users-me-other-project" / "s2.jsonl").write_text("{}\n")
-            paths = list(iter_session_files(root=tmp, project="tool-benchmarks"))
-            self.assertEqual(len(paths), 1)
-            self.assertEqual(paths[0].name, "s1.jsonl")
+            (Path(tmp) / "-Users-me-other-project" / "s3.jsonl").write_text("{}\n")
+            # Substring "tool-benchmarks" must NOT match either encoded dir.
+            self.assertEqual(
+                list(iter_session_files(root=tmp, project="tool-benchmarks")),
+                [],
+            )
+            paths = list(
+                iter_session_files(root=tmp, project="-Users-me-tool-benchmarks")
+            )
+            self.assertEqual([p.name for p in paths], ["s1.jsonl"])
 
     def test_project_filter_keeps_nested_subagent_sessions(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -141,7 +150,9 @@ class IterSessionFilesTests(unittest.TestCase):
             (proj / "subagents").mkdir(parents=True)
             (proj / "s1.jsonl").write_text("{}\n")
             (proj / "subagents" / "sub1.jsonl").write_text("{}\n")
-            paths = list(iter_session_files(root=tmp, project="tool-benchmarks"))
+            paths = list(
+                iter_session_files(root=tmp, project="-Users-me-tool-benchmarks")
+            )
             self.assertEqual(sorted(p.name for p in paths), ["s1.jsonl", "sub1.jsonl"])
 
     def test_project_filter_excludes_other_projects_nested_sessions(self) -> None:
@@ -149,7 +160,9 @@ class IterSessionFilesTests(unittest.TestCase):
             other = Path(tmp) / "-Users-me-other-project"
             (other / "subagents").mkdir(parents=True)
             (other / "subagents" / "sub2.jsonl").write_text("{}\n")
-            paths = list(iter_session_files(root=tmp, project="tool-benchmarks"))
+            paths = list(
+                iter_session_files(root=tmp, project="-Users-me-tool-benchmarks")
+            )
             self.assertEqual(paths, [])
 
     def test_filters_by_since_mtime(self) -> None:
@@ -203,6 +216,24 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
             self.assertEqual(len(ref_list), 1)
             self.assertEqual(ref_list[0].source, "raw")
             self.assertIsNone(reason)
+
+    def test_raw_refs_use_first_segment_project_and_is_subagent_flag(self) -> None:
+        """CQ 3.2: subagent paths keep the owning project; is_subagent is set at discovery."""
+        with TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "-Users-me-tool-benchmarks"
+            (proj / "subagents").mkdir(parents=True)
+            (proj / "parent.jsonl").write_text("{}\n")
+            (proj / "subagents" / "child.jsonl").write_text("{}\n")
+            refs, _reason = iter_sessions(index_source="raw", root=tmp, runner=FakeRunner([]))
+            by_id = {r.session_id: r for r in refs}
+            parent = by_id["parent"]
+            child = by_id["child"]
+            self.assertEqual(parent.project, "-Users-me-tool-benchmarks")
+            self.assertFalse(parent.is_subagent)
+            self.assertEqual(child.project, "-Users-me-tool-benchmarks")
+            self.assertTrue(child.is_subagent)
+            # Must not collapse the owning project to the "subagents" directory name.
+            self.assertNotEqual(child.project, "subagents")
 
     def test_agentsview_mode_strict_raises_on_missing_binary(self) -> None:
         runner = FakeRunner([FileNotFoundError("no agentsview")])
@@ -419,48 +450,6 @@ def test_skip_record_carries_a_typed_reason() -> None:
     assert rec.reason is SkipReason.UNKNOWN_SCHEMA
     assert rec.session_id == "c:1"
     assert rec.detail == "no parser"
-
-
-class RawSessionAttributionTests(unittest.TestCase):
-    """Raw discovery attributes project as the first segment under root (S13).
-
-    Subagent transcripts live at <project>/subagents/*.jsonl — their project must
-    be the owning project dir, not the literal parent name `subagents`, and the
-    subagent bit is a bool on SessionRef rather than a path-substring filter.
-    """
-
-    def test_top_level_session_project_is_first_path_segment(self) -> None:
-        with TemporaryDirectory() as tmp:
-            proj = Path(tmp) / "-Users-me-tool-benchmarks"
-            proj.mkdir()
-            (proj / "sess.jsonl").write_text("{}\n")
-            refs, _ = iter_sessions(index_source="raw", root=tmp, runner=FakeRunner([]))
-            ref = list(refs)[0]
-            self.assertEqual(ref.project, "-Users-me-tool-benchmarks")
-            self.assertFalse(ref.is_subagent)
-
-    def test_subagent_session_keeps_owning_project_and_sets_flag(self) -> None:
-        with TemporaryDirectory() as tmp:
-            proj = Path(tmp) / "-Users-me-tool-benchmarks"
-            (proj / "subagents").mkdir(parents=True)
-            (proj / "subagents" / "child.jsonl").write_text("{}\n")
-            refs, _ = iter_sessions(index_source="raw", root=tmp, runner=FakeRunner([]))
-            ref = list(refs)[0]
-            self.assertEqual(ref.project, "-Users-me-tool-benchmarks")
-            self.assertNotEqual(ref.project, "subagents")
-            self.assertTrue(ref.is_subagent)
-            self.assertEqual(ref.session_id, "child")
-
-    def test_agentsview_refs_default_is_subagent_false(self) -> None:
-        payload = {
-            "sessions": [{"id": "s1", "project": "p", "agent": "claude"}],
-            "next_cursor": "",
-            "total": 1,
-        }
-        runner = FakeRunner([completed(stdout=json.dumps(payload))])
-        refs, _ = iter_sessions(index_source="agentsview", runner=runner)
-        ref = list(refs)[0]
-        self.assertFalse(ref.is_subagent)
 
 
 if __name__ == "__main__":

@@ -294,6 +294,30 @@ class SessionGrainCacheCaveatRenderTests(unittest.TestCase):
         self.assertIn("hermes: 1 of 2 sessions carry session-grain", section)
         self.assertIn("cache_read_tokens", section)
 
+    def test_summary_renders_read_and_creation_token_totals(self) -> None:
+        """S39 / CQ 1.2: Summary caveat surfaces read + creation together."""
+        reducer = Reducer()
+        reducer.absorb(
+            "claude-code",
+            ParseResult(
+                calls=[make_call()],
+                malformed=0,
+                session_cache_read_tokens=300,
+                session_cache_creation_tokens=30,
+            ),
+        )
+        report = render_report(
+            reducer,
+            index_source="raw",
+            fallback_reason=None,
+            skips=[],
+            include_subagents=True,
+            since_note=None,
+        )
+        summary = report[report.index("## Summary") :]
+        self.assertIn("Session-grain cache tokens: read=300 creation=30", summary)
+        self.assertIn("S39 caveat, not ranked", summary)
+
     def test_caveat_line_absent_when_no_session_grain_data(self) -> None:
         reducer = Reducer()
         reducer.absorb("claude-code", ParseResult(calls=[make_call()], malformed=0))

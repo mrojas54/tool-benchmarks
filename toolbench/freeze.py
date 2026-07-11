@@ -43,13 +43,15 @@ def _ref_to_dict(ref: SessionRef) -> dict[str, str | bool | None]:
     }
 
 
-def _ref_from_dict(d: dict[str, object]) -> SessionRef:
+def _ref_from_dict(d: dict[str, str | bool | None]) -> SessionRef:
     path_raw = d.get("path")
     path = None if path_raw is None else str(path_raw)
     if "is_subagent" in d:
-        is_subagent = bool(d["is_subagent"])
+        raw_flag = d["is_subagent"]
+        is_subagent = raw_flag if isinstance(raw_flag, bool) else False
     else:
-        # Pre-flag manifests: recover the bit from the nested path shape (S13).
+        # Pre-CQ-3.2 manifests omit the flag; recover it from the nested path
+        # so `--exclude-subagents` still drops them on freeze replay (S13).
         is_subagent = path is not None and "/subagents/" in path
     return SessionRef(
         agent=str(d["agent"]),

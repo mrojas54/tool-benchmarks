@@ -89,13 +89,8 @@ def _call_in_range(ts: str, date_from: str | None, date_to: str | None) -> bool:
     return True
 
 
-def _is_subagent_path(ref: SessionRef) -> bool:
-    """S13: discovery sets `SessionRef.is_subagent`; filter on the flag only."""
-    return ref.is_subagent
-
-
 def filter_subagents(refs: list[SessionRef]) -> list[SessionRef]:
-    """Remove subagent sessions tagged at discovery (S13)."""
+    """Remove sessions stamped `is_subagent` at discovery (S13, CQ 3.2)."""
     return [ref for ref in refs if not ref.is_subagent]
 
 

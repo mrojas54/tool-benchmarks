@@ -19,8 +19,8 @@ def _refs() -> list[SessionRef]:
             "claude-code",
             "raw",
             "proj-b",
-            "child",
-            "/tmp/proj-b/subagents/child.jsonl",
+            "sub-3",
+            "/tmp/proj-b/subagents/sub-3.jsonl",
             True,
         ),
     ]
@@ -32,6 +32,17 @@ def test_manifest_round_trips_refs() -> None:
         write_manifest(path, _refs(), "abc123")
         m = read_manifest(path)
         assert m.refs == _refs()
+
+
+def test_manifest_round_trips_is_subagent() -> None:
+    with TemporaryDirectory() as d:
+        path = str(Path(d) / "corpus.manifest")
+        write_manifest(path, _refs(), "abc123")
+        m = read_manifest(path)
+        by_id = {r.session_id: r for r in m.refs}
+        assert by_id["good-1"].is_subagent is False
+        assert by_id["good-2"].is_subagent is False
+        assert by_id["sub-3"].is_subagent is True
 
 
 def test_manifest_stores_fingerprint_and_count() -> None:
@@ -52,8 +63,6 @@ def test_manifest_preserves_agentsview_none_path_and_raw_path() -> None:
         by_id = {r.session_id: r for r in m.refs}
         assert by_id["good-1"].path is None  # agentsview ref exports by id
         assert by_id["good-2"].path == "/tmp/proj-b/good-2.jsonl"
-        assert by_id["good-2"].is_subagent is False
-        assert by_id["child"].is_subagent is True
 
 
 def test_manifest_legacy_derives_is_subagent_from_path() -> None:
