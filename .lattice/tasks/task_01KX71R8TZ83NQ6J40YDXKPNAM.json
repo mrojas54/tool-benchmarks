@@ -8,17 +8,28 @@
       "repo": null
     }
   ],
-  "comment_count": 0,
+  "comment_count": 1,
   "complexity": null,
   "created_at": "2026-07-10T22:18:14Z",
   "created_by": "agent:claude",
   "custom_fields": {},
   "description": "Found during TB-24 code review. `_apply_date_range` in toolbench/passive.py rebuilds ParseResult by enumerating fields (calls, malformed, unjoinable) and omits `session_cache_read_tokens`, so it silently resets to None whenever a date range is active.\n\nIMPACT: under --date-from/--date-to, every session's session-grain cache signal (S32) is dropped, so the Agent Breakdown cache caveat undercounts sessions_with_cache_data / sessions_with_cache_hit. Pre-existing; not introduced by TB-24.\n\nFIX: use dataclasses.replace(result, calls=kept) so all non-filtered fields survive automatically, rather than re-listing fields that must be kept in sync by hand.\n\nDECIDE: also settle whether a session whose calls are all filtered out should still contribute its cache stat (arguably yes -- the session was still measured).",
-  "done_at": null,
-  "evidence_refs": [],
+  "done_at": "2026-07-11T00:04:04Z",
+  "evidence_refs": [
+    {
+      "id": "ev_01KX77T22N7SPJWK8910RHM3C1",
+      "role": "review",
+      "source_type": "comment"
+    },
+    {
+      "id": "art_01KX77T22N7SPJWK8910RHM3C0",
+      "role": "review",
+      "source_type": "artifact"
+    }
+  ],
   "id": "task_01KX71R8TZ83NQ6J40YDXKPNAM",
-  "last_event_id": "ev_01KX728S5T48HNJCPXH5RMEGNK",
-  "last_status_changed_at": "2026-07-10T22:27:15Z",
+  "last_event_id": "ev_01KX77T22N7SPJWK8910RHM3C3",
+  "last_status_changed_at": "2026-07-11T00:04:04Z",
   "priority": "low",
   "relationships_out": [
     {
@@ -32,10 +43,10 @@
   "reopened_count": 0,
   "schema_version": 1,
   "short_id": "TB-25",
-  "status": "review",
+  "status": "done",
   "tags": null,
   "title": "_apply_date_range drops session_cache_read_tokens, undercounting the S32 cache caveat under --date-from/--date-to",
   "type": "bug",
-  "updated_at": "2026-07-10T22:27:15Z",
+  "updated_at": "2026-07-11T00:04:04Z",
   "urgency": null
 }

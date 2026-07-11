@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-11T00:04:04Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "id": "art_01KX77T22N7SPJWK8910RHM3C0",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KX77T22N7SPJWK8910RHM3C0.md",
+    "size_bytes": 307
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": "Fix verified: dataclasses.replace(result, calls=kept) preserves session_cache_read_tokens across --date-from/--date-to. RED->GREEN->DOCS; new test test_session_cache_read_tokens_survives_date_filterin",
+  "tags": [],
+  "title": "Review findings",
+  "token_usage": null,
+  "type": "note"
+}

@@ -1,0 +1,1 @@
+Fix verified: dataclasses.replace(result, calls=kept) preserves session_cache_read_tokens across --date-from/--date-to. RED->GREEN->DOCS; new test test_session_cache_read_tokens_survives_date_filtering; 329 pass/1 skip; ruff + mypy --strict clean. SPEC S32 + BUILDPLAN T15 updated. PR #32 merged as a6f22db.
