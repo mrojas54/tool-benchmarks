@@ -1,10 +1,10 @@
 """Schema dispatch (TB-13). Stdlib only.
 
-`parse_session` used to be the unnamed default for every transcript that was not
-hermes. A codex session matched nothing inside it and returned
-`ParseResult(calls=[], malformed=0)` -- a healthy-looking zero (TB-12). A parser
-that cannot recognize a schema must not be the fallback for schemas it has never
-seen, so detection is explicit and failure is loud.
+Before schema dispatch, a Claude-only path was the unnamed default for every
+transcript that was not hermes. A codex session matched nothing inside it and
+returned `ParseResult(calls=[], malformed=0)` -- a healthy-looking zero (TB-12).
+A parser that cannot recognize a schema must not be the fallback for schemas it
+has never seen, so detection is explicit and failure is loud.
 """
 
 from __future__ import annotations

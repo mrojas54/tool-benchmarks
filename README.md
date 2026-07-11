@@ -89,9 +89,9 @@ rather than silently absent (S38 / TB-24).
 
 - **`transcript.py`** — the schema-neutral records: `ToolCall` (with
   `UsageProvenance`), `ParseResult` (optional `session_cache_read_tokens`),
-  and `result_len`. `parse_session` remains as a compat shim over
-  `ClaudeParser`. Stray non-UTF-8 bytes decode with `errors="replace"` so one
-  bad byte never aborts the session (TB-10).
+  and `result_len`. Path-based `parse_session` is gone; open lines (with
+  `errors="replace"` for TB-10) and call `ClaudeParser.parse` or
+  `pick_adapter(ref).parse(ref)`.
 - **`parsers.py`** — one class per schema. `ClaudeParser` joins each assistant
   `tool_use` block to its result by id. `HermesTraceParser` subclasses it for
   the claude-shaped hermes trace export and stamps every call

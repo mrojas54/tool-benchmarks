@@ -202,9 +202,9 @@ def _emits_non_tool_output(block: dict[str, object]) -> bool:
 def _scan_tool_use_blocks(path: str | os.PathLike[str]) -> _ScanResult:
     """Single pass: join tool_use→result like ClaudeParser, keep raw input for matching.
 
-    Previously this walked the file once for sentinels and again via
-    `parse_session` for joined `ToolCall`s, then glued them on `(ts, name)`.
-    One pass deletes that join and the Claude-only shim dependency.
+    Previously this walked the file once for sentinels and again via a
+    Claude-only path parser for joined `ToolCall`s, then glued them on
+    `(ts, name)`. One pass deletes that join.
 
     Routes through `adapters.detect_parser` to refuse a hermes trace export by
     name before it silently produces a plausible, wrong answer. The `_turn_key`
