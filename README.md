@@ -93,7 +93,9 @@ rather than silently absent (S38 / TB-24).
   `errors="replace"` for TB-10) and call `ClaudeParser.parse` or
   `pick_adapter(ref).parse(ref)`.
 - **`parsers.py`** — one class per schema. `ClaudeParser` joins each assistant
-  `tool_use` block to its result by id. `HermesTraceParser` subclasses it for
+  `tool_use` block to its result by id. Optional `keep_raw_input` /
+  `track_turns` (CQ 7.1) let probe reuse this pass instead of a second
+  Claude-shaped walker. `HermesTraceParser` subclasses it for
   the claude-shaped hermes trace export and stamps every call
   `ABSENT_BY_EXPORT` (S29). Malformed lines are counted and skipped, never
   fatal.

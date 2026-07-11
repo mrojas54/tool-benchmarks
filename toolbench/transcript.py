@@ -77,6 +77,10 @@ class ToolCall:
     # them from tool names.
     is_deferral: bool = False
     is_subagent_fanout: bool = False
+    # Optional parse enrichments (CQ 7.1). Default None/absent so passive
+    # reduction ignores them; probe opts in via ClaudeParser flags.
+    raw_input: str | None = None
+    turn_key: str | None = None
 
     @property
     def tokens(self) -> int:
@@ -85,6 +89,14 @@ class ToolCall:
     @property
     def input_tokens(self) -> int:
         return self.input_chars // 4
+
+
+@dataclass
+class TurnStats:
+    """Per-API-response emission counts for isolability (S26 / CQ 7.1)."""
+
+    tool_uses: int = 0
+    non_tool_output: bool = False
 
 
 @dataclass
@@ -124,3 +136,5 @@ class ParseResult:
     session_output_tokens: int = 0
     session_usage_messages: int = 0
     unjoinable: dict[str, int] = field(default_factory=dict)
+    # Populated only when ClaudeParser(track_turns=True); empty otherwise.
+    turns: dict[str, TurnStats] = field(default_factory=dict)
