@@ -90,12 +90,13 @@ def _call_in_range(ts: str, date_from: str | None, date_to: str | None) -> bool:
 
 
 def _is_subagent_path(ref: SessionRef) -> bool:
-    return ref.path is not None and "/subagents/" in ref.path
+    """S13: discovery sets `SessionRef.is_subagent`; filter on the flag only."""
+    return ref.is_subagent
 
 
 def filter_subagents(refs: list[SessionRef]) -> list[SessionRef]:
-    """Remove subagent-path sessions (S13)."""
-    return [ref for ref in refs if not _is_subagent_path(ref)]
+    """Remove subagent sessions tagged at discovery (S13)."""
+    return [ref for ref in refs if not ref.is_subagent]
 
 
 def classify_skip(exc: BaseException) -> SkipReason:

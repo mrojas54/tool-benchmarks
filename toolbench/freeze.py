@@ -32,23 +32,32 @@ class CorpusManifest:
     refs: list[SessionRef]
 
 
-def _ref_to_dict(ref: SessionRef) -> dict[str, str | None]:
+def _ref_to_dict(ref: SessionRef) -> dict[str, str | bool | None]:
     return {
         "agent": ref.agent,
         "source": ref.source,
         "project": ref.project,
         "session_id": ref.session_id,
         "path": ref.path,
+        "is_subagent": ref.is_subagent,
     }
 
 
-def _ref_from_dict(d: dict[str, str | None]) -> SessionRef:
+def _ref_from_dict(d: dict[str, object]) -> SessionRef:
+    path_raw = d.get("path")
+    path = None if path_raw is None else str(path_raw)
+    if "is_subagent" in d:
+        is_subagent = bool(d["is_subagent"])
+    else:
+        # Pre-flag manifests: recover the bit from the nested path shape (S13).
+        is_subagent = path is not None and "/subagents/" in path
     return SessionRef(
         agent=str(d["agent"]),
         source=str(d["source"]),
         project=str(d["project"]),
         session_id=str(d["session_id"]),
-        path=d["path"] if d["path"] is None else str(d["path"]),
+        path=path,
+        is_subagent=is_subagent,
     )
 
 

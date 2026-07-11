@@ -147,22 +147,51 @@ class CliParsingTests(unittest.TestCase):
         self.assertTrue(args.verbose)
 
 class SubagentFilterTests(unittest.TestCase):
-    def test_is_subagent_path(self) -> None:
-        ref = SessionRef(agent="claude-code", source="raw", project="p", session_id="s1", path="/x/subagents/y.jsonl")
+    def test_is_subagent_uses_flag(self) -> None:
+        ref = SessionRef(
+            agent="claude-code",
+            source="raw",
+            project="p",
+            session_id="s1",
+            path="/x/p/subagents/y.jsonl",
+            is_subagent=True,
+        )
         self.assertTrue(_is_subagent_path(ref))
 
-    def test_non_subagent_path(self) -> None:
-        ref = SessionRef(agent="claude-code", source="raw", project="p", session_id="s1", path="/x/y.jsonl")
+    def test_flag_false_is_not_subagent_even_if_path_looks_nested(self) -> None:
+        # Path substring is no longer the filter; discovery sets the flag.
+        ref = SessionRef(
+            agent="claude-code",
+            source="raw",
+            project="p",
+            session_id="s1",
+            path="/x/p/subagents/y.jsonl",
+            is_subagent=False,
+        )
         self.assertFalse(_is_subagent_path(ref))
 
-    def test_no_path_is_not_subagent(self) -> None:
+    def test_no_path_defaults_not_subagent(self) -> None:
         ref = SessionRef(agent="claude", source="agentsview", project="p", session_id="s1", path=None)
         self.assertFalse(_is_subagent_path(ref))
 
-    def test_filter_subagents_removes_matching_paths(self) -> None:
+    def test_filter_subagents_removes_flagged_refs(self) -> None:
         refs = [
-            SessionRef(agent="claude-code", source="raw", project="p", session_id="s1", path="/x/subagents/y.jsonl"),
-            SessionRef(agent="claude-code", source="raw", project="p", session_id="s2", path="/x/y.jsonl"),
+            SessionRef(
+                agent="claude-code",
+                source="raw",
+                project="p",
+                session_id="s1",
+                path="/x/p/subagents/y.jsonl",
+                is_subagent=True,
+            ),
+            SessionRef(
+                agent="claude-code",
+                source="raw",
+                project="p",
+                session_id="s2",
+                path="/x/p/y.jsonl",
+                is_subagent=False,
+            ),
         ]
         kept = filter_subagents(refs)
         self.assertEqual([r.session_id for r in kept], ["s2"])

@@ -421,5 +421,47 @@ def test_skip_record_carries_a_typed_reason() -> None:
     assert rec.detail == "no parser"
 
 
+class RawSessionAttributionTests(unittest.TestCase):
+    """Raw discovery attributes project as the first segment under root (S13).
+
+    Subagent transcripts live at <project>/subagents/*.jsonl — their project must
+    be the owning project dir, not the literal parent name `subagents`, and the
+    subagent bit is a bool on SessionRef rather than a path-substring filter.
+    """
+
+    def test_top_level_session_project_is_first_path_segment(self) -> None:
+        with TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "-Users-me-tool-benchmarks"
+            proj.mkdir()
+            (proj / "sess.jsonl").write_text("{}\n")
+            refs, _ = iter_sessions(index_source="raw", root=tmp, runner=FakeRunner([]))
+            ref = list(refs)[0]
+            self.assertEqual(ref.project, "-Users-me-tool-benchmarks")
+            self.assertFalse(ref.is_subagent)
+
+    def test_subagent_session_keeps_owning_project_and_sets_flag(self) -> None:
+        with TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "-Users-me-tool-benchmarks"
+            (proj / "subagents").mkdir(parents=True)
+            (proj / "subagents" / "child.jsonl").write_text("{}\n")
+            refs, _ = iter_sessions(index_source="raw", root=tmp, runner=FakeRunner([]))
+            ref = list(refs)[0]
+            self.assertEqual(ref.project, "-Users-me-tool-benchmarks")
+            self.assertNotEqual(ref.project, "subagents")
+            self.assertTrue(ref.is_subagent)
+            self.assertEqual(ref.session_id, "child")
+
+    def test_agentsview_refs_default_is_subagent_false(self) -> None:
+        payload = {
+            "sessions": [{"id": "s1", "project": "p", "agent": "claude"}],
+            "next_cursor": "",
+            "total": 1,
+        }
+        runner = FakeRunner([completed(stdout=json.dumps(payload))])
+        refs, _ = iter_sessions(index_source="agentsview", runner=runner)
+        ref = list(refs)[0]
+        self.assertFalse(ref.is_subagent)
+
+
 if __name__ == "__main__":
     unittest.main()

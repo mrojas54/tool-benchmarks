@@ -88,6 +88,24 @@ class SessionRef:
     project: str
     session_id: str
     path: str | None
+    # Set at discovery for raw refs under <project>/subagents/ (S13). AgentsView
+    # refs stay False — the index does not expose a subagent bit today.
+    is_subagent: bool = False
+
+
+def _raw_project_and_subagent(path: Path, root: Path) -> tuple[str, bool]:
+    """Attribute a raw JSONL to its owning project dir under `root`.
+
+    Claude Code nests subagent transcripts at `<project>/subagents/*.jsonl`.
+    The project is always `rel.parts[0]` — never `path.parent.name`, which would
+    stamp those files as `project="subagents"`.
+    """
+    rel = path.relative_to(root)
+    if not rel.parts:
+        raise ValueError(f"session path is not under root {root}: {path}")
+    project = rel.parts[0]
+    is_subagent = len(rel.parts) >= 3 and rel.parts[1] == "subagents"
+    return project, is_subagent
 
 
 def _run_agentsview(argv: list[str]) -> subprocess.CompletedProcess[str]:
@@ -242,13 +260,16 @@ def _raw_session_refs(
     project: str | None,
     since: str | None,
 ) -> Iterator[SessionRef]:
+    base = Path(root).expanduser()
     for path in iter_session_files(root=root, project=project, since=since):
+        owning_project, is_subagent = _raw_project_and_subagent(path, base)
         yield SessionRef(
             agent="claude-code",
             source="raw",
-            project=path.parent.name,
+            project=owning_project,
             session_id=path.stem,
             path=str(path),
+            is_subagent=is_subagent,
         )
 
 

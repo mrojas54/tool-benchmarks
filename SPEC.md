@@ -89,8 +89,11 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 - **S12 — CLI.** Flags: `--agent`, `--all | --project`, `--since`,
   `--date-from`, `--date-to`, `--out`, `--limit`, `--exclude-subagents`,
   `--index-source`, `--verbose`; default scope `--agent all --all`.
-- **S13 — subagents.** Included by default; `--exclude-subagents` removes
-  paths containing `/subagents/`.
+- **S13 — subagents.** Included by default; `--exclude-subagents` drops refs
+  with `SessionRef.is_subagent` set at discovery. Raw discovery attributes
+  project as the first path segment under the session root and sets the flag
+  for `<project>/subagents/*.jsonl` — never by stamping `project="subagents"`
+  or filtering on a path substring after the fact.
 - **S14 — report sections.** Five, in order: (1) Agent breakdown, (2) Tool
   leaderboard (per agent+tool), (3) Model breakdown (per agent+model+tool,
   `model` normalized to `unknown` when absent), (4) Inefficiency callouts
