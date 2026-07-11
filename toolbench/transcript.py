@@ -74,6 +74,11 @@ class ToolCall:
     model: str | None
     no_result: bool = False
     result_source: str | None = None
+    # Parse-time inefficiency tags (CQ 3.1). Stamped by the emit path from
+    # schema/agent policy; the reducer counts these facts and never re-derives
+    # them from tool names.
+    is_deferral: bool = False
+    is_subagent_fanout: bool = False
 
     @property
     def tokens(self) -> int:

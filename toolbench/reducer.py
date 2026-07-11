@@ -11,11 +11,6 @@ from dataclasses import dataclass, field
 from toolbench.transcript import ParseResult, UsageProvenance
 
 OVERSIZED_OUTPUT_TOKENS = 5000
-# `spawn_agent` is codex's fan-out primitive (TB-12). codex is the only agent in
-# the corpus that spawns subagents, so before it was parsed the fan-out callout was
-# measured with its most relevant agent's data entirely absent. `wait_agent` awaits
-# an already-spawned subagent and is not itself a fan-out.
-SUBAGENT_TOOL_NAMES = frozenset({"Agent", "Task", "spawn_agent"})
 UNKNOWN_MODEL = "unknown"
 
 
@@ -146,7 +141,7 @@ class Reducer:
                 tool_stats.usage_missing += 1
                 model_stats.usage_missing += 1
 
-            if call.name == "ToolSearch":
+            if call.is_deferral:
                 self.inefficiency.tool_search_calls += 1
                 self.inefficiency.tool_search_tokens += call.tokens
 
@@ -154,7 +149,7 @@ class Reducer:
                 self.inefficiency.oversized_outputs += 1
                 _bump(self.inefficiency.oversized_by_tool, call.name)
 
-            if call.name in SUBAGENT_TOOL_NAMES:
+            if call.is_subagent_fanout:
                 self.inefficiency.subagent_fanout += 1
                 _bump(self.inefficiency.subagent_by_tool, call.name)
 

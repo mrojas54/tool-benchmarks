@@ -21,6 +21,14 @@ from toolbench.transcript import ParseResult, ToolCall, UsageProvenance, result_
 # claude transcripts in the local archive.
 HERMES_TRACE_VERSION = "hermes-agent"
 
+# Inefficiency-tag policy (CQ 3.1). Lived on `Reducer` as name frozensets; next
+# agent meant another `if`. Stamp at emit so absorb only counts tagged facts.
+# `ToolSearch` is also the synthetic name CodexParser assigns to nameless
+# `tool_search_call` records (S33). `spawn_agent` is codex's fan-out primitive;
+# `wait_agent` awaits an already-spawned subagent and is not itself a fan-out.
+DEFERRAL_TOOL_NAMES = frozenset({"ToolSearch"})
+SUBAGENT_TOOL_NAMES = frozenset({"Agent", "Task", "spawn_agent"})
+
 
 @dataclass
 class _PendingCall:
@@ -62,6 +70,8 @@ class _PendingCall:
             model=self.model,
             no_result=no_result,
             result_source=result_source,
+            is_deferral=self.name in DEFERRAL_TOOL_NAMES,
+            is_subagent_fanout=self.name in SUBAGENT_TOOL_NAMES,
         )
 
 
@@ -302,9 +312,8 @@ class CodexParser(TranscriptParser):
     CALL_SHAPES: ClassVar[dict[str, tuple[str, str | None]]] = {
         "function_call": ("arguments", None),
         "custom_tool_call": ("input", None),
-        # `ToolSearch` is the literal name `passive.Reducer` keys the deferral tax
-        # on. codex names this record only by its payload type, so the parser must
-        # supply the name or the metric never sees a codex deferral.
+        # `ToolSearch` is the synthetic name stamped for nameless tool_search_call
+        # records so DEFERRAL_TOOL_NAMES (and thus is_deferral) matches at emit.
         "tool_search_call": ("arguments", "ToolSearch"),
     }
 
