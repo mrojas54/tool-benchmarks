@@ -81,14 +81,18 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   type the absence rather than stringify it. `detail` preserves the original message
   for `--verbose`/sidecar output but is never parsed to recover `reason` (TB-23).
 
-## Passive analyzer — `toolbench/passive.py`
+## Passive analyzer — `toolbench/passive.py` (+ `reducer.py` / `report.py` / `freeze.py`)
+
+Aggregation and markdown rendering live in `reducer.py` and `report.py`;
+`freeze.py` owns the opt-in corpus pin. `passive.py` is the CLI + scan loop
+and re-exports the public symbols historical imports expect.
 
 - **S11 — incremental.** Aggregation streams per parsed session; **no full
   in-memory `list[ToolCall]`** for the corpus — only per-agent/per-tool
-  reducers and report counters live globally.
+  reducers and report counters live globally (`Reducer` in `reducer.py`).
 - **S12 — CLI.** Flags: `--agent`, `--all | --project`, `--since`,
   `--date-from`, `--date-to`, `--out`, `--limit`, `--exclude-subagents`,
-  `--index-source`, `--verbose`; default scope `--agent all --all`.
+  `--index-source`, `--verbose`, `--freeze`; default scope `--agent all --all`.
 - **S13 — subagents.** Included by default; `--exclude-subagents` drops refs
   with `SessionRef.is_subagent` set at discovery. Raw discovery attributes
   project as the first path segment under the session root and sets the flag
@@ -234,8 +238,9 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 - **S20 — stdlib runtime, uv project.** The shipped `toolbench` package
   imports nothing third-party; the project is uv-managed (`pyproject.toml`
   + `uv.lock`, empty runtime deps, `dev` group `ruff`/`mypy`/`pytest`).
-- **S21 — entry points.** Runnable as `uv run python -m toolbench.passive`
-  and `… toolbench.probe`; tests via `uv run pytest -q` (S31).
+- **S21 — entry points.** Runnable as `uv run python -m toolbench.passive`,
+  `… toolbench.probe`, and `… toolbench.cache_tokens` (S39 run-aggregation
+  façade); tests via `uv run pytest -q` (S31).
 - **S22 — strict gate.** `uv run ruff check .`, `uv run mypy --strict
   toolbench tests`, and the full pytest suite are green before any PR.
 - **S23 — error handling.** Empty session selection → clear message,
