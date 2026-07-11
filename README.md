@@ -43,14 +43,19 @@ raw roots + AgentsView exports
           │
    loaders (sources.py)  ── acquisition: bytes → lines
           │
-   parsers (parsers.py)  ── interpretation: lines → ToolCall
+   parsers (parsers.py)  ── interpretation: lines → ToolCall / ParseResult
           │
    adapters (adapters.py + registry.py)  ── SessionRef → ParseResult
           │
-     ┌────┴─────┐
- passive.py   probe.py
-     └────┬─────┘
-   reports/YYYY-MM-DD-tool-usage.md
+     ┌────┴──────────────────┐
+ passive.py (CLI / scan)   probe.py
+     │                         │
+ reducer.py → report.py        │  (ClaudeParser keep_raw + track_turns)
+ freeze.py (opt-in pin)        │
+     └──────────┬──────────────┘
+          reports/*.md
+
+ cache_tokens.py  ── standalone run-aggregation façade over ClaudeParser (S39)
 ```
 
 ### Three layers, one seam (TB-13)
@@ -88,14 +93,16 @@ Summary (`Unjoinable tool records`), so codex's ~4% web-search undercount is sur
 rather than silently absent (S38 / TB-24).
 
 - **`transcript.py`** — the schema-neutral records: `ToolCall` (with
-  `UsageProvenance`), `ParseResult` (optional `session_cache_read_tokens`),
-  and `result_len`. Path-based `parse_session` is gone; open lines (with
+  `UsageProvenance` and parse-time inefficiency tags), `ParseResult`
+  (optional session-grain cache sums, `unjoinable`, optional `turns`), and
+  `result_len`. Path-based `parse_session` is gone; open lines (with
   `errors="replace"` for TB-10) and call `ClaudeParser.parse` or
   `pick_adapter(ref).parse(ref)`.
 - **`parsers.py`** — one class per schema. `ClaudeParser` joins each assistant
-  `tool_use` block to its result by id. Optional `keep_raw_input` /
-  `track_turns` (CQ 7.1) let probe reuse this pass instead of a second
-  Claude-shaped walker. `HermesTraceParser` subclasses it for
+  `tool_use` block to its result by id, stamps inefficiency tags at emit
+  (CQ 3.1), and sums session-grain cache read/creation (S39). Optional
+  `keep_raw_input` / `track_turns` (CQ 7.1) let probe reuse this pass instead
+  of a second Claude-shaped walker. `HermesTraceParser` subclasses it for
   the claude-shaped hermes trace export and stamps every call
   `ABSENT_BY_EXPORT` (S29). Malformed lines are counted and skipped, never
   fatal.
@@ -109,26 +116,46 @@ rather than silently absent (S38 / TB-24).
 - **`sources.py`** — multi-agent discovery plus the loaders. Either scans raw
   local transcript roots or pages the AgentsView CLI (`--index-source auto |
   agentsview | raw`). `auto` tries AgentsView first and falls back to raw
-  scanning, recording the reason. Exports that are not JSONL (e.g. a SQLite
-  dump with a NUL in the header) raise `NonTranscriptExport` and are skipped
-  by name (TB-10).
+  scanning, recording the reason. Raw discovery stamps `SessionRef.is_subagent`
+  for `<project>/subagents/*.jsonl` while keeping the owning project as the
+  first path segment (S13). Exports that are not JSONL (e.g. a SQLite dump
+  with a NUL in the header) raise `NonTranscriptExport` and are skipped by
+  name (TB-10).
 - **`hermes.py`** — direct read-only SQLite adapter for Hermes sessions
   (TB-11). Discovery still comes from AgentsView; only the read is redirected
   because `session export` returns the whole default-profile database.
   Per-call usage is `ABSENT_BY_SCHEMA`; session-row `cache_read_tokens` is
   surfaced on `ParseResult` for the Agent Breakdown caveat (S32 / TB-20),
   never attributed per call.
-- **`passive.py`** — streams and aggregates **incrementally** (per-agent /
-  per-tool reducers only, never a whole-corpus `list[ToolCall]`), then emits
-  a five-section report: agent breakdown (plus optional session-grain cache
-  caveats), tool leaderboard (`cache_assisted` as `yes` / `no` / `n/a` /
-  `n/a*`), model breakdown, inefficiency callouts, summary.
+- **`passive.py`** — CLI and scan orchestration only: argparse, discovery /
+  `--freeze` replay, per-ref parse, date-range filter, typed skips. Re-exports
+  reducer/report symbols so historical `from toolbench.passive import …`
+  imports keep working.
+- **`reducer.py`** — incremental corpus aggregation (S11). Folds each
+  session's `ParseResult` into per-agent / per-tool counters and discards the
+  call list — never a whole-corpus `list[ToolCall]`. Schema-neutral: it only
+  counts tags already stamped at parse time.
+- **`report.py`** — five-section markdown render (S14) plus corpus fingerprint
+  helpers (S36). Sections: agent breakdown (session-grain cache caveats),
+  tool leaderboard (`cache_assisted` as `yes` / `no` / `n/a` / `n/a*`), model
+  breakdown, inefficiency callouts, summary (discovery reconcile, unjoinable
+  records, S39 cache totals).
+- **`freeze.py`** — write-once / replay corpus manifest for `--freeze`
+  (S37). Round-trips `SessionRef` (including `is_subagent`) so replay bypasses
+  live discovery without an import cycle on `passive`.
 - **`probe.py`** — scores matched tool-vs-Bash probe pairs from a dedicated
   session JSONL and emits a context-token + usage comparison table under
-  `reports/`. Tool arms match structurally (name + corpus target); bash arms
-  match by sentinel. Usage is attributed only when the API response is
-  isolable (one `tool_use`, no prose/reasoning — S26). Turns are keyed solely
-  by `requestId` (S30); hermes-trace input is refused with `NonIsolableTurns`.
+  `reports/`. Joins via `ClaudeParser(keep_raw_input=True, track_turns=True)`
+  — one Claude walk, not a private duplicate. Tool arms match structurally
+  (name + corpus target); bash arms match by sentinel. Usage is attributed
+  only when the API response is isolable (one `tool_use`, no prose/reasoning —
+  S26). Turns are keyed solely by `requestId` (S30); hermes-trace input is
+  refused with `NonIsolableTurns`.
+- **`cache_tokens.py`** — standalone run-aggregation façade over
+  `ClaudeParser` (S39 / TB-26). Sums session-grain cache read + creation for a
+  manifest of Claude transcripts and optionally normalizes per ticket. Bridge
+  until TB-27 folds `--run-manifest` into passive; see
+  [`.claude/skills/cache-token-metrics/SKILL.md`](.claude/skills/cache-token-metrics/SKILL.md).
 
 ## Probe corpus
 
@@ -161,29 +188,35 @@ TB-13), usage provenance (**S29–S30** / TB-18: producer-aware
 `UsageProvenance` on every `ToolCall`, and `probe.py` refusing corpora it
 cannot key to the billing unit), the gate itself running every test
 (**S31** / TB-19: the documented command is `pytest`, not `unittest
-discover`, which silently missed 37 module-level tests), and session-grain
+discover`, which silently missed 37 module-level tests), session-grain
 Hermes cache surfacing (**S32** / TB-20: Agent Breakdown caveat, never
-folded into the per-call `cache_assisted` column), and the codex schema
+folded into the per-call `cache_assisted` column), the codex schema
 (**S33** / TB-12: `CodexParser` joins three paired `response_item` shapes on
-`payload.call_id`, recovering ~3,100 calls across 93 sessions that the
-Claude-only parser had reported as a healthy zero). The strict gate
-(`ruff check .`, `mypy --strict toolbench tests`, `pytest`) is green —
-**283** tests passing (1 skipped when the live hermes archive is absent).
-`mypy --strict` covers `tests` as well as `toolbench`, and passes on both:
-before TB-12 the `tests` tree carried 38 `no-untyped-def` errors, so the
-documented gate had never actually been green.
+`payload.call_id`), typed skips + discovery reconcile (**S34–S35** / TB-21 /
+TB-23), corpus fingerprint + `--freeze` (**S36–S37** / TB-22), unjoinable
+records (**S38** / TB-24), and Claude session-grain cache read+creation
+(**S39** / TB-26) with the standalone `cache_tokens` façade. CQ follow-ons
+split passive into `reducer`/`report`, fold probe into `ClaudeParser`
+(`keep_raw_input` / `track_turns`), and stamp inefficiency tags at emit.
+The strict gate (`ruff check .`, `mypy --strict toolbench tests`, `pytest`)
+is green — **353** tests passing (2 skipped when the live hermes archive /
+optional live paths are absent). `mypy --strict` covers `tests` as well as
+`toolbench`.
 
 Source-of-truth documents:
 
-- [`SPEC.md`](SPEC.md) — 33 numbered acceptance criteria (S1–S33).
+- [`SPEC.md`](SPEC.md) — 39 numbered acceptance criteria (S1–S39).
 - [`EVALUATION.md`](EVALUATION.md) — verification map for every criterion.
-- [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the T1–T6 tickets.
+- [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the T1–T6 tickets
+  plus post-merge TB/T rows.
 - [`docs/2026-07-07-tool-benchmarks-design.md`](docs/2026-07-07-tool-benchmarks-design.md)
   — full v2 design spec.
 - [`protocols/active-probes.md`](protocols/active-probes.md) — probe corpus,
   arm matching (S17), isolability (S26), and the seeded `#8376` baseline table.
 - [`protocols/probe-run-sheet.md`](protocols/probe-run-sheet.md) — executable
   ten-turn operator run sheet for scoring a fresh probe session.
+- [`.claude/skills/cache-token-metrics/SKILL.md`](.claude/skills/cache-token-metrics/SKILL.md)
+  — operator recipe for per-run cache-token diffs (S39).
 
 ## Agents / targets
 
@@ -248,6 +281,13 @@ uv run python -m toolbench.passive --all --freeze reports/corpus.manifest   # re
 # Operator run sheet: protocols/probe-run-sheet.md (ten arms, ten turns).
 uv run python -m toolbench.probe --session /path/to/probe-session.jsonl --out reports/active-probe-comparison.md
 uv run python -m toolbench.probe --allow-seeded   # baseline table only; measures nothing
+
+# Per-run cache-token metrics (S39) — façade over ClaudeParser for a manifest
+# of Claude transcripts. Prefer from repo root via -m; from ~ use the path form
+# in .claude/skills/cache-token-metrics/SKILL.md (module resolve fails outside
+# the checkout).
+uv run python -m toolbench.cache_tokens --manifest run.manifest --tickets 12
+uv run python -m toolbench.cache_tokens ~/.claude/projects/<proj>/*.jsonl --json
 
 # Tests
 uv run pytest -q
@@ -346,8 +386,11 @@ bucket — e.g. hermes SQLite or hermes-trace), `n/a*` (mixed). Neither
 
 When Hermes sessions carry session-row `cache_read_tokens`, the Agent
 Breakdown adds a caveat line such as `M of N sessions carry session-grain
-cache_read_tokens > 0` (S32). That signal is never divided into a per-call
-rate and never mixed into `cache_assisted`.
+cache_read_tokens > 0` (S32). Claude sessions contribute the Summary line
+`Session-grain cache tokens: read=… creation=… (… measured sessions; S39
+caveat, not ranked)` — read and creation together, because a prefix-sharing
+change can trade one for the other while `TOTAL_BILLED` stays flat. Neither
+signal is ever divided into a per-call rate or mixed into `cache_assisted`.
 
 ### Troubleshooting / common pitfalls
 
@@ -371,6 +414,10 @@ rate and never mixed into `cache_assisted`.
 | `cache_assisted` shows `n/a` for every `codex` tool | codex has no per-call usage channel; it bills per turn via `token_count` events (`ABSENT_BY_SCHEMA`, S33) | Expected. Do not read `n/a` as "no cache hits". |
 | `codex` reports 0 errors no matter what failed | codex encodes exit status in the output text and sets `status: completed` even for failed tools (S33) | Expected. `error` is never inferred from output prose. Use `output_chars` / the raw transcript to inspect failures. |
 | `codex` web searches never appear in the leaderboard | `web_search_call` carries no `call_id` and emits no output record, so it cannot be joined (S33 / TB-24) | Expected. They are not joinable calls, so leaderboard/ratio counts exclude them. The count is not lost: the Summary's `Unjoinable tool records (seen, not joined)` line names it as `codex/web_search_call` (S38). |
+| Fingerprints differ between two "same" runs | Corpus moved: vanished observer tail and/or live append (S36) | Do not attribute the delta to code. Re-run with `--freeze` (S37) or compare only when digests match. |
+| `--freeze` replay reports vanished sessions | Frozen refs' transcripts aged out or AgentsView `source file not found` | Expected when the sliding window deletes mid-corpus. `--verbose` names them; rewrite the manifest only when you intentionally want a new pin. |
+| `cache_tokens` via `-m` fails from `~` | Package isn't on `sys.path` outside the checkout | From `~`, invoke by file path per the cache-token-metrics skill; from the repo root, `-m toolbench.cache_tokens` works. |
+| Summary cache read ↓ but creation ↑ by ~the same | Prefix-sharing moved cost between buckets (S39) | Not a win. Compare read **and** creation (and `TOTAL_BILLED` from `cache_tokens`); read alone misleads. |
 
 ## Quality gate
 

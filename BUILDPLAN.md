@@ -11,25 +11,31 @@ raw roots + AgentsView exports
           │
    loaders (sources.py)  ── acquisition: bytes → lines
           │
-   parsers (parsers.py)  ── interpretation: lines → ToolCall
+   parsers (parsers.py)  ── interpretation: lines → ToolCall / ParseResult
           │
    adapters (adapters.py + registry.py)  ── SessionRef → ParseResult
           │
-     ┌────┴─────┐
- passive.py   probe.py
-     └────┬─────┘
-   reports/YYYY-MM-DD-tool-usage.md
+     ┌────┴──────────────────┐
+ passive.py (CLI / scan)   probe.py
+     │                         │
+ reducer.py → report.py        │  (ClaudeParser keep_raw + track_turns)
+ freeze.py (opt-in pin)        │
+     └──────────┬──────────────┘
+          reports/*.md
+
+ cache_tokens.py  ── run-aggregation façade over ClaudeParser (S39)
 ```
 
 - **Runtime:** Python stdlib only (`subprocess` shells to the AgentsView CLI).
 - **Project:** uv-managed; `pyproject.toml` + `uv.lock`; dev group
   `ruff`/`mypy`/`pytest`; runtime deps empty.
-- **Parser deviation (decided):** `parse_session` returns
-  `ParseResult(calls, malformed)` — additive, so the malformed count reaches
-  the report footer. After TB-13 it is a compat shim over `ClaudeParser`;
-  dispatch is `registry.pick_adapter` → `SessionAdapter.parse`.
-- **Reducer (decided):** passive keeps only per-agent/per-tool counters
-  globally; it never accumulates a whole-corpus `list[ToolCall]`.
+- **Parser seam (decided):** callers open lines and use `ClaudeParser.parse`
+  or `registry.pick_adapter` → `SessionAdapter.parse`. Path-based
+  `parse_session` was retired (CQ 1.3). Probe reuses the same pass via
+  `keep_raw_input` / `track_turns` (CQ 7.1).
+- **Reducer (decided):** `reducer.py` keeps only per-agent/per-tool counters
+  globally; it never accumulates a whole-corpus `list[ToolCall]`. Report
+  rendering and fingerprinting live in `report.py`.
 - **Schema dispatch (TB-13, shipped):** acquisition (`SessionLoader`) and
   interpretation (`TranscriptParser`) are orthogonal ABCs. Hermes SQLite
   claims by source; every other session is content-sniffed (including
