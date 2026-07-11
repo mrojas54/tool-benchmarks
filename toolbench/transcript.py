@@ -120,16 +120,16 @@ def parse_session(
 ) -> ParseResult:
     """Deprecated: parse a Claude Code session JSONL by path.
 
-    Retained because it is the documented entry point and `probe.py` imports it.
+    Retained as a documented / test entry point. Live callers should prefer
+    `registry.pick_adapter(ref).parse(ref)`, which detects the schema instead of
+    assuming Claude's. `probe.py` no longer uses this shim (single-pass scan).
+
     A `TranscriptParser` consumes an `Iterable[str]` and so cannot derive
     `project` from a path; this shim resolves it before delegating, preserving
     the historical `project=None -> path.parent.name` default.
 
     errors="replace": a stray non-UTF-8 byte degrades to U+FFFD rather than
     aborting the session (S5, TB-10).
-
-    Prefer `registry.pick_adapter(ref).parse(ref)`, which detects the schema
-    instead of assuming Claude's.
     """
     from toolbench.parsers import ClaudeParser  # local: avoids an import cycle
 

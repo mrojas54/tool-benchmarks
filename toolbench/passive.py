@@ -1,25 +1,34 @@
-"""Passive analyzer (S11-S15, S19, S23): incremental reducer + report + CLI.
+"""Passive analyzer CLI (S11-S15, S19, S23): discovery, scan loop, freeze.
 
-Aggregation streams per parsed session (S11): only per-agent/per-tool
-reducers and report counters live globally on `Reducer`. Each session's
-`ParseResult.calls` list is folded into those counters and discarded — no
-corpus-wide `list[ToolCall]` is ever retained.
+Aggregation lives in `reducer.py`; markdown rendering in `report.py`. This module
+owns argparse, session discovery, per-ref orchestration, and re-exports the
+public symbols tests and docs historically imported from `toolbench.passive`.
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import sys
-from collections import Counter
-from collections.abc import Iterable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import cast
 
 from toolbench.adapters import UnknownSchema
 from toolbench.freeze import read_manifest, write_manifest
+from toolbench.reducer import (
+    OVERSIZED_OUTPUT_TOKENS,
+    UNKNOWN_MODEL,
+    AgentStats,
+    Reducer,
+    ToolStats,
+)
 from toolbench.registry import pick_adapter
+from toolbench.report import (
+    CorpusFingerprint,
+    corpus_fingerprint,
+    render_report,
+    session_signature,
+    tally_skips,
+)
 from toolbench.sources import (
     IndexSource,
     MissingSourceExport,
@@ -30,257 +39,27 @@ from toolbench.sources import (
     SkipRecord,
     iter_sessions,
 )
-from toolbench.transcript import ParseResult, UsageProvenance
+from toolbench.transcript import ParseResult
 
-OVERSIZED_OUTPUT_TOKENS = 5000
-# `spawn_agent` is codex's fan-out primitive (TB-12). codex is the only agent in
-# the corpus that spawns subagents, so before it was parsed the fan-out callout was
-# measured with its most relevant agent's data entirely absent. `wait_agent` awaits
-# an already-spawned subagent and is not itself a fan-out.
-SUBAGENT_TOOL_NAMES = frozenset({"Agent", "Task", "spawn_agent"})
-UNKNOWN_MODEL = "unknown"
-
-
-@dataclass
-class ToolStats:
-    """Aggregate counters for one (agent, tool) pair — S14 tool leaderboard."""
-
-    calls: int = 0
-    output_tokens: int = 0
-    input_tokens: int = 0
-    errors: int = 0
-    no_result: int = 0
-    cache_hits: int = 0
-    usage_missing: int = 0
-
-
-@dataclass
-class AgentStats:
-    """Aggregate counters for one agent — S14 agent breakdown."""
-
-    sessions: int = 0
-    calls: int = 0
-    output_tokens: int = 0
-    input_tokens: int = 0
-    errors: int = 0
-    no_result: int = 0
-    sessions_with_cache_data: int = 0  # S32: session-grain, counted once per session
-    sessions_with_cache_hit: int = 0
-
-
-@dataclass
-class InefficiencyCounters:
-    """S14 inefficiency-callout counters.
-
-    Each scalar count carries a `*_by_tool` breakdown so a callout can name
-    its top offender; a bare total tells an operator nothing to act on.
-    """
-
-    tool_search_calls: int = 0
-    tool_search_tokens: int = 0
-    failures: int = 0
-    oversized_outputs: int = 0
-    subagent_fanout: int = 0
-    churn_retries: int = 0
-    failures_by_tool: dict[str, int] = field(default_factory=dict)
-    oversized_by_tool: dict[str, int] = field(default_factory=dict)
-    churn_by_tool: dict[str, int] = field(default_factory=dict)
-    subagent_by_tool: dict[str, int] = field(default_factory=dict)
-
-
-@dataclass
-class Reducer:
-    """Incremental corpus aggregator (S11). Never stores a corpus-wide call list."""
-
-    sessions_scanned: int = 0
-    calls_joined: int = 0
-    malformed_total: int = 0
-    # (agent, record kind) -> count of tool records a parser saw but could not join
-    # (TB-24). Never folded into `calls_joined`: these are surfaced apart, not counted
-    # as calls, so corpus counts and every inefficiency ratio stay unchanged.
-    unjoinable: dict[tuple[str, str], int] = field(default_factory=dict)
-    agents: dict[str, AgentStats] = field(default_factory=dict)
-    tools: dict[tuple[str, str], ToolStats] = field(default_factory=dict)
-    tools_by_model: dict[tuple[str, str, str], ToolStats] = field(default_factory=dict)
-    inefficiency: InefficiencyCounters = field(default_factory=InefficiencyCounters)
-
-    def absorb(self, agent: str, result: ParseResult) -> None:
-        """Fold one parsed session's calls into the running counters.
-
-        `result.calls` is a per-session list already produced by the ref's
-        adapter; it is only ever iterated here and never retained.
-        """
-        self.sessions_scanned += 1
-        self.malformed_total += result.malformed
-        # TB-24: fold recognized-but-unjoinable records by (agent, kind). Kept out
-        # of the per-call loop below so they never touch a call-derived counter.
-        for kind, count in result.unjoinable.items():
-            key = (agent, kind)
-            self.unjoinable[key] = self.unjoinable.get(key, 0) + count
-        agent_stats = self.agents.setdefault(agent, AgentStats())
-        agent_stats.sessions += 1
-
-        # S32: session-grain, incremented once per session here -- never inside
-        # the per-call loop below, which would fabricate a per-call denominator.
-        if result.session_cache_read_tokens is not None:
-            agent_stats.sessions_with_cache_data += 1
-            if result.session_cache_read_tokens > 0:
-                agent_stats.sessions_with_cache_hit += 1
-
-        prev_name: str | None = None
-        prev_bad = False
-        for call in result.calls:
-            self.calls_joined += 1
-            agent_stats.calls += 1
-            agent_stats.output_tokens += call.tokens
-            agent_stats.input_tokens += call.input_tokens
-
-            tool_stats = self.tools.setdefault((agent, call.name), ToolStats())
-            tool_stats.calls += 1
-            tool_stats.output_tokens += call.tokens
-            tool_stats.input_tokens += call.input_tokens
-
-            model_key = (agent, call.model or UNKNOWN_MODEL, call.name)
-            model_stats = self.tools_by_model.setdefault(model_key, ToolStats())
-            model_stats.calls += 1
-            model_stats.output_tokens += call.tokens
-            model_stats.input_tokens += call.input_tokens
-
-            is_bad = call.error is not None or call.no_result
-            if call.error is not None:
-                tool_stats.errors += 1
-                model_stats.errors += 1
-                agent_stats.errors += 1
-                self.inefficiency.failures += 1
-                _bump(self.inefficiency.failures_by_tool, call.name)
-            if call.no_result:
-                tool_stats.no_result += 1
-                model_stats.no_result += 1
-                agent_stats.no_result += 1
-
-            if _is_cache_hit(call.usage):
-                tool_stats.cache_hits += 1
-                model_stats.cache_hits += 1
-
-            if call.usage_provenance is not UsageProvenance.PRESENT:
-                # Every flavour of absence means the same thing here: not measurable.
-                # The arms differ for diagnostics, not for this flag.
-                tool_stats.usage_missing += 1
-                model_stats.usage_missing += 1
-
-            if call.name == "ToolSearch":
-                self.inefficiency.tool_search_calls += 1
-                self.inefficiency.tool_search_tokens += call.tokens
-
-            if call.tokens >= OVERSIZED_OUTPUT_TOKENS:
-                self.inefficiency.oversized_outputs += 1
-                _bump(self.inefficiency.oversized_by_tool, call.name)
-
-            if call.name in SUBAGENT_TOOL_NAMES:
-                self.inefficiency.subagent_fanout += 1
-                _bump(self.inefficiency.subagent_by_tool, call.name)
-
-            if is_bad and prev_bad and call.name == prev_name:
-                self.inefficiency.churn_retries += 1
-                _bump(self.inefficiency.churn_by_tool, call.name)
-
-            prev_name = call.name
-            prev_bad = is_bad
-
-
-@dataclass(frozen=True)
-class CorpusFingerprint:
-    """Identity of the scanned corpus (TB-22, S36).
-
-    A `digest` over a per-session *signature* for every scanned session -- the
-    sessions that actually produced the report's numbers -- plus their `count`.
-    Two runs whose fingerprints match scanned the same sessions with the same
-    content, so a numeric delta between their reports is attributable to code,
-    not to the corpus moving underneath.
-
-    The signature carries both mechanisms the corpus drifts by (see the ticket):
-    a session's identity catches the sliding-window TAIL DELETION (a transcript
-    ages out and its id leaves the set), and its call and malformed-line counts
-    catch the live session's APPEND (transcripts are append-only, so both counts
-    are exact proxies for content growth -- including an append that lands as a
-    malformed line rather than a new valid call). An id-only digest, or one
-    folding calls alone, would match across an append while a rendered number
-    moved and falsely reassure a reader diffing the two reports -- the one outcome
-    the ticket says must not survive.
-
-    The scanned set, not the discovered set, is the basis: a discovered-set
-    digest could match while transcripts slid scanned->skipped. The count travels
-    alongside so a hash collision cannot hide a size change.
-    """
-
-    digest: str
-    count: int
-
-
-def corpus_fingerprint(signatures: Iterable[str]) -> CorpusFingerprint:
-    """Order-independent fingerprint of a set of per-session signatures (S36).
-
-    Sorted before hashing so discovery/paging order can never move the digest --
-    only the membership or content of the scanned set can. `session_signature`
-    builds the per-session strings; this stays a pure set-hash so its callers
-    decide what a signature contains (the manifest freezes identity alone).
-    """
-    items = sorted(signatures)
-    h = hashlib.sha256()
-    for sig in items:
-        h.update(sig.encode("utf-8"))
-        h.update(b"\n")
-    return CorpusFingerprint(digest=h.hexdigest()[:16], count=len(items))
-
-
-def session_signature(
-    session_id: str, call_count: int, malformed: int, unjoinable: int = 0
-) -> str:
-    """One scanned session's fingerprint contribution: identity + content (S36).
-
-    Tab-joins the id with every number the Summary renders for this session's
-    content -- its call count, its malformed-line count, and its unjoinable-record
-    count -- so a session that grows moves the corpus fingerprint even though its id
-    is unchanged (append-only transcripts -> every count is exact). Folding
-    `call_count` alone would miss an append that lands as a malformed line;
-    likewise, folding only calls and malformed would miss an appended
-    `web_search_call`, which moves "Unjoinable tool records" while `len(calls)` and
-    "Malformed lines" stay put -- and the digest would falsely match while a rendered
-    number differs, the one outcome S36 forbids (TB-24).
-    """
-    return f"{session_id}\t{call_count}\t{malformed}\t{unjoinable}"
-
-
-def _bump(counter: dict[str, int], tool: str) -> None:
-    counter[tool] = counter.get(tool, 0) + 1
-
-
-def _top_offender(by_tool: dict[str, int]) -> tuple[str, int] | None:
-    """Highest count, ties broken alphabetically so the report is deterministic."""
-    if not by_tool:
-        return None
-    return min(by_tool.items(), key=lambda kv: (-kv[1], kv[0]))
-
-
-def _callout(label: str, count: int, total_calls: int, by_tool: dict[str, int]) -> str:
-    """Render one callout as `N of M calls (P%)`, naming the worst tool."""
-    share = (count / total_calls * 100) if total_calls else 0.0
-    line = f"- {label}: {count} of {total_calls} calls ({share:.1f}%)"
-    top = _top_offender(by_tool)
-    if count and top is not None:
-        line += f"; top: {top[0]} ({top[1]})"
-    return line
-
-
-def _is_cache_hit(usage: dict[str, object] | None) -> bool:
-    """Caveat-only cache signal (S19) — never used for ranking."""
-    if not usage:
-        return False
-    for key in ("cache_read_input_tokens", "cache_creation_input_tokens"):
-        value = usage.get(key)
-        if isinstance(value, (int, float)) and value > 0:
-            return True
-    return False
+# Re-exports for `from toolbench.passive import …` callers.
+__all__ = [
+    "OVERSIZED_OUTPUT_TOKENS",
+    "UNKNOWN_MODEL",
+    "AgentStats",
+    "CliArgs",
+    "CorpusFingerprint",
+    "Reducer",
+    "ToolStats",
+    "classify_skip",
+    "corpus_fingerprint",
+    "filter_subagents",
+    "main",
+    "parse_args",
+    "render_report",
+    "session_signature",
+    "skip_record_for",
+    "tally_skips",
+]
 
 
 def _apply_date_range(
@@ -348,11 +127,6 @@ def skip_record_for(ref: SessionRef, exc: BaseException) -> SkipRecord:
     )
 
 
-def tally_skips(skips: Iterable[SkipRecord]) -> dict[SkipReason, int]:
-    """Count skips per reason. Answers "how many have no parser?" from typed data."""
-    return dict(Counter(s.reason for s in skips))
-
-
 @dataclass
 class CliArgs:
     """Parsed CLI flags (S12)."""
@@ -366,9 +140,57 @@ class CliArgs:
     out: str | None
     limit: int | None
     exclude_subagents: bool
-    index_source: str
+    index_source: IndexSource
     verbose: bool
     freeze: str | None
+
+
+def _optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    raise TypeError(f"expected str | None, got {type(value).__name__}")
+
+
+def _cli_args_from_namespace(ns: argparse.Namespace) -> CliArgs:
+    agent = ns.agent
+    if not isinstance(agent, str):
+        raise TypeError(f"--agent must be str, got {type(agent).__name__}")
+
+    index_source = ns.index_source
+    if index_source not in ("auto", "agentsview", "raw"):
+        raise TypeError(f"--index-source must be an IndexSource, got {index_source!r}")
+
+    limit = ns.limit
+    if limit is not None and not isinstance(limit, int):
+        raise TypeError(f"--limit must be int | None, got {type(limit).__name__}")
+
+    exclude_subagents = ns.exclude_subagents
+    if not isinstance(exclude_subagents, bool):
+        raise TypeError(
+            f"--exclude-subagents must be bool, got {type(exclude_subagents).__name__}"
+        )
+
+    verbose = ns.verbose
+    if not isinstance(verbose, bool):
+        raise TypeError(f"--verbose must be bool, got {type(verbose).__name__}")
+
+    project = _optional_str(ns.project)
+    return CliArgs(
+        agent=agent,
+        all_projects=project is None,
+        project=project,
+        since=_optional_str(ns.since),
+        date_from=_optional_str(ns.date_from),
+        date_to=_optional_str(ns.date_to),
+        out=_optional_str(ns.out),
+        limit=limit,
+        exclude_subagents=exclude_subagents,
+        index_source=index_source,
+        verbose=verbose,
+        freeze=_optional_str(ns.freeze),
+    )
 
 
 def parse_args(argv: list[str] | None) -> CliArgs:
@@ -392,21 +214,7 @@ def parse_args(argv: list[str] | None) -> CliArgs:
         help="Pin the discovered corpus: write the ref list once, replay it on "
         "later runs, and name refs that have since vanished (TB-22).",
     )
-    ns = parser.parse_args(argv)
-    return CliArgs(
-        agent=cast(str, ns.agent),
-        all_projects=ns.project is None,
-        project=cast("str | None", ns.project),
-        since=cast("str | None", ns.since),
-        date_from=cast("str | None", ns.date_from),
-        date_to=cast("str | None", ns.date_to),
-        out=cast("str | None", ns.out),
-        limit=cast("int | None", ns.limit),
-        exclude_subagents=cast(bool, ns.exclude_subagents),
-        index_source=cast(str, ns.index_source),
-        verbose=cast(bool, ns.verbose),
-        freeze=cast("str | None", ns.freeze),
-    )
+    return _cli_args_from_namespace(parser.parse_args(argv))
 
 
 def _discover_refs(
@@ -415,9 +223,8 @@ def _discover_refs(
     """Resolve the index-source policy into a bounded list of refs (S10, S23)."""
     project = None if args.all_projects else args.project
     page_limit = args.limit if args.limit is not None else 500
-    index_source = cast(IndexSource, args.index_source)
     refs_iter, fallback_reason = iter_sessions(
-        index_source=index_source,
+        index_source=args.index_source,
         agent=args.agent,
         project=project,
         since=args.since,
@@ -460,176 +267,6 @@ def _parse_ref(ref: SessionRef, runner: Runner | None) -> ParseResult:
     Summary instead of reported as an agent that did no tool work (TB-12).
     """
     return pick_adapter(ref, runner).parse(ref)
-
-
-def render_report(
-    reducer: Reducer,
-    *,
-    index_source: str,
-    fallback_reason: str | None,
-    skips: list[SkipRecord],
-    include_subagents: bool,
-    since_note: str | None,
-    verbose: bool = False,
-    fingerprint: CorpusFingerprint | None = None,
-    freeze_note: str | None = None,
-) -> str:
-    """Render the five-section report (S14) with provenance (S15)."""
-    lines: list[str] = ["# Tool Usage Report", ""]
-
-    lines.append("## Agent Breakdown")
-    lines.append("")
-    lines.append("| agent | sessions | calls | output_tokens | input_tokens | errors | no_result |")
-    lines.append("|---|---|---|---|---|---|---|")
-    cache_caveats: list[str] = []
-    for agent in sorted(reducer.agents):
-        s = reducer.agents[agent]
-        lines.append(
-            f"| {agent} | {s.sessions} | {s.calls} | {s.output_tokens} | "
-            f"{s.input_tokens} | {s.errors} | {s.no_result} |"
-        )
-        if s.sessions_with_cache_data > 0:
-            # S32: session-grain only, orthogonal to the per-call `cache_assisted`
-            # column below -- never mixed into that column, never a sixth section.
-            cache_caveats.append(
-                f"- {agent}: {s.sessions_with_cache_hit} of {s.sessions_with_cache_data} "
-                "sessions carry session-grain `cache_read_tokens` > 0 "
-                "(S32: session grain only — not attributable to individual tool calls)."
-            )
-    lines.extend(cache_caveats)
-    lines.append("")
-
-    lines.append("## Tool Leaderboard")
-    lines.append("")
-    lines.append("| agent | tool | calls | context_tokens | input_tokens | errors | cache_assisted |")
-    lines.append("|---|---|---|---|---|---|---|")
-    ranked = sorted(reducer.tools.items(), key=lambda kv: kv[1].output_tokens, reverse=True)
-    for (agent, tool), stats in ranked:
-        if stats.cache_hits > 0:
-            cache_note = "yes"                        # a hit was observed; blindness elsewhere is irrelevant
-        elif stats.usage_missing == 0:
-            cache_note = "no"                         # measured, and it was zero
-        elif stats.usage_missing == stats.calls:
-            cache_note = "n/a"                         # never measurable
-        else:
-            cache_note = "n/a*"                        # partially measurable; some rows blind
-        lines.append(
-            f"| {agent} | {tool} | {stats.calls} | {stats.output_tokens} | "
-            f"{stats.input_tokens} | {stats.errors} | {cache_note} |"
-        )
-    lines.append("")
-    lines.append(
-        "`n/a` = usage channel unavailable for every call (S29); "
-        "`n/a*` = unavailable for some. Neither is a measured zero. "
-        "Per S19 this flag is caveat-only and never affects ranking."
-    )
-    lines.append("")
-
-    lines.append("## Model Breakdown")
-    lines.append("")
-    lines.append("| agent | model | tool | calls | context_tokens | input_tokens | errors |")
-    lines.append("|---|---|---|---|---|---|---|")
-    # Descending by context tokens; key breaks ties so the table is deterministic.
-    ranked_by_model = sorted(
-        reducer.tools_by_model.items(), key=lambda kv: (-kv[1].output_tokens, kv[0])
-    )
-    for (agent, model, tool), stats in ranked_by_model:
-        lines.append(
-            f"| {agent} | {model} | {tool} | {stats.calls} | {stats.output_tokens} | "
-            f"{stats.input_tokens} | {stats.errors} |"
-        )
-    lines.append("")
-
-    lines.append("## Inefficiency Callouts")
-    lines.append("")
-    ineff = reducer.inefficiency
-    total = reducer.calls_joined
-    share = (ineff.tool_search_calls / total * 100) if total else 0.0
-    lines.append(
-        f"- ToolSearch/deferral tax: {ineff.tool_search_calls} of {total} calls "
-        f"({share:.1f}%), {ineff.tool_search_tokens} tokens"
-    )
-    lines.append(_callout("Failures", ineff.failures, total, ineff.failures_by_tool))
-    lines.append(
-        _callout(
-            f"Oversized outputs (>= {OVERSIZED_OUTPUT_TOKENS} tokens)",
-            ineff.oversized_outputs,
-            total,
-            ineff.oversized_by_tool,
-        )
-    )
-    lines.append(
-        _callout("Subagent fan-out calls", ineff.subagent_fanout, total, ineff.subagent_by_tool)
-    )
-    lines.append(
-        _callout(
-            "Churn (consecutive-repeat retries)", ineff.churn_retries, total, ineff.churn_by_tool
-        )
-    )
-    lines.append("")
-
-    lines.append("## Summary")
-    lines.append("")
-    lines.append(f"- Index source: {index_source}")
-    # Reconcile discovery so `scanned` is never mistaken for the corpus size: a
-    # discovered session either scanned or skipped, and every skip is one SkipRecord
-    # (TB-21). `discovered` is derived, not a separate count that could drift.
-    scanned = reducer.sessions_scanned
-    skipped = len(skips)
-    lines.append(
-        f"- Sessions discovered: {scanned + skipped} / scanned: {scanned} / skipped: {skipped}"
-    )
-    if fingerprint is not None:
-        # Identity of the set that produced the numbers above: two reports whose
-        # fingerprints match are diffable; a delta between them is code, not the
-        # corpus moving underneath (TB-22, S36).
-        lines.append(
-            f"- Corpus fingerprint: {fingerprint.digest} ({fingerprint.count} sessions scanned)"
-        )
-    if freeze_note is not None:
-        lines.append(f"- {freeze_note}")
-    if skips:
-        # Keyed on the typed SkipReason (S34), not a substring scan of prose. A dead
-        # index entry (missing_source) and a parser gap (unknown_schema) are counted
-        # in separate buckets so the actionable one is never buried under the rest.
-        lines.append("- Skipped by reason:")
-        for reason, count in _reasons_by_count(skips):
-            lines.append(f"  - {reason.value}: {count}")
-    lines.append(f"- Tool calls joined: {reducer.calls_joined}")
-    lines.append(f"- Malformed lines: {reducer.malformed_total}")
-    if reducer.unjoinable:
-        # Records a parser saw but structurally could not join (TB-24): named here so
-        # codex's ~4% web-search undercount is never a silent zero. Attributed by
-        # agent/kind (TB-23's typed-bucket ethos), sorted for a stable diff. Absent
-        # entirely when there is nothing to report.
-        total = sum(reducer.unjoinable.values())
-        lines.append(f"- Unjoinable tool records (seen, not joined): {total}")
-        for (agent_name, kind), count in sorted(reducer.unjoinable.items()):
-            lines.append(f"  - {agent_name}/{kind}: {count}")
-    lines.append(f"- Subagents included: {'yes' if include_subagents else 'no'}")
-    lines.append(f"- AgentsView fallback reason: {fallback_reason if fallback_reason else 'none'}")
-    lines.append("- Note: --since is file-mtime based.")
-    if since_note:
-        lines.append(f"- --since value used: {since_note}")
-
-    if verbose and skips:
-        # Individual ids live here, never in the default report -- 1600 ids on one
-        # line is what made the pre-TB-21 report impossible to tally (TB-21).
-        lines.append("")
-        lines.append("### Skipped sessions (detail)")
-        lines.append("")
-        for skip in skips:
-            ident = skip.session_id or "(root)"
-            lines.append(f"- {ident} [{skip.agent}] {skip.reason.value}: {skip.detail}")
-
-    return "\n".join(lines) + "\n"
-
-
-def _reasons_by_count(skips: list[SkipRecord]) -> list[tuple[SkipReason, int]]:
-    """Skip reasons highest-count-first; ties break on the reason's value so the
-    histogram is deterministic."""
-    tally = tally_skips(skips)
-    return sorted(tally.items(), key=lambda kv: (-kv[1], kv[0].value))
 
 
 def main(
@@ -714,7 +351,10 @@ def main(
 
     if reducer.calls_joined == 0:
         if skips:
-            tally = ", ".join(f"{r.value}={c}" for r, c in _reasons_by_count(skips))
+            ranked = sorted(
+                tally_skips(skips).items(), key=lambda kv: (-kv[1], kv[0].value)
+            )
+            tally = ", ".join(f"{r.value}={c}" for r, c in ranked)
             suffix = f" (skipped {len(skips)}: {tally})"
         else:
             suffix = ""
