@@ -409,6 +409,20 @@ class DateRangeFilterTests(unittest.TestCase):
         self.assertEqual(len(filtered.calls), 0)  # the one call is filtered out
         self.assertEqual(filtered.unjoinable, {"web_search_call": 4})  # the count is not
 
+    def test_session_cache_read_tokens_survives_date_filtering(self) -> None:
+        """TB-25: the S32 session-grain cache stat is not a per-call value and must
+        pass through date filtering intact, even when every call is filtered out --
+        the session was still measured. Previously the field was silently reset to
+        None whenever a date range was active, undercounting the cache caveat."""
+        result = ParseResult(
+            calls=[make_call(ts="2026-06-01T00:00:00Z")],
+            malformed=0,
+            session_cache_read_tokens=42,
+        )
+        filtered = _apply_date_range(result, "2026-07-01", None)
+        self.assertEqual(len(filtered.calls), 0)  # the one call is filtered out
+        self.assertEqual(filtered.session_cache_read_tokens, 42)  # the stat survives
+
 
 class CliParsingTests(unittest.TestCase):
     def test_default_scope_is_agent_all_and_all_projects(self) -> None:

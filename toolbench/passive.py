@@ -13,7 +13,7 @@ import hashlib
 import sys
 from collections import Counter
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import cast
 
@@ -290,9 +290,13 @@ def _apply_date_range(
     if date_from is None and date_to is None:
         return result
     kept = [call for call in result.calls if _call_in_range(call.ts, date_from, date_to)]
-    # `unjoinable` is a count of seen records, not date-filterable calls -- it passes
-    # through intact, exactly as `malformed` does (TB-24).
-    return ParseResult(calls=kept, malformed=result.malformed, unjoinable=result.unjoinable)
+    # Only `calls` is date-filterable. Every other field is session-grain and passes
+    # through intact: `malformed` and `unjoinable` are counts of seen records (TB-24),
+    # and `session_cache_read_tokens` is the S32 cache stat -- the session was still
+    # measured even when all its calls fall outside the range (TB-25). `replace` keeps
+    # all non-overridden fields automatically, so a field added later cannot be
+    # silently dropped by a hand-listed reconstruction.
+    return replace(result, calls=kept)
 
 
 def _call_in_range(ts: str, date_from: str | None, date_to: str | None) -> bool:
