@@ -125,15 +125,24 @@ class IterSessionFilesTests(unittest.TestCase):
             paths = list(iter_session_files(root=tmp))
             self.assertEqual([p.name for p in paths], ["session1.jsonl"])
 
-    def test_filters_by_project_substring(self) -> None:
+    def test_filters_by_project_equality_on_first_segment(self) -> None:
+        """CQ 3.2: --project matches the owning dir exactly, not a substring."""
         with TemporaryDirectory() as tmp:
             (Path(tmp) / "-Users-me-tool-benchmarks").mkdir()
             (Path(tmp) / "-Users-me-tool-benchmarks" / "s1.jsonl").write_text("{}\n")
+            (Path(tmp) / "-Users-me-tool-benchmarks-extra").mkdir()
+            (Path(tmp) / "-Users-me-tool-benchmarks-extra" / "s2.jsonl").write_text("{}\n")
             (Path(tmp) / "-Users-me-other-project").mkdir()
-            (Path(tmp) / "-Users-me-other-project" / "s2.jsonl").write_text("{}\n")
-            paths = list(iter_session_files(root=tmp, project="tool-benchmarks"))
-            self.assertEqual(len(paths), 1)
-            self.assertEqual(paths[0].name, "s1.jsonl")
+            (Path(tmp) / "-Users-me-other-project" / "s3.jsonl").write_text("{}\n")
+            # Substring "tool-benchmarks" must NOT match either encoded dir.
+            self.assertEqual(
+                list(iter_session_files(root=tmp, project="tool-benchmarks")),
+                [],
+            )
+            paths = list(
+                iter_session_files(root=tmp, project="-Users-me-tool-benchmarks")
+            )
+            self.assertEqual([p.name for p in paths], ["s1.jsonl"])
 
     def test_project_filter_keeps_nested_subagent_sessions(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -141,7 +150,9 @@ class IterSessionFilesTests(unittest.TestCase):
             (proj / "subagents").mkdir(parents=True)
             (proj / "s1.jsonl").write_text("{}\n")
             (proj / "subagents" / "sub1.jsonl").write_text("{}\n")
-            paths = list(iter_session_files(root=tmp, project="tool-benchmarks"))
+            paths = list(
+                iter_session_files(root=tmp, project="-Users-me-tool-benchmarks")
+            )
             self.assertEqual(sorted(p.name for p in paths), ["s1.jsonl", "sub1.jsonl"])
 
     def test_project_filter_excludes_other_projects_nested_sessions(self) -> None:
@@ -149,7 +160,9 @@ class IterSessionFilesTests(unittest.TestCase):
             other = Path(tmp) / "-Users-me-other-project"
             (other / "subagents").mkdir(parents=True)
             (other / "subagents" / "sub2.jsonl").write_text("{}\n")
-            paths = list(iter_session_files(root=tmp, project="tool-benchmarks"))
+            paths = list(
+                iter_session_files(root=tmp, project="-Users-me-tool-benchmarks")
+            )
             self.assertEqual(paths, [])
 
     def test_filters_by_since_mtime(self) -> None:
@@ -203,6 +216,24 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
             self.assertEqual(len(ref_list), 1)
             self.assertEqual(ref_list[0].source, "raw")
             self.assertIsNone(reason)
+
+    def test_raw_refs_use_first_segment_project_and_is_subagent_flag(self) -> None:
+        """CQ 3.2: subagent paths keep the owning project; is_subagent is set at discovery."""
+        with TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "-Users-me-tool-benchmarks"
+            (proj / "subagents").mkdir(parents=True)
+            (proj / "parent.jsonl").write_text("{}\n")
+            (proj / "subagents" / "child.jsonl").write_text("{}\n")
+            refs, _reason = iter_sessions(index_source="raw", root=tmp, runner=FakeRunner([]))
+            by_id = {r.session_id: r for r in refs}
+            parent = by_id["parent"]
+            child = by_id["child"]
+            self.assertEqual(parent.project, "-Users-me-tool-benchmarks")
+            self.assertFalse(parent.is_subagent)
+            self.assertEqual(child.project, "-Users-me-tool-benchmarks")
+            self.assertTrue(child.is_subagent)
+            # Must not collapse the owning project to the "subagents" directory name.
+            self.assertNotEqual(child.project, "subagents")
 
     def test_agentsview_mode_strict_raises_on_missing_binary(self) -> None:
         runner = FakeRunner([FileNotFoundError("no agentsview")])

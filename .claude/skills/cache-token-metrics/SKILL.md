@@ -1,6 +1,6 @@
 ---
 name: cache-token-metrics
-description: Measure a lattice-orchestrator run's cache-token cost (read + creation, per run, normalized per ticket) from its raw Claude transcripts — steps 1-4 of the token benchmark. Use when benchmarking orchestration token footprint, comparing a run before/after a change, or validating the lattice token-reduction levers. Standalone reader that runs before TB-26/TB-27 land; engine is `toolbench.cache_tokens`.
+description: Measure a lattice-orchestrator run's cache-token cost (read + creation, per run, normalized per ticket) from its raw Claude transcripts — steps 1-4 of the token benchmark. Use when benchmarking orchestration token footprint, comparing a run before/after a change, or validating the lattice token-reduction levers. Engine is `toolbench.cache_tokens`, a run-aggregation façade over ClaudeParser (S39).
 ---
 
 # cache-token-metrics
@@ -9,9 +9,9 @@ Answers one question: **did a change actually cut a run's token cost?** It reads
 Claude Code transcripts of a lattice run, sums `usage` per session, folds the run's
 sessions into one total, and normalizes per ticket so runs of different size compare.
 
-Deliberately a **standalone reader**, separate from the passive analyzer's
-`ParseResult`/Summary path — it works today, before TB-26 wires cache sums into the
-analyzer and TB-27's `--run-manifest` automates the grouping this does by hand.
+Session summing goes through **`ClaudeParser`** (S39 / CQ 1.2) — the same parse path as
+the passive analyzer. `toolbench.cache_tokens` is the run-aggregation + CLI layer until
+TB-27's `--run-manifest` lands on passive.
 
 **Runs against `~/.claude/projects`** — invoke from `~` (cwd hygiene), not from a project
 checkout, so the read doesn't bill an unrelated project's cache.
@@ -28,9 +28,9 @@ checkout, so the read doesn't bill an unrelated project's cache.
    whose mtime falls in the window. Write one transcript path per line to a manifest file.
    (No run-id exists in transcripts — this correlation *is* the manifest, and is exactly
    what TB-27 will automate.)
-3. **Sum per session** — `toolbench.cache_tokens` reads each transcript and sums
-   `cache_read_input_tokens`, `cache_creation_input_tokens`, `input_tokens`,
-   `output_tokens` over messages that carry `usage`.
+3. **Sum per session** — `toolbench.cache_tokens` delegates to `ClaudeParser`, which
+   stamps session-grain `cache_read` / `cache_creation` / input / output from messages
+   that carry `usage`.
 4. **Aggregate + normalize** — it folds the manifest's sessions into one `RunUsage` and, with
    `--tickets N`, reports per-ticket figures.
 
@@ -78,8 +78,8 @@ per-ticket normalization (and its `tickets > 0` guard), and the prefix-sharing t
 
 ## Engine & scope
 
-`toolbench/cache_tokens.py` — dependency-free; `sum_session` / `sum_run` / `per_ticket` +
-a CLI (run by path — `python toolbench/cache_tokens.py …` — or `-m toolbench.cache_tokens`
-from the repo root). It does **not** touch `passive.py`; integrating cache sums into the
-production analyzer is TB-26, and per-run grouping via `--run-manifest` is TB-27 (this skill
-is TB-27's manual precursor).
+`toolbench/cache_tokens.py` — `sum_session` façades over `ClaudeParser` (which stamps
+`ParseResult.session_cache_*` / input / output); `sum_run` / `per_ticket` + CLI remain
+here for run-grain aggregation. Passive by path (`python toolbench/cache_tokens.py …`) or
+`-m toolbench.cache_tokens` from the repo root. Per-run grouping via `--run-manifest` on
+passive is TB-27 (this skill is that ticket's manual precursor).

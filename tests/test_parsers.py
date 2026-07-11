@@ -7,10 +7,44 @@ from toolbench.parsers import (
     CodexParser,
     HermesTraceParser,
     TranscriptParser,
+    _PendingCall,
 )
-from toolbench.transcript import ParseResult, UsageProvenance
+from toolbench.transcript import ParseResult, ToolCall, UsageProvenance
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _finish(name: str) -> ToolCall:
+    """Emit via the shared join path so parse-time tags are exercised."""
+    return _PendingCall(
+        name=name,
+        input_chars=10,
+        session_id="s1",
+        ts="2026-07-08T00:00:00Z",
+        usage=None,
+        usage_provenance=UsageProvenance.ABSENT_UNEXPECTED,
+        model=None,
+    ).finish(agent="claude-code", source="raw", project="p", output_chars=40)
+
+
+def test_finish_tags_tool_search_as_deferral() -> None:
+    """CQ 3.1: deferral policy is stamped at emit, not in Reducer.absorb."""
+    call = _finish("ToolSearch")
+    assert call.is_deferral is True
+    assert call.is_subagent_fanout is False
+
+
+def test_finish_tags_subagent_fanout_tools() -> None:
+    """CQ 3.1: Agent/Task/spawn_agent are fan-out; wait_agent is not."""
+    for name in ("Agent", "Task", "spawn_agent"):
+        call = _finish(name)
+        assert call.is_subagent_fanout is True, name
+        assert call.is_deferral is False, name
+    wait = _finish("wait_agent")
+    assert wait.is_subagent_fanout is False
+    read = _finish("Read")
+    assert read.is_subagent_fanout is False
+    assert read.is_deferral is False
 
 
 def test_claude_parser_claims_a_line_carrying_session_id() -> None:
@@ -54,6 +88,44 @@ def test_claude_parser_counts_malformed_lines_without_raising() -> None:
     result = ClaudeParser().parse(lines, agent="claude", source="raw", project="p")
     assert result.malformed == 1
     assert result.calls == []
+
+
+def test_claude_parser_sums_session_cache_tokens_from_message_usage() -> None:
+    """CQ 1.2 / S39: ClaudeParser is the sole Claude JSONL reader for cache sums."""
+    fix = Path(__file__).parent / "fixtures" / "cache_tokens"
+    lines = (fix / "measured.jsonl").read_text(encoding="utf-8").splitlines(keepends=True)
+    result = ClaudeParser().parse(lines, agent="claude-code", source="raw", project="p")
+    assert result.session_cache_read_tokens == 300
+    assert result.session_cache_creation_tokens == 30
+
+
+def test_claude_parser_zero_cache_is_measured_zero_not_none() -> None:
+    fix = Path(__file__).parent / "fixtures" / "cache_tokens"
+    lines = (fix / "zero_cache.jsonl").read_text(encoding="utf-8").splitlines(keepends=True)
+    result = ClaudeParser().parse(lines, agent="claude-code", source="raw", project="p")
+    assert result.session_cache_read_tokens == 0
+    assert result.session_cache_creation_tokens == 0
+
+
+def test_claude_parser_no_usage_leaves_cache_fields_none() -> None:
+    fix = Path(__file__).parent / "fixtures" / "cache_tokens"
+    lines = (fix / "no_usage.jsonl").read_text(encoding="utf-8").splitlines(keepends=True)
+    result = ClaudeParser().parse(lines, agent="claude-code", source="raw", project="p")
+    assert result.session_cache_read_tokens is None
+    assert result.session_cache_creation_tokens is None
+
+
+def test_claude_parser_sums_cache_on_messages_without_tool_use() -> None:
+    """Cache lives on assistant turns; summing only at tool_use would undercount."""
+    lines = [
+        '{"sessionId":"s1","type":"assistant","message":{"usage":'
+        '{"cache_read_input_tokens":50,"cache_creation_input_tokens":5,'
+        '"input_tokens":1,"output_tokens":1}}}\n',
+    ]
+    result = ClaudeParser().parse(lines, agent="claude-code", source="raw", project="p")
+    assert result.calls == []
+    assert result.session_cache_read_tokens == 50
+    assert result.session_cache_creation_tokens == 5
 
 
 def test_claude_parser_is_a_transcript_parser() -> None:
@@ -144,9 +216,11 @@ def test_codex_parser_joins_tool_search_call_to_its_output() -> None:
 
 
 def test_codex_parser_names_tool_search_so_the_deferral_metric_sees_it() -> None:
-    """`passive.Reducer` keys the ToolSearch/deferral tax on the literal name
-    `ToolSearch`. codex's record carries no `name` field at all."""
-    assert _codex_calls().calls[2].name == "ToolSearch"
+    """codex's tool_search_call has no name field; the parser stamps `ToolSearch`
+    and `is_deferral` so the reducer can count without knowing the schema."""
+    call = _codex_calls().calls[2]
+    assert call.name == "ToolSearch"
+    assert call.is_deferral is True
 
 
 def test_codex_parser_reads_tool_search_arguments_as_a_dict_not_a_json_string() -> None:

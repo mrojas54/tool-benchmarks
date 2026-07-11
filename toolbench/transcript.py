@@ -74,6 +74,11 @@ class ToolCall:
     model: str | None
     no_result: bool = False
     result_source: str | None = None
+    # Parse-time inefficiency tags (CQ 3.1). Stamped by the emit path from
+    # schema/agent policy; the reducer counts these facts and never re-derives
+    # them from tool names.
+    is_deferral: bool = False
+    is_subagent_fanout: bool = False
 
     @property
     def tokens(self) -> int:
@@ -88,12 +93,20 @@ class ToolCall:
 class ParseResult:
     """Output of `parse_session` (S5): joined calls plus a malformed-line count.
 
-    `session_cache_read_tokens` (S32) is session-grain, not per-call: only
-    `parse_hermes_session` ever populates it, from the hermes `sessions` row's
-    own `cache_read_tokens` column. `None` means "not measured" (SQL NULL);
-    an int -- including `0` -- means the session was measured. It is never
-    attributed to an individual `ToolCall` or folded into `UsageProvenance`,
-    which answers a different, per-call question this field cannot answer.
+    `session_cache_read_tokens` (S32) is session-grain, not per-call: hermes
+    populates it from the `sessions` row; ClaudeParser (S39 / CQ 1.2) sums it
+    from per-message `usage.cache_read_input_tokens`. `None` means "not
+    measured"; an int -- including `0` -- means the session was measured. It is
+    never attributed to an individual `ToolCall` or folded into `UsageProvenance`.
+
+    `session_cache_creation_tokens` (S39) is the matching creation sum from
+    `usage.cache_creation_input_tokens`. ClaudeParser stamps both together;
+    hermes leaves creation as `None` (no session-grain creation column).
+
+    `session_input_tokens` / `session_output_tokens` / `session_usage_messages`
+    are the companion per-message totals ClaudeParser accumulates in the same
+    pass so the cache-token benchmark CLI can façade over ParseResult without a
+    second JSONL interpreter (CQ 1.2).
 
     `unjoinable` (S38, TB-24) is a third bucket alongside joined `calls` and
     `malformed` lines: tool records a parser RECOGNIZED as real calls but
@@ -108,6 +121,10 @@ class ParseResult:
     calls: list[ToolCall]
     malformed: int
     session_cache_read_tokens: int | None = None
+    session_cache_creation_tokens: int | None = None
+    session_input_tokens: int = 0
+    session_output_tokens: int = 0
+    session_usage_messages: int = 0
     unjoinable: dict[str, int] = field(default_factory=dict)
 
 

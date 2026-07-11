@@ -238,6 +238,17 @@ def render_report(
             lines.append(f"  - {reason.value}: {count}")
     lines.append(f"- Tool calls joined: {reducer.calls_joined}")
     lines.append(f"- Malformed lines: {reducer.malformed_total}")
+    cache_read_total = sum(s.cache_read_tokens_total for s in reducer.agents.values())
+    cache_creation_total = sum(s.cache_creation_tokens_total for s in reducer.agents.values())
+    measured_cache_sessions = sum(s.sessions_with_cache_data for s in reducer.agents.values())
+    if measured_cache_sessions > 0:
+        # S39: read + creation together — a prefix-sharing change trades one for the
+        # other, so a read delta alone misleads. Caveat only; never ranks.
+        lines.append(
+            f"- Session-grain cache tokens: read={cache_read_total} "
+            f"creation={cache_creation_total} "
+            f"({measured_cache_sessions} measured sessions; S39 caveat, not ranked)"
+        )
     if reducer.unjoinable:
         # Records a parser saw but structurally could not join (TB-24): named here so
         # codex's ~4% web-search undercount is never a silent zero. Attributed by
