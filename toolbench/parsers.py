@@ -24,7 +24,7 @@ HERMES_TRACE_VERSION = "hermes-agent"
 
 @dataclass
 class _PendingCall:
-    """A `tool_use` block awaiting its matching result."""
+    """A call awaiting its matching result (or EOF drain)."""
 
     name: str
     input_chars: int
@@ -33,6 +33,56 @@ class _PendingCall:
     usage: dict[str, object] | None
     usage_provenance: UsageProvenance
     model: str | None
+
+    def finish(
+        self,
+        *,
+        agent: str,
+        source: str,
+        project: str,
+        output_chars: int,
+        error: str | None = None,
+        result_source: str | None = None,
+        no_result: bool = False,
+    ) -> ToolCall:
+        """Emit the joined (or EOF-unmatched) `ToolCall` for this pending entry."""
+        return ToolCall(
+            agent=agent,
+            source=source,
+            project=project,
+            name=self.name,
+            input_chars=self.input_chars,
+            output_chars=output_chars,
+            session_id=self.session_id,
+            ts=self.ts,
+            usage=self.usage,
+            usage_provenance=self.usage_provenance,
+            duration_ms=None,
+            error=error,
+            model=self.model,
+            no_result=no_result,
+            result_source=result_source,
+        )
+
+
+def _drain_pending(
+    pending: dict[str, _PendingCall],
+    *,
+    agent: str,
+    source: str,
+    project: str,
+) -> list[ToolCall]:
+    """S6: unmatched calls at EOF are kept with `no_result=True`, never dropped."""
+    return [
+        call.finish(
+            agent=agent,
+            source=source,
+            project=project,
+            output_chars=0,
+            no_result=True,
+        )
+        for call in pending.values()
+    ]
 
 
 class TranscriptParser(ABC):
@@ -185,46 +235,19 @@ class ClaudeParser(TranscriptParser):
                 if isinstance(result_block, dict) and result_block.get("is_error"):
                     error = "tool_error"
                 calls.append(
-                    ToolCall(
+                    pending_call.finish(
                         agent=agent,
                         source=source,
                         project=project,
-                        name=pending_call.name,
-                        input_chars=pending_call.input_chars,
                         output_chars=result_len(payload),
-                        session_id=pending_call.session_id,
-                        ts=pending_call.ts,
-                        usage=pending_call.usage,
-                        usage_provenance=pending_call.usage_provenance,
-                        duration_ms=None,
                         error=error,
-                        model=pending_call.model,
                         result_source=payload_source,
                     )
                 )
 
-        # S6: an unmatched `tool_use` at EOF is kept, never dropped.
-        for pending_call in pending.values():
-            calls.append(
-                ToolCall(
-                    agent=agent,
-                    source=source,
-                    project=project,
-                    name=pending_call.name,
-                    input_chars=pending_call.input_chars,
-                    output_chars=0,
-                    session_id=pending_call.session_id,
-                    ts=pending_call.ts,
-                    usage=pending_call.usage,
-                    usage_provenance=pending_call.usage_provenance,
-                    duration_ms=None,
-                    error=None,
-                    model=pending_call.model,
-                    no_result=True,
-                    result_source=None,
-                )
-            )
-
+        calls.extend(
+            _drain_pending(pending, agent=agent, source=source, project=project)
+        )
         return ParseResult(calls=calls, malformed=malformed)
 
 
@@ -395,46 +418,18 @@ class CodexParser(TranscriptParser):
                 output_field = self.OUTPUT_FIELDS[payload_type]
                 pending_call = pending.pop(call_id)
                 calls.append(
-                    ToolCall(
+                    pending_call.finish(
                         agent=agent,
                         source=source,
                         project=project,
-                        name=pending_call.name,
-                        input_chars=pending_call.input_chars,
                         output_chars=result_len(payload.get(output_field)),
-                        session_id=pending_call.session_id,
-                        ts=pending_call.ts,
-                        usage=pending_call.usage,
-                        usage_provenance=pending_call.usage_provenance,
-                        duration_ms=None,
-                        error=None,
-                        model=pending_call.model,
                         result_source="payload",
                     )
                 )
 
-        # S6: an unmatched call at EOF is kept, never dropped.
-        for pending_call in pending.values():
-            calls.append(
-                ToolCall(
-                    agent=agent,
-                    source=source,
-                    project=project,
-                    name=pending_call.name,
-                    input_chars=pending_call.input_chars,
-                    output_chars=0,
-                    session_id=pending_call.session_id,
-                    ts=pending_call.ts,
-                    usage=pending_call.usage,
-                    usage_provenance=pending_call.usage_provenance,
-                    duration_ms=None,
-                    error=None,
-                    model=pending_call.model,
-                    no_result=True,
-                    result_source=None,
-                )
-            )
-
+        calls.extend(
+            _drain_pending(pending, agent=agent, source=source, project=project)
+        )
         return ParseResult(calls=calls, malformed=malformed, unjoinable=unjoinable)
 
 

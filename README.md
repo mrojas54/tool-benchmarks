@@ -99,8 +99,8 @@ rather than silently absent (S38 / TB-24).
   fatal.
 - **`adapters.py`** — `detect_parser`, `UnknownSchema`, `AmbiguousSchema`, and
   `ComposedAdapter` (the terminal fallback). `PARSERS` currently holds
-  `ClaudeParser` and `HermesTraceParser`; their `claims_line` predicates
-  partition on `version`.
+  `ClaudeParser`, `HermesTraceParser`, and `CodexParser`; Claude and HermesTrace
+  partition on `version`, Codex on top-level `type`.
 - **`registry.py`** — the ordered adapter list and `pick_adapter`. Exists to
   break the `hermes.py` ↔ `adapters.py` import cycle. Adding an agent means
   adding an entry here, never editing a dispatcher.

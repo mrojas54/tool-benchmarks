@@ -436,7 +436,7 @@ class LiveArchive(unittest.TestCase):
         if not dbs:
             self.skipTest("no hermes profile databases")
         for db in dbs:
-            conn = _connect(db)  # an idle profile has no -shm; raw mode=ro cannot read it
+            conn = _connect(db)  # idle profiles may lack -shm; _connect handles both SQLite eras
             try:
                 scols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
                 mcols = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
@@ -450,15 +450,21 @@ class ConnectWalWithoutShm(unittest.TestCase):
     """A WAL database whose -wal/-shm sidecars are absent must still open read-only.
 
     This is the state of ~/.hermes/profiles/aphrodite-mood/state.db: the WAL flag
-    is set in the file header, but neither sidecar is on disk. SQLite cannot take a
-    read lock without recreating the -shm, which `mode=ro` forbids.
+    is set in the file header, but neither sidecar is on disk. On SQLite builds
+    that reject that shape under `mode=ro` (observed 3.43.x), `_connect` falls
+    back to `immutable=1`. Newer builds (observed 3.45.x) read it under `mode=ro`
+    directly; the fallback stays for the older case.
     """
 
     def _make_wal_db(self, path: Path, *, sidecars: bool = False) -> None:
-        """Build a WAL database, then model an idle profile by removing the sidecars.
+        """Build a WAL database, then model either idle (no sidecars) or live (wal present).
 
-        SQLite does *not* delete -wal/-shm on close here (sqlite 3.43.2, macOS), so
-        the sidecar-less state has to be produced explicitly rather than assumed.
+        SQLite 3.45+ checkpoints and removes -wal/-shm on a clean close, so the
+        sidecar-less idle state is the default after `close()`. Older builds
+        (3.43.x) left empty sidecars behind; we still unlink explicitly so both
+        generations produce the same idle fixture. When `sidecars=True`, recreate
+        an empty `-wal` after close so tests that key on wal *presence* (the
+        refuse-immutable guard) stay meaningful.
         """
         conn = sqlite3.connect(path)
         conn.execute("PRAGMA journal_mode=WAL").fetchone()
@@ -466,9 +472,13 @@ class ConnectWalWithoutShm(unittest.TestCase):
         conn.execute("INSERT INTO messages VALUES (1)")
         conn.commit()
         conn.close()
-        if not sidecars:
-            for suffix in ("-wal", "-shm"):
-                path.with_name(path.name + suffix).unlink(missing_ok=True)
+        wal = path.with_name(path.name + "-wal")
+        shm = path.with_name(path.name + "-shm")
+        # Normalize: never rely on whatever this SQLite left behind on close.
+        wal.unlink(missing_ok=True)
+        shm.unlink(missing_ok=True)
+        if sidecars:
+            wal.touch()
 
     def test_fixture_models_an_idle_profile(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -480,18 +490,28 @@ class ConnectWalWithoutShm(unittest.TestCase):
             self.assertEqual((header[18], header[19]), (2, 2), "not a WAL header")
 
     def test_plain_mode_ro_cannot_read_such_a_db(self) -> None:
-        """Pins the bug itself, and pins why `SELECT 1` is not a health check.
+        """Pins the classic bug, and pins why `SELECT 1` is not a health check.
 
         `SELECT 1` is a constant expression: it reads no page, opens no read
-        transaction, and therefore succeeds on a database SQLite cannot read.
+        transaction, and therefore succeeds even when a page touch would fail.
+
+        On SQLite builds that still reject sidecar-less WAL under `mode=ro`
+        (observed 3.43.x), `sqlite_master` raises. On newer builds (observed
+        3.45.x) that read succeeds — skip rather than pin obsolete behaviour.
         """
         with TemporaryDirectory() as tmp:
             db = Path(tmp) / "state.db"
             self._make_wal_db(db)
             conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
             conn.execute("SELECT 1").fetchone()  # succeeds — proves the probe is useless
-            with self.assertRaises(sqlite3.OperationalError):
+            try:
                 conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+            except sqlite3.OperationalError:
+                return
+            self.skipTest(
+                f"SQLite {sqlite3.sqlite_version} reads sidecar-less WAL DBs under "
+                "mode=ro; classic reject pin is N/A on this build"
+            )
 
     def test_connect_reads_a_wal_db_with_no_shm(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -501,16 +521,15 @@ class ConnectWalWithoutShm(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 1)
 
     def test_mode_ro_tolerates_a_present_wal(self) -> None:
-        """Pins the real SQLite behaviour the guard is written against.
+        """Pins that a present `-wal` (even empty) is readable under `mode=ro`.
 
-        `mode=ro` fails only when the -wal is *absent* while the header says WAL.
-        A -wal that is present -- empty, truncated, or carrying frames -- reads
-        fine. So the guard below defends a state that cannot arise naturally.
+        The refuse-immutable guard in `_connect` keys on wal *presence*: if
+        `mode=ro` fails while a `-wal` exists, falling back to `immutable=1`
+        would ignore pending frames. This test keeps that presence shape honest.
         """
         with TemporaryDirectory() as tmp:
             db = Path(tmp) / "state.db"
-            self._make_wal_db(db)
-            db.with_name(db.name + "-wal").touch()
+            self._make_wal_db(db, sidecars=True)
             conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 1)
 
@@ -538,7 +557,7 @@ class ConnectWalWithoutShm(unittest.TestCase):
                     _connect(db)
 
     def test_connect_reads_a_healthy_wal_db_without_falling_back(self) -> None:
-        """Sidecars present: `mode=ro` works and the immutable path must not engage."""
+        """Wal present: `mode=ro` works and the immutable path must not engage."""
         with TemporaryDirectory() as tmp:
             db = Path(tmp) / "state.db"
             self._make_wal_db(db, sidecars=True)

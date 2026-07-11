@@ -11,6 +11,7 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
+from tests.fakes import FakeRunner, completed, make_call
 from toolbench.adapters import UnknownSchema
 from toolbench.freeze import read_manifest, write_manifest
 from toolbench.passive import (
@@ -44,55 +45,6 @@ from toolbench.sources import (
 from toolbench.transcript import ParseResult, ToolCall, UsageProvenance
 
 FIXTURES = Path(__file__).parent / "fixtures"
-
-
-def _completed(
-    stdout: str = "", stderr: str = "", returncode: int = 0
-) -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
-
-
-class FakeRunner:
-    """Scripted subprocess-runner seam, mirroring test_sources.py's FakeRunner."""
-
-    def __init__(self, responses: list[subprocess.CompletedProcess[str] | Exception]) -> None:
-        self._responses = list(responses)
-        self.calls: list[list[str]] = []
-
-    def __call__(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
-        self.calls.append(argv)
-        if not self._responses:
-            raise AssertionError(f"FakeRunner exhausted, unexpected call: {argv}")
-        response = self._responses.pop(0)
-        if isinstance(response, Exception):
-            raise response
-        return response
-
-
-def make_call(**overrides: object) -> ToolCall:
-    fields: dict[str, object] = {
-        "agent": "claude-code",
-        "source": "raw",
-        "project": "tool-benchmarks",
-        "name": "Read",
-        "input_chars": 40,
-        "output_chars": 400,
-        "session_id": "sess-1",
-        "ts": "2026-07-08T00:00:00Z",
-        "usage": None,
-        "duration_ms": None,
-        "error": None,
-        "model": "claude-opus-4-8",
-    }
-    fields.update(overrides)
-    # Mirrors ClaudeParser._provenance so existing tests keep their meaning.
-    fields.setdefault(
-        "usage_provenance",
-        UsageProvenance.PRESENT
-        if fields["usage"] is not None
-        else UsageProvenance.ABSENT_UNEXPECTED,
-    )
-    return ToolCall(**fields)  # type: ignore[arg-type]
 
 
 class ReducerNoCorpusListTests(unittest.TestCase):
@@ -769,7 +721,7 @@ class MainExitContractTests(unittest.TestCase):
             self.assertIn("no sessions matched", out.getvalue())
 
     def test_strict_agentsview_nonzero_exit_exits_1(self) -> None:
-        runner = FakeRunner([_completed(stderr="daemon down", returncode=1)])
+        runner = FakeRunner([completed(stderr="daemon down", returncode=1)])
         err = io.StringIO()
         with redirect_stderr(err):
             code = main(["--index-source", "agentsview"], runner=runner)
@@ -785,8 +737,8 @@ class MainExitContractTests(unittest.TestCase):
         }
         runner = FakeRunner(
             [
-                _completed(stdout=json.dumps(payload)),
-                _completed(stdout=raw_text),
+                completed(stdout=json.dumps(payload)),
+                completed(stdout=raw_text),
             ]
         )
         out = io.StringIO()
@@ -832,9 +784,9 @@ class NonUtf8SessionTests(unittest.TestCase):
         }
         runner = FakeRunner(
             [
-                _completed(stdout=json.dumps(payload)),
+                completed(stdout=json.dumps(payload)),
                 UnicodeDecodeError("utf-8", b"\xa0", 0, 1, "invalid start byte"),
-                _completed(stdout=raw_text),
+                completed(stdout=raw_text),
             ]
         )
         out = io.StringIO()
@@ -870,9 +822,9 @@ class NonTranscriptExportTests(unittest.TestCase):
         }
         runner = FakeRunner(
             [
-                _completed(stdout=json.dumps(payload)),
-                _completed(stdout=sqlite_payload),
-                _completed(stdout=raw_text),
+                completed(stdout=json.dumps(payload)),
+                completed(stdout=sqlite_payload),
+                completed(stdout=raw_text),
             ]
         )
         out = io.StringIO()
@@ -899,7 +851,7 @@ class NonTranscriptExportTests(unittest.TestCase):
             "next_cursor": "",
             "total": 1,
         }
-        runner = FakeRunner([_completed(stdout=json.dumps(payload)), _completed(stdout="SQLite format 3\x00")])
+        runner = FakeRunner([completed(stdout=json.dumps(payload)), completed(stdout="SQLite format 3\x00")])
         with redirect_stdout(io.StringIO()):
             main(["--index-source", "agentsview"], runner=runner)
         self.assertEqual(set(tmp_root.glob("*.jsonl")) - before, set())
@@ -1307,10 +1259,10 @@ class DiscoveryReconciliationMainTests(unittest.TestCase):
         }
         runner = FakeRunner(
             [
-                _completed(stdout=json.dumps(payload)),
-                _completed(stdout=good),
-                _completed(returncode=1, stderr="fatal: source file not found: /x/dead-1.jsonl"),
-                _completed(stdout='{"role":"user","message":{}}\n'),
+                completed(stdout=json.dumps(payload)),
+                completed(stdout=good),
+                completed(returncode=1, stderr="fatal: source file not found: /x/dead-1.jsonl"),
+                completed(stdout='{"role":"user","message":{}}\n'),
             ]
         )
         out = io.StringIO()
@@ -1438,7 +1390,7 @@ class CorpusFingerprintMainTests(unittest.TestCase):
         reports = []
         for _ in range(2):
             runner = FakeRunner(
-                [_completed(stdout=self._payload()), _completed(stdout=good), _completed(stdout=good)]
+                [completed(stdout=self._payload()), completed(stdout=good), completed(stdout=good)]
             )
             out = io.StringIO()
             with redirect_stdout(out):
@@ -1450,14 +1402,14 @@ class CorpusFingerprintMainTests(unittest.TestCase):
         good = (FIXTURES / "sample.jsonl").read_text()
         # run 1: both sessions scan.
         r1 = FakeRunner(
-            [_completed(stdout=self._payload()), _completed(stdout=good), _completed(stdout=good)]
+            [completed(stdout=self._payload()), completed(stdout=good), completed(stdout=good)]
         )
         # run 2: good-2's transcript has aged out of the retention window.
         r2 = FakeRunner(
             [
-                _completed(stdout=self._payload()),
-                _completed(stdout=good),
-                _completed(returncode=1, stderr="fatal: source file not found: /x/good-2.jsonl"),
+                completed(stdout=self._payload()),
+                completed(stdout=good),
+                completed(returncode=1, stderr="fatal: source file not found: /x/good-2.jsonl"),
             ]
         )
         outs = []
@@ -1483,10 +1435,10 @@ class CorpusFingerprintMainTests(unittest.TestCase):
         )
         grown = good + extra
         r1 = FakeRunner(
-            [_completed(stdout=self._payload()), _completed(stdout=good), _completed(stdout=good)]
+            [completed(stdout=self._payload()), completed(stdout=good), completed(stdout=good)]
         )
         r2 = FakeRunner(
-            [_completed(stdout=self._payload()), _completed(stdout=grown), _completed(stdout=good)]
+            [completed(stdout=self._payload()), completed(stdout=grown), completed(stdout=good)]
         )
         outs = []
         for runner in (r1, r2):
@@ -1521,7 +1473,7 @@ class CorpusFreezeMainTests(unittest.TestCase):
         with TemporaryDirectory() as d:
             manifest = str(Path(d) / "corpus.manifest")
             runner = FakeRunner(
-                [_completed(stdout=self._payload()), _completed(stdout=good), _completed(stdout=good)]
+                [completed(stdout=self._payload()), completed(stdout=good), completed(stdout=good)]
             )
             with redirect_stdout(io.StringIO()):
                 code = main(["--index-source", "agentsview", "--freeze", manifest], runner=runner)
@@ -1540,7 +1492,7 @@ class CorpusFreezeMainTests(unittest.TestCase):
             ]
             write_manifest(manifest, refs, corpus_fingerprint(["good-1", "good-2"]).digest)
             # Only exports -- no `session list` call, because inputs come from the manifest.
-            runner = FakeRunner([_completed(stdout=good), _completed(stdout=good)])
+            runner = FakeRunner([completed(stdout=good), completed(stdout=good)])
             with redirect_stdout(io.StringIO()):
                 code = main(["--index-source", "agentsview", "--freeze", manifest], runner=runner)
             self.assertEqual(code, 0)
@@ -1557,8 +1509,8 @@ class CorpusFreezeMainTests(unittest.TestCase):
             write_manifest(manifest, refs, corpus_fingerprint(["good-1", "gone-2"]).digest)
             runner = FakeRunner(
                 [
-                    _completed(stdout=good),
-                    _completed(returncode=1, stderr="fatal: source file not found: /x/gone-2.jsonl"),
+                    completed(stdout=good),
+                    completed(returncode=1, stderr="fatal: source file not found: /x/gone-2.jsonl"),
                 ]
             )
             out = io.StringIO()
@@ -1586,7 +1538,7 @@ class CorpusFreezeMainTests(unittest.TestCase):
             write_manifest(manifest, refs, corpus_fingerprint(["good-1", "good-2"]).digest)
             outs = []
             for _ in range(2):
-                runner = FakeRunner([_completed(stdout=good), _completed(stdout=good)])
+                runner = FakeRunner([completed(stdout=good), completed(stdout=good)])
                 out = io.StringIO()
                 with redirect_stdout(out):
                     main(["--index-source", "agentsview", "--freeze", manifest], runner=runner)
