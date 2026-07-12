@@ -192,6 +192,25 @@ and re-exports the public symbols historical imports expect.
   together deliberately: a prefix-sharing change (per-ticket context extracts vs a
   shared contract) trades one for the other, so a read delta read alone misleads
   (TB-26; foundation for the per-run `--run-manifest` grouping, TB-27).
+- **S40 — per-run cache-token grouping, entry-grain.**
+  A run's cache cost is the sum of `usage` on every transcript **entry** whose
+  `gitBranch` is in the run's branch set, supplied by a JSON run-manifest
+  (`--run-manifest`, format per the S37 freeze precedent) that the orchestrator
+  emits **at dispatch**. Attribution is per-entry, not per-session: a session is
+  not owned by one run (29/158 straddle >1 branch), and delegators do not always
+  run in worktrees (one is logged as having "Ran in ROOT checkout"), so neither
+  branch nor `cwd` partitions sessions cleanly. Verified lossless — 1834/1834
+  usage-bearing entries carry `gitBranch`. `ClaudeParser` buckets into
+  `usage_by_branch` in its existing pass (no second interpreter, CQ 1.2), additive
+  beside the S39 session totals, so `session total == sum of buckets` is an
+  invariant. `unattributed` is the usage on non-run branches **within candidate
+  sessions** (those with >=1 entry on a run branch) — the straddle spillover;
+  scoped corpus-wide it would be dominated by unrelated `main` work. A manifest
+  branch matching zero entries is reported, never a silent zero (S23/S38). The run
+  section renders read + creation together, normalized per ticket, as a Summary
+  caveat — never a ranking column (S19). `.lattice/orchestration/agents.md` cannot
+  serve as the manifest: it discards its Branch column on run completion (TB-27;
+  builds on the session-grain sums of S39/TB-26).
 
 ## Active probes — `toolbench/probe.py` + `protocols/active-probes.md`
 

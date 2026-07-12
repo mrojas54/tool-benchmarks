@@ -54,8 +54,6 @@ raw roots + AgentsView exports
  freeze.py (opt-in pin)        │
      └──────────┬──────────────┘
           reports/*.md
-
- cache_tokens.py  ── standalone run-aggregation façade over ClaudeParser (S39)
 ```
 
 ### Three layers, one seam (TB-13)
@@ -151,12 +149,6 @@ rather than silently absent (S38 / TB-24).
   only when the API response is isolable (one `tool_use`, no prose/reasoning —
   S26). Turns are keyed solely by `requestId` (S30); hermes-trace input is
   refused with `NonIsolableTurns`.
-- **`cache_tokens.py`** — standalone run-aggregation façade over
-  `ClaudeParser` (S39 / TB-26). Sums session-grain cache read + creation for a
-  manifest of Claude transcripts and optionally normalizes per ticket. Bridge
-  until TB-27 folds `--run-manifest` into passive; see
-  [`.claude/skills/cache-token-metrics/SKILL.md`](.claude/skills/cache-token-metrics/SKILL.md).
-
 ## Probe corpus
 
 Five files are vendored under [`tools/`](tools/) — a log-spaced size spread
@@ -194,8 +186,9 @@ folded into the per-call `cache_assisted` column), the codex schema
 (**S33** / TB-12: `CodexParser` joins three paired `response_item` shapes on
 `payload.call_id`), typed skips + discovery reconcile (**S34–S35** / TB-21 /
 TB-23), corpus fingerprint + `--freeze` (**S36–S37** / TB-22), unjoinable
-records (**S38** / TB-24), and Claude session-grain cache read+creation
-(**S39** / TB-26) with the standalone `cache_tokens` façade. CQ follow-ons
+records (**S38** / TB-24), Claude session-grain cache read+creation
+(**S39** / TB-26), and per-run cache-token grouping via `--run-manifest`,
+entry-grain by `gitBranch` (**S40** / TB-27). CQ follow-ons
 split passive into `reducer`/`report`, fold probe into `ClaudeParser`
 (`keep_raw_input` / `track_turns`), and stamp inefficiency tags at emit.
 The strict gate (`uv run ruff check .`, `uv run mypy --strict toolbench tests`,
@@ -286,12 +279,12 @@ uv run python -m toolbench.passive --all --freeze reports/corpus.manifest   # re
 uv run python -m toolbench.probe --session /path/to/probe-session.jsonl --out reports/active-probe-comparison.md
 uv run python -m toolbench.probe --allow-seeded   # baseline table only; measures nothing
 
-# Per-run cache-token metrics (S39) — façade over ClaudeParser for a manifest
-# of Claude transcripts. Prefer from repo root via -m; from ~ use the path form
-# in .claude/skills/cache-token-metrics/SKILL.md (module resolve fails outside
+# Per-run cache-token metrics (S40) — --run-manifest groups per-entry usage
+# by gitBranch, folded into the passive analyzer itself (no separate module).
+# Prefer from repo root via -m; from ~ use the path form in
+# .claude/skills/cache-token-metrics/SKILL.md (module resolve fails outside
 # the checkout).
-uv run python -m toolbench.cache_tokens --manifest run.manifest --tickets 12
-uv run python -m toolbench.cache_tokens ~/.claude/projects/<proj>/*.jsonl --json
+uv run python -m toolbench.passive --agent claude --run-manifest run.json --tickets 12
 
 # Tests
 uv run pytest -q
@@ -420,8 +413,8 @@ signal is ever divided into a per-call rate or mixed into `cache_assisted`.
 | `codex` web searches never appear in the leaderboard | `web_search_call` carries no `call_id` and emits no output record, so it cannot be joined (S33 / TB-24) | Expected. They are not joinable calls, so leaderboard/ratio counts exclude them. The count is not lost: the Summary's `Unjoinable tool records (seen, not joined)` line names it as `codex/web_search_call` (S38). |
 | Fingerprints differ between two "same" runs | Corpus moved: vanished observer tail and/or live append (S36) | Do not attribute the delta to code. Re-run with `--freeze` (S37) or compare only when digests match. |
 | `--freeze` replay reports vanished sessions | Frozen refs' transcripts aged out or AgentsView `source file not found` | Expected when the sliding window deletes mid-corpus. `--verbose` names them; rewrite the manifest only when you intentionally want a new pin. |
-| `cache_tokens` via `-m` fails from `~` | Package isn't on `sys.path` outside the checkout | From `~`, invoke by file path per the cache-token-metrics skill; from the repo root, `-m toolbench.cache_tokens` works. |
-| Summary cache read ↓ but creation ↑ by ~the same | Prefix-sharing moved cost between buckets (S39) | Not a win. Compare read **and** creation (and `TOTAL_BILLED` from `cache_tokens`); read alone misleads. |
+| `toolbench.passive` via `-m` fails from `~` | Package isn't on `sys.path` outside the checkout | From `~`, invoke by file path per the cache-token-metrics skill; from the repo root, `-m toolbench.passive` works. |
+| Summary cache read ↓ but creation ↑ by ~the same | Prefix-sharing moved cost between buckets (S39/S40) | Not a win. Compare read **and** creation together; read alone misleads. |
 
 ## Quality gate
 

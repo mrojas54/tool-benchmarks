@@ -4,7 +4,7 @@
 
 `toolbench` is an offline, standard-library-only Python CLI harness (no web
 server, no database daemon, no long-running services). "Running the app" means
-invoking the CLI entry points (`passive`, `probe`, `cache_tokens`); "testing
+invoking the CLI entry points (`passive`, `probe`); "testing
 end to end" means the hermetic `pytest` suite plus the strict gate. Standard
 commands live in `README.md` (Usage + Quality gate) and `pyproject.toml`;
 don't duplicate them here.
@@ -34,10 +34,12 @@ Non-obvious notes for this environment:
   `--format trace` export raises `NonIsolableTurns` (S30) — use a native
   Claude Code transcript for probes. Probe joins via `ClaudeParser` with
   `keep_raw_input` / `track_turns` (no private Claude walker).
-- **Cache-token façade:** `uv run python -m toolbench.cache_tokens` works from
-  the repo root. From `~` (cwd hygiene for measuring `~/.claude`), invoke by
-  file path as in `.claude/skills/cache-token-metrics/SKILL.md` — `-m` fails
-  outside the checkout because the package is not installed into the venv.
+- **Per-run cache-token grouping:** `--run-manifest <run.json>` is a flag on
+  `toolbench.passive` (S40), not a separate module. `uv run python -m
+  toolbench.passive --run-manifest run.json` works from the repo root. From
+  `~` (cwd hygiene for measuring `~/.claude`), invoke by file path as in
+  `.claude/skills/cache-token-metrics/SKILL.md` — `-m` fails outside the
+  checkout because the package is not installed into the venv.
 - **Module split:** aggregation is `reducer.py`, markdown/fingerprint is
   `report.py`, freeze I/O is `freeze.py`; `passive.py` is CLI + orchestration
   and re-exports the historical public symbols.
