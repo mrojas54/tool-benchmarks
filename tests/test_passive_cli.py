@@ -94,6 +94,39 @@ class DateRangeFilterTests(unittest.TestCase):
         self.assertEqual(len(filtered.calls), 0)  # the one call is filtered out
         self.assertEqual(filtered.session_cache_read_tokens, 42)  # the stat survives
 
+    def test_session_cache_creation_tokens_survives_date_filtering(self) -> None:
+        """S39: the TB-25 survival invariant extends to the creation sum. It holds by
+        construction today -- `_apply_date_range` rebuilds via `replace()`, so a field
+        added to ParseResult carries through untouched -- and this pins it, so trading
+        `replace()` back for a hand-listed reconstruction cannot silently reset the
+        creation column to None (measured-zero and unmeasured are not the same, S32)."""
+        result = ParseResult(
+            calls=[make_call(ts="2026-06-01T00:00:00Z")],
+            malformed=0,
+            session_cache_read_tokens=42,
+            session_cache_creation_tokens=7,
+        )
+        filtered = _apply_date_range(result, "2026-07-01", None)
+        self.assertEqual(len(filtered.calls), 0)
+        self.assertEqual(filtered.session_cache_read_tokens, 42)
+        self.assertEqual(filtered.session_cache_creation_tokens, 7)
+
+    def test_measured_zero_cache_is_not_reset_to_unmeasured_by_date_filtering(self) -> None:
+        """S32/S39: `0` is a measured value, `None` is not. A falsy-check reconstruction
+        (`x if x else None`) would pass the =42 tests above and still corrupt this one."""
+        result = ParseResult(
+            calls=[make_call(ts="2026-06-01T00:00:00Z")],
+            malformed=0,
+            session_cache_read_tokens=0,
+            session_cache_creation_tokens=0,
+        )
+        filtered = _apply_date_range(result, "2026-07-01", None)
+        self.assertEqual(filtered.session_cache_read_tokens, 0)
+        self.assertEqual(filtered.session_cache_creation_tokens, 0)
+        self.assertIsNotNone(filtered.session_cache_read_tokens)
+        self.assertIsNotNone(filtered.session_cache_creation_tokens)
+
+
 class CliParsingTests(unittest.TestCase):
     def test_default_scope_is_agent_all_and_all_projects(self) -> None:
         args = parse_args([])
