@@ -275,6 +275,20 @@ def render_report(
                 f"creation={run_stats.unattributed_creation} "
                 f"(same-session work off the run's branches)"
             )
+        if run_stats.detached_sessions:
+            # TB-28: usage from DETACHED checkouts (gitBranch="HEAD"). Unattributable
+            # by construction -- "HEAD" matches no manifest branch -- so it is neither
+            # counted in the run nor discardable: a detached delegator and unrelated
+            # detached work look identical. Name it so the run total is never read as
+            # complete when it may not be (S23/S38).
+            lines.append(
+                f"  - detached-HEAD (unattributable): "
+                f"read={run_stats.detached_read} "
+                f"creation={run_stats.detached_creation} "
+                f"({run_stats.detached_sessions} session"
+                f"{'' if run_stats.detached_sessions == 1 else 's'}; "
+                f"may include run delegators -- run total may be low)"
+            )
         missing = run_stats.missing_branches(reducer.run)
         if missing:
             lines.append(f"  - matched no entries: {', '.join(missing)}")

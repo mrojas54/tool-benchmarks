@@ -10,6 +10,7 @@ from tempfile import TemporaryDirectory
 import pytest
 
 from tests.fakes import FakeRunner, completed
+from toolbench.passive import filter_subagents
 from toolbench.sources import (
     AgentsViewLoader,
     MissingSourceExport,
@@ -145,11 +146,12 @@ class IterSessionFilesTests(unittest.TestCase):
             self.assertEqual([p.name for p in paths], ["s1.jsonl"])
 
     def test_project_filter_keeps_nested_subagent_sessions(self) -> None:
+        # Real layout (TB-29): <project>/<session-uuid>/subagents/<file>.jsonl.
         with TemporaryDirectory() as tmp:
             proj = Path(tmp) / "-Users-me-tool-benchmarks"
-            (proj / "subagents").mkdir(parents=True)
+            (proj / "116ef75f" / "subagents").mkdir(parents=True)
             (proj / "s1.jsonl").write_text("{}\n")
-            (proj / "subagents" / "sub1.jsonl").write_text("{}\n")
+            (proj / "116ef75f" / "subagents" / "sub1.jsonl").write_text("{}\n")
             paths = list(
                 iter_session_files(root=tmp, project="-Users-me-tool-benchmarks")
             )
@@ -158,8 +160,8 @@ class IterSessionFilesTests(unittest.TestCase):
     def test_project_filter_excludes_other_projects_nested_sessions(self) -> None:
         with TemporaryDirectory() as tmp:
             other = Path(tmp) / "-Users-me-other-project"
-            (other / "subagents").mkdir(parents=True)
-            (other / "subagents" / "sub2.jsonl").write_text("{}\n")
+            (other / "116ef75f" / "subagents").mkdir(parents=True)
+            (other / "116ef75f" / "subagents" / "sub2.jsonl").write_text("{}\n")
             paths = list(
                 iter_session_files(root=tmp, project="-Users-me-tool-benchmarks")
             )
@@ -218,12 +220,21 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
             self.assertIsNone(reason)
 
     def test_raw_refs_use_first_segment_project_and_is_subagent_flag(self) -> None:
-        """CQ 3.2: subagent paths keep the owning project; is_subagent is set at discovery."""
+        """CQ 3.2: subagent paths keep the owning project; is_subagent is set at discovery.
+
+        TB-29 REGRESSION. The fixture mirrors the REAL on-disk layout --
+        <project>/<session-uuid>/subagents/agent-*.jsonl -- which nests the subagent
+        dir one level deeper than the flat <project>/subagents/ this suite used to
+        build. Against that invented layout the old `rel.parts[1] == "subagents"`
+        test passed, so the suite ratified the bug instead of catching it: on real
+        scans parts[1] is the session UUID and is_subagent was NEVER True.
+        """
         with TemporaryDirectory() as tmp:
             proj = Path(tmp) / "-Users-me-tool-benchmarks"
-            (proj / "subagents").mkdir(parents=True)
+            session = proj / "116ef75f-eb26-484d-84d7-fbdca43e246c"
+            (session / "subagents").mkdir(parents=True)
             (proj / "parent.jsonl").write_text("{}\n")
-            (proj / "subagents" / "child.jsonl").write_text("{}\n")
+            (session / "subagents" / "child.jsonl").write_text("{}\n")
             refs, _reason = iter_sessions(index_source="raw", root=tmp, runner=FakeRunner([]))
             by_id = {r.session_id: r for r in refs}
             parent = by_id["parent"]
@@ -232,8 +243,24 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
             self.assertFalse(parent.is_subagent)
             self.assertEqual(child.project, "-Users-me-tool-benchmarks")
             self.assertTrue(child.is_subagent)
-            # Must not collapse the owning project to the "subagents" directory name.
+            # Must not collapse the owning project to the "subagents" directory name,
+            # nor to the intervening session UUID.
             self.assertNotEqual(child.project, "subagents")
+            self.assertNotEqual(child.project, "116ef75f-eb26-484d-84d7-fbdca43e246c")
+
+    def test_exclude_subagents_actually_drops_subagent_sessions(self) -> None:
+        """TB-29: the flag was a silent no-op -- the report printed 'Subagents
+        included: no' while the refs it counted still held every subagent. Asserting
+        on the FILTERED refs, not just the flag, is what makes that unfakeable."""
+        with TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "-Users-me-tool-benchmarks"
+            session = proj / "116ef75f-eb26-484d-84d7-fbdca43e246c"
+            (session / "subagents").mkdir(parents=True)
+            (proj / "parent.jsonl").write_text("{}\n")
+            (session / "subagents" / "child.jsonl").write_text("{}\n")
+            refs, _reason = iter_sessions(index_source="raw", root=tmp, runner=FakeRunner([]))
+            kept = filter_subagents(list(refs))
+            self.assertEqual([r.session_id for r in kept], ["parent"])
 
     def test_agentsview_mode_strict_raises_on_missing_binary(self) -> None:
         runner = FakeRunner([FileNotFoundError("no agentsview")])

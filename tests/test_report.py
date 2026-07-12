@@ -659,3 +659,68 @@ class CorpusFingerprintRenderTests(unittest.TestCase):
     def test_no_fingerprint_line_when_absent(self) -> None:
         self.assertNotIn("Corpus fingerprint:", self._summary(None))
 
+
+    def test_run_section_names_the_detached_head_blind_spot(self) -> None:
+        """TB-28: a detached-HEAD delegator is invisible to branch attribution. The
+        run total silently omits it, so the Summary must SAY the total may be low --
+        a benchmark that lies is worse than one that fails."""
+        manifest = RunManifest(
+            run="2", tickets=("TB-1",), branches=frozenset({"b1"}), worktrees=()
+        )
+        reducer = Reducer(run=manifest)
+        reducer.absorb(
+            "claude-code",
+            ParseResult(
+                calls=[],
+                malformed=0,
+                usage_by_branch={"b1": BranchUsage(read=900, creation=90, messages=2)},
+            ),
+        )
+        # A second session, entirely detached: contributes to no branch bucket.
+        reducer.absorb(
+            "claude-code",
+            ParseResult(
+                calls=[],
+                malformed=0,
+                usage_by_branch={
+                    "HEAD": BranchUsage(read=7_000, creation=700, messages=9)
+                },
+            ),
+        )
+        report = render_report(
+            reducer,
+            index_source="raw",
+            fallback_reason=None,
+            skips=[],
+            include_subagents=True,
+            since_note=None,
+        )
+        # The run total stays honest -- detached usage is NOT folded in.
+        self.assertIn("Run cache tokens (run 2): read=900 creation=90", report)
+        # ...and the gap is named rather than swallowed.
+        self.assertIn("detached-HEAD (unattributable): read=7000 creation=700", report)
+        self.assertIn("run total may be low", report)
+
+    def test_no_detached_line_when_there_is_no_blind_spot(self) -> None:
+        """The clean case must stay clean: a caveat that always prints is ignored."""
+        manifest = RunManifest(
+            run="2", tickets=("TB-1",), branches=frozenset({"b1"}), worktrees=()
+        )
+        reducer = Reducer(run=manifest)
+        reducer.absorb(
+            "claude-code",
+            ParseResult(
+                calls=[],
+                malformed=0,
+                usage_by_branch={"b1": BranchUsage(read=900, creation=90, messages=2)},
+            ),
+        )
+        report = render_report(
+            reducer,
+            index_source="raw",
+            fallback_reason=None,
+            skips=[],
+            include_subagents=True,
+            since_note=None,
+        )
+        self.assertNotIn("detached-HEAD", report)

@@ -460,3 +460,71 @@ def test_prefix_sharing_trap_read_drop_offset_by_creation_rise() -> None:
     assert after.read < before.read  # looks like a win
     assert after.total_cache == before.total_cache  # it is not
 
+
+
+def test_detached_head_session_is_named_not_silently_dropped() -> None:
+    """TB-28 REGRESSION. A delegator working in a DETACHED checkout stamps
+    gitBranch="HEAD" on every entry. "HEAD" is not a branch name, so it can never
+    match a manifest -- the session has no in-set branch, hits the `not in_set`
+    early return, and its usage lands in NEITHER the run total NOR `unattributed`.
+    The run number comes out low with no warning: the project's signature
+    'confidently wrong number'. We cannot attribute it (SPEC S40: neither branch nor
+    cwd partitions sessions cleanly), so we NAME it instead (S23/S38)."""
+    reducer = Reducer(run=_manifest("feat/tb-21"))
+    reducer.absorb(
+        "claude-code",
+        ParseResult(
+            calls=[],
+            malformed=0,
+            usage_by_branch={"HEAD": BranchUsage(read=7_000, creation=700, messages=12)},
+        ),
+    )
+    # Still not attributed -- guessing an owner would be a fabricated number.
+    assert reducer.run_stats.read == 0
+    assert reducer.run_stats.candidate_sessions == 0
+    # ...but no longer invisible.
+    assert reducer.run_stats.detached_sessions == 1
+    assert reducer.run_stats.detached_read == 7_000
+    assert reducer.run_stats.detached_creation == 700
+
+
+def test_detached_usage_in_a_candidate_session_is_detached_not_unattributed() -> None:
+    """TB-28, second leak. When a candidate session ALSO carries HEAD entries, the
+    old fold booked them as `unattributed` -- whose docstring promises "work on
+    another branch". HEAD is not another branch; it is the absence of one. Routing it
+    to its own bucket keeps `unattributed` meaning exactly what it claims."""
+    reducer = Reducer(run=_manifest("feat/tb-21"))
+    reducer.absorb(
+        "claude-code",
+        ParseResult(
+            calls=[],
+            malformed=0,
+            usage_by_branch={
+                "feat/tb-21": BranchUsage(read=400, creation=40, messages=1),
+                "main": BranchUsage(read=900, creation=90, messages=3),
+                "HEAD": BranchUsage(read=50, creation=5, messages=1),
+            },
+        ),
+    )
+    assert reducer.run_stats.read == 400
+    assert reducer.run_stats.unattributed_read == 900  # `main` only -- NOT 950
+    assert reducer.run_stats.unattributed_creation == 90
+    assert reducer.run_stats.detached_read == 50
+    assert reducer.run_stats.detached_creation == 5
+    assert reducer.run_stats.detached_sessions == 1
+
+
+def test_zero_usage_detached_entries_do_not_raise_a_false_alarm() -> None:
+    """A HEAD session that spent nothing is not a blind spot -- reporting it would
+    train the operator to ignore the line that matters."""
+    reducer = Reducer(run=_manifest("feat/tb-21"))
+    reducer.absorb(
+        "claude-code",
+        ParseResult(
+            calls=[],
+            malformed=0,
+            usage_by_branch={"HEAD": BranchUsage(read=0, creation=0, messages=2)},
+        ),
+    )
+    assert reducer.run_stats.detached_sessions == 0
+    assert reducer.run_stats.detached_read == 0
