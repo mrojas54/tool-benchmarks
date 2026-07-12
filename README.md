@@ -31,8 +31,8 @@ slow / retry-churn feed the inefficiency callouts only.
 - **No live token-API calls** — all numbers derive from on-disk transcripts.
 - **Read-only** — never mutates transcripts or the probe corpus's source
   projects.
-- **Python standard library only** — no third-party runtime dependencies, so
-  the harness runs anywhere `python3` exists.
+- **Python standard library only** — no third-party runtime dependencies.
+  Runtime needs a stdlib Python ≥3.13 (provisioned via `uv`; see Usage).
 - **No web-chat benchmarking** — local/agentic surfaces with inspectable
   sessions only.
 
@@ -198,9 +198,9 @@ records (**S38** / TB-24), and Claude session-grain cache read+creation
 (**S39** / TB-26) with the standalone `cache_tokens` façade. CQ follow-ons
 split passive into `reducer`/`report`, fold probe into `ClaudeParser`
 (`keep_raw_input` / `track_turns`), and stamp inefficiency tags at emit.
-The strict gate (`ruff check .`, `mypy --strict toolbench tests`, `pytest`)
-is green — **353** tests passing (2 skipped when the live hermes archive /
-optional live paths are absent). `mypy --strict` covers `tests` as well as
+The strict gate (`uv run ruff check .`, `uv run mypy --strict toolbench tests`,
+`uv run pytest -q`) is green — **354** tests passing (1 skipped when the
+live hermes archive is absent). `mypy --strict` covers `tests` as well as
 `toolbench`.
 
 Source-of-truth documents:
@@ -259,8 +259,12 @@ bug this adapter exists for is
 
 The project is [uv](https://docs.astral.sh/uv/)-managed (`pyproject.toml` +
 `uv.lock`, empty runtime deps, `dev` group `ruff`/`mypy`/`pytest`).
+Requires Python ≥3.13.
 
 ```sh
+# Bootstrap (once per checkout; also runs implicitly under `uv run`)
+uv sync
+
 # Passive analyzer — default scope is every agent, every project
 uv run python -m toolbench.passive --agent all --all
 
@@ -422,6 +426,6 @@ signal is ever divided into a per-call rate or mixed into `cache_assisted`.
 ## Quality gate
 
 Before any PR: `uv run ruff check .`, `uv run mypy --strict toolbench tests`,
-and the full `pytest -q` suite must be green (S31 — the documented command
-must collect every test, including module-level `test_*` functions that
+and `uv run pytest -q` must be green (S31 — the documented command must
+collect every test, including module-level `test_*` functions that
 `unittest discover` silently misses).

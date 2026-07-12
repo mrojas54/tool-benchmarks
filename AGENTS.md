@@ -12,10 +12,10 @@ don't duplicate them here.
 Non-obvious notes for this environment:
 
 - **Toolchain:** the project is `uv`-managed and pins `requires-python = ">=3.13"`.
-  The startup update script runs `uv sync`, which provisions the interpreter
-  (currently CPython 3.14, the newest `>=3.13`) into `.venv`. Always invoke tools
-  via `uv run …` (e.g. `uv run python -m toolbench.passive`); the system
-  `/usr/bin/python3` is 3.12 and will not satisfy the version pin.
+  Run `uv sync` (or let `uv run` sync implicitly) to provision a ≥3.13
+  interpreter into `.venv`. Always invoke tools via `uv run …` (e.g.
+  `uv run python -m toolbench.passive`); a system `python3` older than 3.13
+  will not satisfy the version pin.
 - **Quality gate before any PR** (from `README.md`): `uv run ruff check .`,
   `uv run mypy --strict toolbench tests`, and `uv run pytest -q`. Do not use
   `uv run python -m unittest discover tests` as the gate — it silently misses
