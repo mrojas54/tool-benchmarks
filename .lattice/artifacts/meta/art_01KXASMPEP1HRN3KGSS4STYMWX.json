@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-12T09:13:26Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "id": "art_01KXASMPEP1HRN3KGSS4STYMWX",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KXASMPEP1HRN3KGSS4STYMWX.md",
+    "size_bytes": 1257
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": "Closed via PR #43, merged as dc52ca9.\n\nFinding: TB-26's implementation had already landed on main in 15879ac (whole-repo\nCQ refactor, #37) as CQ 1.2, BEFORE this ticket was minted. The S39 spec block ",
+  "tags": [],
+  "title": "Review findings",
+  "token_usage": null,
+  "type": "note"
+}
