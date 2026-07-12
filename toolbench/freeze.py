@@ -43,23 +43,26 @@ def _ref_to_dict(ref: SessionRef) -> dict[str, str | bool | None]:
     }
 
 
-def _ref_from_dict(d: dict[str, str | bool | None]) -> SessionRef:
-    path_raw = d.get("path")
-    path = None if path_raw is None else str(path_raw)
+def _is_subagent_from_manifest(d: dict[str, str | bool | None], path: str | None) -> bool:
+    """Explicit bool flag wins; omitted flag falls back to legacy path nesting (S13)."""
     if "is_subagent" in d:
-        raw_flag = d["is_subagent"]
-        is_subagent = raw_flag if isinstance(raw_flag, bool) else False
-    else:
-        # Pre-CQ-3.2 manifests omit the flag; recover it from the nested path
-        # so `--exclude-subagents` still drops them on freeze replay (S13).
-        is_subagent = path is not None and "/subagents/" in path
+        flag = d["is_subagent"]
+        return isinstance(flag, bool) and flag
+    # Pre-CQ-3.2 manifests omit the flag; recover from `/subagents/` so
+    # `--exclude-subagents` still drops them on freeze replay.
+    return path is not None and "/subagents/" in path
+
+
+def _ref_from_dict(d: dict[str, str | bool | None]) -> SessionRef:
+    raw_path = d.get("path")
+    path = str(raw_path) if raw_path is not None else None
     return SessionRef(
         agent=str(d["agent"]),
         source=str(d["source"]),
         project=str(d["project"]),
         session_id=str(d["session_id"]),
         path=path,
-        is_subagent=is_subagent,
+        is_subagent=_is_subagent_from_manifest(d, path),
     )
 
 
