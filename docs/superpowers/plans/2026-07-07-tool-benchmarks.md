@@ -1,5 +1,11 @@
 # tool-benchmarks Implementation Plan
 
+> **Historical.** This plan shipped the initial harness. For current install,
+> run, and quality-gate commands, follow [`README.md`](../../README.md)
+> (Usage + Quality gate). Commands below that say
+> `uv run python -m unittest discover tests` are stale — that gate under-collects
+> tests (TB-19); use `uv run pytest -q` instead.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a re-runnable, stdlib-only Python harness that analyzes tooling inefficiencies across Claude Code, Hermes, Codex, and other inspectable agent session sources, then emits a markdown report.

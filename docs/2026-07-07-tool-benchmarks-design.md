@@ -1,5 +1,10 @@
 # tool-benchmarks — design spec
 
+> **Historical.** This is the v2 design snapshot from 2026-07-07. For current
+> install, run, and quality-gate commands, follow [`README.md`](../README.md)
+> (Usage + Quality gate). Do not use `python3 -m unittest discover tests` —
+> that gate under-collects tests (TB-19); the live command is `uv run pytest -q`.
+
 **Date:** 2026-07-07
 **Approach:** C v2 (hybrid) — multi-agent passive analyzer backbone + thin active-probe scorer
 **Location:** `~/tool-benchmarks/`
