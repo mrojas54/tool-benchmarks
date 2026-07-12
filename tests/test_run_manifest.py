@@ -96,3 +96,13 @@ def test_nonexistent_path_is_malformed(tmp_path: Path) -> None:
     path = tmp_path / "does-not-exist.json"
     with pytest.raises(MalformedRunManifest):
         read_run_manifest(str(path))
+
+
+def test_non_utf8_file_is_malformed(tmp_path: Path) -> None:
+    """UnicodeDecodeError subclasses ValueError, not OSError -- it must be caught
+    explicitly or it escapes read_text as an uncaught traceback instead of the
+    intended hard stop (S23)."""
+    path = tmp_path / "run.json"
+    path.write_bytes(b"\xff\xfe\x00invalid")
+    with pytest.raises(MalformedRunManifest, match="not valid UTF-8"):
+        read_run_manifest(str(path))

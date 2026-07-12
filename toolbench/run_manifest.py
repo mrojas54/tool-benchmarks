@@ -49,6 +49,10 @@ def read_run_manifest(path: str) -> RunManifest:
         text = Path(path).expanduser().read_text(encoding="utf-8")
     except OSError as exc:
         raise MalformedRunManifest(f"{path} could not be read: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        # UnicodeDecodeError subclasses ValueError, not OSError -- it would
+        # otherwise escape as an uncaught traceback instead of a hard stop (S23).
+        raise MalformedRunManifest(f"{path} is not valid UTF-8: {exc}") from exc
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:

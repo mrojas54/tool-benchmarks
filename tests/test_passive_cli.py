@@ -421,6 +421,18 @@ class RunManifestMainTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("not valid JSON", err.getvalue())
 
+    def test_non_utf8_run_manifest_exits_1_with_a_clear_message(self) -> None:
+        """UnicodeDecodeError subclasses ValueError, not OSError -- it must not
+        escape as an uncaught traceback (S23)."""
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "run.json"
+            path.write_bytes(b"\xff\xfe\x00invalid")
+            err = io.StringIO()
+            with redirect_stderr(err), redirect_stdout(io.StringIO()):
+                code = main(["--run-manifest", str(path)])
+            self.assertEqual(code, 1)
+            self.assertIn("not valid UTF-8", err.getvalue())
+
 class NonTranscriptExportTests(unittest.TestCase):
     """Binary payloads demote to skipped_roots, keeping `Malformed lines` honest (TB-10).
 
