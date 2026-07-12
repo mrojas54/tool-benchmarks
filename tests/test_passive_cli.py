@@ -192,6 +192,23 @@ class CliParsingTests(unittest.TestCase):
         args = parse_args(["--verbose"])
         self.assertTrue(args.verbose)
 
+    def test_run_manifest_and_tickets_flags(self) -> None:
+        args = parse_args(["--run-manifest", "run.json", "--tickets", "3"])
+        self.assertEqual(args.run_manifest, "run.json")
+        self.assertEqual(args.tickets, 3)
+
+    def test_run_manifest_defaults_to_none(self) -> None:
+        args = parse_args([])
+        self.assertIsNone(args.run_manifest)
+        self.assertIsNone(args.tickets)
+
+    def test_tickets_zero_is_rejected(self) -> None:
+        """S39/S40: `--tickets 0` cannot normalize. Reject it at the CLI rather than
+        silently skipping normalization -- a per-ticket figure quietly missing from
+        the report is how a benchmark comparison gets made against the wrong number."""
+        with self.assertRaises(SystemExit):
+            parse_args(["--tickets", "0"])
+
 class SubagentFilterTests(unittest.TestCase):
     def test_filter_subagents_uses_is_subagent_flag(self) -> None:
         """CQ 3.2: exclude-subagents filters the discovery flag, not a path substring."""
@@ -390,6 +407,19 @@ class NonUtf8SessionTests(unittest.TestCase):
         self.assertIn("decode_error: 1", report)
         # the skipped id is available under --verbose
         self.assertIn("bad-session", report)
+
+class RunManifestMainTests(unittest.TestCase):
+    def test_malformed_run_manifest_exits_1_with_a_clear_message(self) -> None:
+        """The ticket originally pointed --run-manifest at agents.md (markdown).
+        Feeding one in must fail clearly, not with a stack trace."""
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "agents.md"
+            path.write_text("# Agents\n\n| Role | Ticket |\n", encoding="utf-8")
+            err = io.StringIO()
+            with redirect_stderr(err), redirect_stdout(io.StringIO()):
+                code = main(["--run-manifest", str(path)])
+            self.assertEqual(code, 1)
+            self.assertIn("not valid JSON", err.getvalue())
 
 class NonTranscriptExportTests(unittest.TestCase):
     """Binary payloads demote to skipped_roots, keeping `Malformed lines` honest (TB-10).

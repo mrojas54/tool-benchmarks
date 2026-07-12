@@ -29,6 +29,7 @@ from toolbench.report import (
     session_signature,
     tally_skips,
 )
+from toolbench.run_manifest import MalformedRunManifest, RunManifest, read_run_manifest
 from toolbench.sources import (
     IndexSource,
     MissingSourceExport,
@@ -139,6 +140,17 @@ class CliArgs:
     index_source: IndexSource
     verbose: bool
     freeze: str | None
+    run_manifest: str | None
+    tickets: int | None
+
+
+def _positive_int(raw: str) -> int:
+    """`--tickets 0` cannot normalize (S39). Reject at parse rather than silently
+    dropping the per-ticket line from the report."""
+    value = int(raw)
+    if value <= 0:
+        raise argparse.ArgumentTypeError("--tickets must be > 0 to normalize per ticket")
+    return value
 
 
 def _optional_str(value: object) -> str | None:
@@ -186,6 +198,8 @@ def _cli_args_from_namespace(ns: argparse.Namespace) -> CliArgs:
         index_source=index_source,
         verbose=verbose,
         freeze=_optional_str(ns.freeze),
+        run_manifest=_optional_str(ns.run_manifest),
+        tickets=ns.tickets,
     )
 
 
@@ -210,6 +224,8 @@ def parse_args(argv: list[str] | None) -> CliArgs:
         help="Pin the discovered corpus: write the ref list once, replay it on "
         "later runs, and name refs that have since vanished (TB-22).",
     )
+    parser.add_argument("--run-manifest", default=None)
+    parser.add_argument("--tickets", type=_positive_int, default=None)
     return _cli_args_from_namespace(parser.parse_args(argv))
 
 
@@ -300,7 +316,17 @@ def main(
     if args.exclude_subagents:
         refs = filter_subagents(refs)
 
-    reducer = Reducer()
+    run: RunManifest | None = None
+    if args.run_manifest is not None:
+        try:
+            run = read_run_manifest(args.run_manifest)
+        except (MalformedRunManifest, OSError) as exc:
+            # S23: a bad manifest is a hard stop -- silently scanning without a run
+            # would print a corpus report the operator would read as a run report.
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+    reducer = Reducer(run=run)
     scanned_sigs: list[str] = []
     for ref in refs:
         if args.verbose:
@@ -367,6 +393,7 @@ def main(
         verbose=args.verbose,
         fingerprint=fingerprint,
         freeze_note=freeze_note,
+        run_tickets=args.tickets,
     )
     if args.out:
         Path(args.out).write_text(report)
