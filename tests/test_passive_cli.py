@@ -33,7 +33,7 @@ from toolbench.sources import (
     SkipReason,
     SkipRecord,
 )
-from toolbench.transcript import ParseResult
+from toolbench.transcript import BranchUsage, ParseResult
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -125,6 +125,20 @@ class DateRangeFilterTests(unittest.TestCase):
         self.assertEqual(filtered.session_cache_creation_tokens, 0)
         self.assertIsNotNone(filtered.session_cache_read_tokens)
         self.assertIsNotNone(filtered.session_cache_creation_tokens)
+
+    def test_usage_by_branch_survives_date_filtering(self) -> None:
+        """S40 inherits the TB-25 invariant: usage_by_branch is session-grain, not a
+        per-call value, so it passes through --date-from/--date-to intact even when
+        every call is filtered out."""
+        result = ParseResult(
+            calls=[make_call(ts="2026-06-01T00:00:00Z")],
+            malformed=0,
+            usage_by_branch={"feat/tb-21": BranchUsage(read=300, creation=30, messages=1)},
+        )
+        filtered = _apply_date_range(result, "2026-07-01", None)
+        self.assertEqual(len(filtered.calls), 0)
+        self.assertEqual(filtered.usage_by_branch["feat/tb-21"].read, 300)
+        self.assertEqual(filtered.usage_by_branch["feat/tb-21"].creation, 30)
 
 
 class CliParsingTests(unittest.TestCase):

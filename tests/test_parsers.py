@@ -1,5 +1,6 @@
 """ClaudeParser consumes lines, not a path (TB-13, Task 1)."""
 
+import json
 from pathlib import Path
 
 from toolbench.parsers import (
@@ -409,3 +410,122 @@ def test_codex_parser_leaves_unjoinable_empty_when_no_web_search() -> None:
     """The base fixture has no web_search_call: the field defaults to an empty map,
     so a parser with nothing to report renders no reconciliation line."""
     assert _codex_calls().unjoinable == {}
+
+
+def test_claude_parser_buckets_usage_by_git_branch() -> None:
+    """S40: attribution is per-entry, by that entry's gitBranch. A session that
+    straddles branches splits across buckets -- it is not owned by one run."""
+    lines = [
+        json.dumps(
+            {
+                "type": "assistant",
+                "sessionId": "s1",
+                "timestamp": "2026-07-01T00:00:00Z",
+                "gitBranch": "feat/tb-21",
+                "message": {
+                    "role": "assistant",
+                    "content": [],
+                    "usage": {
+                        "cache_read_input_tokens": 300,
+                        "cache_creation_input_tokens": 30,
+                        "input_tokens": 5,
+                        "output_tokens": 7,
+                    },
+                },
+            }
+        ),
+        json.dumps(
+            {
+                "type": "assistant",
+                "sessionId": "s1",
+                "timestamp": "2026-07-01T00:01:00Z",
+                "gitBranch": "main",
+                "message": {
+                    "role": "assistant",
+                    "content": [],
+                    "usage": {
+                        "cache_read_input_tokens": 100,
+                        "cache_creation_input_tokens": 10,
+                        "input_tokens": 1,
+                        "output_tokens": 2,
+                    },
+                },
+            }
+        ),
+    ]
+    result = ClaudeParser().parse(lines, agent="claude-code", source="raw", project="p")
+
+    assert sorted(result.usage_by_branch) == ["feat/tb-21", "main"]
+    assert result.usage_by_branch["feat/tb-21"].read == 300
+    assert result.usage_by_branch["feat/tb-21"].creation == 30
+    assert result.usage_by_branch["feat/tb-21"].messages == 1
+    assert result.usage_by_branch["main"].read == 100
+    assert result.usage_by_branch["main"].creation == 10
+
+
+def test_claude_parser_session_totals_equal_sum_of_branch_buckets() -> None:
+    """S40 invariant: the new bucket dict is ADDITIVE. The S39/TB-26 session
+    totals must still equal the sum over buckets -- this pins that adding
+    usage_by_branch did not regress TB-26."""
+    lines = [
+        json.dumps(
+            {
+                "type": "assistant",
+                "sessionId": "s1",
+                "timestamp": "2026-07-01T00:00:00Z",
+                "gitBranch": branch,
+                "message": {
+                    "role": "assistant",
+                    "content": [],
+                    "usage": {
+                        "cache_read_input_tokens": read,
+                        "cache_creation_input_tokens": creation,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                    },
+                },
+            }
+        )
+        for branch, read, creation in (("a", 300, 30), ("b", 100, 10), ("a", 5, 1))
+    ]
+    result = ClaudeParser().parse(lines, agent="claude-code", source="raw", project="p")
+
+    assert result.session_cache_read_tokens == sum(
+        b.read for b in result.usage_by_branch.values()
+    )
+    assert result.session_cache_creation_tokens == sum(
+        b.creation for b in result.usage_by_branch.values()
+    )
+    assert result.session_cache_read_tokens == 405
+
+
+def test_claude_parser_usage_without_git_branch_buckets_under_empty_key() -> None:
+    """Never drop billed tokens. An entry with usage but no gitBranch cannot match
+    a run branch, so it buckets under "" and lands in `unattributed` downstream."""
+    lines = [
+        json.dumps(
+            {
+                "type": "assistant",
+                "sessionId": "s1",
+                "timestamp": "2026-07-01T00:00:00Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [],
+                    "usage": {"cache_read_input_tokens": 9, "cache_creation_input_tokens": 1},
+                },
+            }
+        ),
+    ]
+    result = ClaudeParser().parse(lines, agent="claude-code", source="raw", project="p")
+
+    assert result.usage_by_branch[""].read == 9
+    assert result.session_cache_read_tokens == 9
+
+
+def test_claude_parser_no_usage_leaves_usage_by_branch_empty() -> None:
+    """Unmeasured session: no usage anywhere -> no buckets (and S39 fields stay None)."""
+    lines = [json.dumps({"type": "user", "sessionId": "s1", "gitBranch": "main"})]
+    result = ClaudeParser().parse(lines, agent="claude-code", source="raw", project="p")
+
+    assert result.usage_by_branch == {}
+    assert result.session_cache_read_tokens is None
