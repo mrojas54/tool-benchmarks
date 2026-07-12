@@ -238,9 +238,10 @@ and re-exports the public symbols historical imports expect.
 - **S20 — stdlib runtime, uv project.** The shipped `toolbench` package
   imports nothing third-party; the project is uv-managed (`pyproject.toml`
   + `uv.lock`, empty runtime deps, `dev` group `ruff`/`mypy`/`pytest`).
-- **S21 — entry points.** Runnable as `uv run python -m toolbench.passive`,
-  `… toolbench.probe`, and `… toolbench.cache_tokens` (S39 run-aggregation
-  façade); tests via `uv run pytest -q` (S31).
+- **S21 — entry points.** Runnable as `uv run python -m toolbench.passive`
+  and `… toolbench.probe`; tests via `uv run pytest -q` (S31). Run-grain
+  grouping (`--run-manifest` / `--tickets`) is a dimension on `toolbench.passive`
+  itself (S40) — the analyzer owns run grain, not a third CLI.
 - **S22 — strict gate.** `uv run ruff check .`, `uv run mypy --strict
   toolbench tests`, and the full pytest suite are green before any PR.
 - **S23 — error handling.** Empty session selection → clear message,
