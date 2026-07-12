@@ -10,11 +10,12 @@ from toolbench.passive import (
     render_report,
     session_signature,
 )
+from toolbench.run_manifest import RunManifest
 from toolbench.sources import (
     SkipReason,
     SkipRecord,
 )
-from toolbench.transcript import ParseResult, ToolCall, UsageProvenance
+from toolbench.transcript import BranchUsage, ParseResult, ToolCall, UsageProvenance
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -185,6 +186,125 @@ class RenderReportTests(unittest.TestCase):
         self.assertIn("| claude-code | claude-haiku-4-5 | Read | 1 | 2000 |", section)
         # Ranked by context tokens descending: haiku (2000) outranks opus (100).
         self.assertLess(section.index("claude-haiku-4-5"), section.index("claude-opus-4-8"))
+
+    def test_run_with_zero_matching_sessions_reports_clearly(self) -> None:
+        """S23: an empty run set is a clear message, not a crash and not a silent
+        blank. Every manifest branch is named as matching nothing, which is the
+        signature of a manifest pointed at the wrong corpus."""
+        manifest = RunManifest(
+            run="9", tickets=("TB-1",), branches=frozenset({"never/existed"}), worktrees=()
+        )
+        reducer = Reducer(run=manifest)
+        reducer.absorb(
+            "claude-code",
+            ParseResult(
+                calls=[],
+                malformed=0,
+                usage_by_branch={"main": BranchUsage(read=10, creation=1, messages=1)},
+            ),
+        )
+        report = render_report(
+            reducer,
+            index_source="raw",
+            fallback_reason=None,
+            skips=[],
+            include_subagents=True,
+            since_note=None,
+        )
+        self.assertIn("0 candidate sessions", report)
+        self.assertIn("matched no entries: never/existed", report)
+
+    def test_run_section_absent_without_a_manifest(self) -> None:
+        """No --run-manifest -> the report is exactly what it is today."""
+        report = render_report(
+            Reducer(),
+            index_source="raw",
+            fallback_reason=None,
+            skips=[],
+            include_subagents=True,
+            since_note=None,
+        )
+        self.assertNotIn("Run cache tokens", report)
+
+    def test_run_section_prints_read_and_creation_together(self) -> None:
+        """S39/S40: never read alone -- a prefix-sharing change trades one for the other."""
+        manifest = RunManifest(
+            run="2", tickets=("TB-1", "TB-2"), branches=frozenset({"b1"}), worktrees=()
+        )
+        reducer = Reducer(run=manifest)
+        reducer.absorb(
+            "claude-code",
+            ParseResult(
+                calls=[],
+                malformed=0,
+                usage_by_branch={
+                    "b1": BranchUsage(read=900, creation=90, messages=2),
+                    "main": BranchUsage(read=50, creation=5, messages=1),
+                },
+            ),
+        )
+        report = render_report(
+            reducer,
+            index_source="raw",
+            fallback_reason=None,
+            skips=[],
+            include_subagents=True,
+            since_note=None,
+        )
+        self.assertIn("Run cache tokens (run 2): read=900 creation=90", report)
+        self.assertIn("unattributed: read=50 creation=5", report)
+        self.assertIn("1 candidate session", report)
+
+    def test_run_section_normalizes_per_ticket(self) -> None:
+        manifest = RunManifest(
+            run="2", tickets=("TB-1", "TB-2"), branches=frozenset({"b1"}), worktrees=()
+        )
+        reducer = Reducer(run=manifest)
+        reducer.absorb(
+            "claude-code",
+            ParseResult(
+                calls=[],
+                malformed=0,
+                usage_by_branch={"b1": BranchUsage(read=900, creation=90, messages=2)},
+            ),
+        )
+        report = render_report(
+            reducer,
+            index_source="raw",
+            fallback_reason=None,
+            skips=[],
+            include_subagents=True,
+            since_note=None,
+        )
+        self.assertIn("per ticket (2): read=450.0 creation=45.0", report)
+
+    def test_run_section_names_zero_match_branches(self) -> None:
+        """A branch matching nothing must be named -- silent, it reads as a free ticket."""
+        manifest = RunManifest(
+            run="2",
+            tickets=("TB-1",),
+            branches=frozenset({"b1", "typo/never-pushed"}),
+            worktrees=(),
+        )
+        reducer = Reducer(run=manifest)
+        reducer.absorb(
+            "claude-code",
+            ParseResult(
+                calls=[],
+                malformed=0,
+                usage_by_branch={"b1": BranchUsage(read=10, creation=1, messages=1)},
+            ),
+        )
+        report = render_report(
+            reducer,
+            index_source="raw",
+            fallback_reason=None,
+            skips=[],
+            include_subagents=True,
+            since_note=None,
+        )
+        self.assertIn("matched no entries: typo/never-pushed", report)
+
 
 class UnjoinableReconciliationRenderTests(unittest.TestCase):
     """TB-24 / S38: recognized-but-unjoinable tool records are surfaced in the
