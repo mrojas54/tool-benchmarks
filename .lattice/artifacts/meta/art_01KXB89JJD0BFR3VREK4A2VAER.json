@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-12T13:29:30Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "id": "art_01KXB89JJD0BFR3VREK4A2VAER",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KXB89JJD0BFR3VREK4A2VAER.md",
+    "size_bytes": 1812
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": "Closed via PR #46, merged as 95dadce. Gate green on merged main: ruff clean,\nmypy --strict clean, 381 passed. Feature verified running from a clean checkout.\n\nPREMISE CORRECTION (the substance of this",
+  "tags": [],
+  "title": "Review findings",
+  "token_usage": null,
+  "type": "note"
+}
