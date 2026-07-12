@@ -198,7 +198,7 @@ live hermes archive is absent). `mypy --strict` covers `tests` as well as
 
 Source-of-truth documents:
 
-- [`SPEC.md`](SPEC.md) — 39 numbered acceptance criteria (S1–S39).
+- [`SPEC.md`](SPEC.md) — 40 numbered acceptance criteria (S1–S40).
 - [`EVALUATION.md`](EVALUATION.md) — verification map for every criterion.
 - [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the T1–T6 tickets
   plus post-merge TB/T rows.
