@@ -515,16 +515,43 @@ def test_detached_usage_in_a_candidate_session_is_detached_not_unattributed() ->
 
 
 def test_zero_usage_detached_entries_do_not_raise_a_false_alarm() -> None:
-    """A HEAD session that spent nothing is not a blind spot -- reporting it would
-    train the operator to ignore the line that matters."""
+    """A HEAD session that spent NOTHING AT ALL is not a blind spot -- reporting it
+    would train the operator to ignore the line that matters. Note the counter-trap
+    below: 'spent nothing' means zero on EVERY axis, not merely zero cache."""
     reducer = Reducer(run=_manifest("feat/tb-21"))
     reducer.absorb(
         "claude-code",
         ParseResult(
             calls=[],
             malformed=0,
-            usage_by_branch={"HEAD": BranchUsage(read=0, creation=0, messages=2)},
+            usage_by_branch={
+                "HEAD": BranchUsage(read=0, creation=0, input=0, output=0, messages=2)
+            },
         ),
     )
     assert reducer.run_stats.detached_sessions == 0
     assert reducer.run_stats.detached_read == 0
+
+
+def test_uncached_detached_session_is_still_a_blind_spot() -> None:
+    """TB-28 COUNTER-TRAP (caught in review). An uncached detached turn carries real
+    input/output tokens and ZERO cache tokens. Gating the blind spot on read/creation
+    alone dropped it from the detached bucket, while the fold's `continue` dropped it
+    from `unattributed` -- so it vanished exactly as it did BEFORE the fix. The blind
+    spot is 'cost we could not attribute', not 'cache we could not attribute'."""
+    reducer = Reducer(run=_manifest("feat/tb-21"))
+    reducer.absorb(
+        "claude-code",
+        ParseResult(
+            calls=[],
+            malformed=0,
+            usage_by_branch={
+                "HEAD": BranchUsage(
+                    read=0, creation=0, input=1_234, output=5_678, messages=3
+                )
+            },
+        ),
+    )
+    assert reducer.run_stats.detached_sessions == 1
+    assert reducer.run_stats.detached_input == 1_234
+    assert reducer.run_stats.detached_output == 5_678

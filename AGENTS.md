@@ -23,7 +23,7 @@ Non-obvious notes for this environment:
   module-level code, printing report tables to stdout mid-run.
 - **Running the passive analyzer on real data:** there is no `--root` CLI flag;
   raw scanning defaults to `~/.claude/projects` and treats the first path segment
-  under the root as the project (subagent files at `<project>/subagents/*.jsonl`
+  under the root as the project (subagent files at `<project>/<session-uuid>/subagents/*.jsonl`
   keep that owning project and set `is_subagent`). To exercise it, drop a
   `*.jsonl` transcript at `~/.claude/projects/<project>/session.jsonl` and run
   `uv run python -m toolbench.passive --agent all --all --index-source raw`.

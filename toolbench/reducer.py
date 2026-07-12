@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from toolbench.run_manifest import RunManifest
-from toolbench.transcript import ParseResult, UsageProvenance
+from toolbench.transcript import BranchUsage, ParseResult, UsageProvenance
 
 OVERSIZED_OUTPUT_TOKENS = 5000
 UNKNOWN_MODEL = "unknown"
@@ -74,6 +74,8 @@ class RunStats:
     detached_sessions: int = 0
     detached_read: int = 0
     detached_creation: int = 0
+    detached_input: int = 0
+    detached_output: int = 0
     branches_seen: set[str] = field(default_factory=set)
 
     @property
@@ -243,10 +245,12 @@ class Reducer:
         # loop below -- it would early-return and vanish from both the run total and
         # `unattributed`, undercounting the run with no failure signal.
         detached = result.usage_by_branch.get(DETACHED_BRANCH)
-        if detached is not None and (detached.read or detached.creation):
+        if detached is not None and _spent_anything(detached):
             self.run_stats.detached_sessions += 1
             self.run_stats.detached_read += detached.read
             self.run_stats.detached_creation += detached.creation
+            self.run_stats.detached_input += detached.input
+            self.run_stats.detached_output += detached.output
 
         in_set = {b for b in result.usage_by_branch if b in self.run.branches}
         if not in_set:
@@ -265,6 +269,15 @@ class Reducer:
                 # Straddle spillover: work done in the same session on another branch.
                 self.run_stats.unattributed_read += usage.read
                 self.run_stats.unattributed_creation += usage.creation
+
+
+def _spent_anything(usage: BranchUsage) -> bool:
+    """Did this bucket cost ANY tokens? Gating the detached blind spot on cache tokens
+    alone (read/creation) would let an uncached detached turn -- real input/output, zero
+    cache -- fall through the `continue` below AND the booking above, reproducing the
+    very silent drop TB-28 exists to close. A measured zero is not a blind spot; an
+    uncounted cost is."""
+    return bool(usage.read or usage.creation or usage.input or usage.output)
 
 
 def _bump(counter: dict[str, int], tool: str) -> None:

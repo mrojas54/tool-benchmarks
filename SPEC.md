@@ -31,7 +31,7 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 - **S7 — raw discovery.** `iter_session_files(root="~/.claude/projects",
   project=None, since=None)` yields Claude Code JSONL paths, filtered by
   owning-project-dir substring (`project in rel.parts[0]`, so
-  `<project>/subagents/*.jsonl` still matches — TB-8; not merely
+  `<project>/<session-uuid>/subagents/*.jsonl` still matches — TB-8; not merely
   `path.parent.name`) and file mtime (`since`, ISO-8601); raises
   `FileNotFoundError` if `root` is missing.
 - **S8 — AgentsView listing.** `iter_agentsview_sessions(agent="all", …)`
@@ -96,7 +96,7 @@ and re-exports the public symbols historical imports expect.
 - **S13 — subagents.** Included by default; `--exclude-subagents` drops refs
   with `SessionRef.is_subagent` set at discovery. Raw discovery attributes
   project as the first path segment under the session root and sets the flag
-  for `<project>/subagents/*.jsonl` — never by stamping `project="subagents"`
+  for `<project>/<session-uuid>/subagents/*.jsonl` — never by stamping `project="subagents"`
   or filtering on a path substring after the fact.
 - **S14 — report sections.** Five, in order: (1) Agent breakdown, (2) Tool
   leaderboard (per agent+tool), (3) Model breakdown (per agent+model+tool,
