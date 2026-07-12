@@ -1,6 +1,13 @@
 {
   "assigned_to": null,
-  "branch_links": [],
+  "branch_links": [
+    {
+      "branch": "fix/tb-28-29-run-attribution-gaps",
+      "linked_at": "2026-07-12T14:19:40Z",
+      "linked_by": "agent:claude",
+      "repo": null
+    }
+  ],
   "comment_count": 0,
   "complexity": null,
   "created_at": "2026-07-12T13:26:46Z",
@@ -10,17 +17,17 @@
   "done_at": null,
   "evidence_refs": [],
   "id": "task_01KXB84JCEM09AV3D0EHNKF77Z",
-  "last_event_id": "ev_01KXB84JCFMZR7YTKJ9PJ6W0Z2",
-  "last_status_changed_at": "2026-07-12T13:26:46Z",
+  "last_event_id": "ev_01KXBB5MHQMVJ8BC93EYE6BXME",
+  "last_status_changed_at": "2026-07-12T14:19:47Z",
   "priority": "medium",
   "relationships_out": [],
   "reopened_count": 0,
   "schema_version": 1,
   "short_id": "TB-29",
-  "status": "backlog",
+  "status": "review",
   "tags": null,
   "title": "exclude-subagents flag is a silent no-op: is_subagent path detection tests the wrong path segment",
   "type": "bug",
-  "updated_at": "2026-07-12T13:26:46Z",
+  "updated_at": "2026-07-12T14:19:47Z",
   "urgency": null
 }
