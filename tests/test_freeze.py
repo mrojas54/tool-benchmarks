@@ -89,3 +89,63 @@ def test_manifest_legacy_derives_is_subagent_from_path() -> None:
         )
         m = read_manifest(str(path))
         assert m.refs[0].is_subagent is True
+
+
+def test_stale_false_flag_does_not_survive_replay() -> None:
+    """TB-29 REGRESSION (caught in review). A manifest frozen BEFORE the discovery fix
+    persists an explicit `"is_subagent": false` for a real subagent session -- written
+    by the very code that could never set it True. If an explicit flag beat the path,
+    that stale `false` would carry the no-op into replay forever: `--freeze old.manifest
+    --exclude-subagents` would keep silently including subagents while the report
+    claimed otherwise. The path is ground truth; a stale flag is not."""
+    with TemporaryDirectory() as d:
+        path = Path(d) / "corpus.manifest"
+        path.write_text(
+            json.dumps(
+                {
+                    "version": MANIFEST_VERSION,
+                    "fingerprint": "x",
+                    "count": 1,
+                    "refs": [
+                        {
+                            "agent": "claude-code",
+                            "source": "raw",
+                            "project": "-Users-me-tool-benchmarks",
+                            "session_id": "child",
+                            # The real nested layout, stamped False by the old bug.
+                            "path": "/tmp/proj/116ef75f/subagents/agent-abc.jsonl",
+                            "is_subagent": False,
+                        }
+                    ],
+                }
+            )
+        )
+        m = read_manifest(str(path))
+        assert m.refs[0].is_subagent is True
+
+
+def test_explicit_false_is_honoured_for_a_genuine_non_subagent() -> None:
+    """The self-heal must not overreach: a path with no /subagents/ segment stays False."""
+    with TemporaryDirectory() as d:
+        path = Path(d) / "corpus.manifest"
+        path.write_text(
+            json.dumps(
+                {
+                    "version": MANIFEST_VERSION,
+                    "fingerprint": "x",
+                    "count": 1,
+                    "refs": [
+                        {
+                            "agent": "claude-code",
+                            "source": "raw",
+                            "project": "-Users-me-tool-benchmarks",
+                            "session_id": "parent",
+                            "path": "/tmp/proj/parent.jsonl",
+                            "is_subagent": False,
+                        }
+                    ],
+                }
+            )
+        )
+        m = read_manifest(str(path))
+        assert m.refs[0].is_subagent is False

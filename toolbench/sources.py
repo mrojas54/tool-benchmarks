@@ -94,12 +94,19 @@ class SessionRef:
 
 
 def _project_and_subagent(root: Path, path: Path) -> tuple[str, bool]:
-    """Owning project = first segment under `root`; subagent = nested under `subagents/`."""
+    """Owning project = first segment under `root`; subagent = nested under `subagents/`.
+
+    TB-29: this tested `rel.parts[1] == "subagents"`, but the real layout is
+    <project>/<session-uuid>/subagents/agent-*.jsonl -- parts[1] is the session UUID,
+    so the flag was never True and `--exclude-subagents` silently included them while
+    the report claimed otherwise. Match on any segment BETWEEN the project and the
+    filename so the check does not re-break if the nesting depth changes again.
+    """
     rel = path.relative_to(root)
     if not rel.parts:
         raise ValueError(f"session path is not under root: {path}")
     project = rel.parts[0]
-    is_subagent = len(rel.parts) >= 3 and rel.parts[1] == "subagents"
+    is_subagent = "subagents" in rel.parts[1:-1]
     return project, is_subagent
 
 

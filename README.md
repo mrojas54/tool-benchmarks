@@ -115,7 +115,7 @@ rather than silently absent (S38 / TB-24).
   local transcript roots or pages the AgentsView CLI (`--index-source auto |
   agentsview | raw`). `auto` tries AgentsView first and falls back to raw
   scanning, recording the reason. Raw discovery stamps `SessionRef.is_subagent`
-  for `<project>/subagents/*.jsonl` while keeping the owning project as the
+  for `<project>/<session-uuid>/subagents/*.jsonl` while keeping the owning project as the
   first path segment (S13). Exports that are not JSONL (e.g. a SQLite dump
   with a NUL in the header) raise `NonTranscriptExport` and are skipped by
   name (TB-10).
@@ -325,7 +325,7 @@ discovery root is Claude Code sessions, so `--agent` is a no-op there.
 
 `--project` matches the **owning project directory** under the raw root
 (first path segment after the root), not `path.parent.name`. Nested
-subagent transcripts at `<project>/subagents/*.jsonl` are attributed to that
+subagent transcripts at `<project>/<session-uuid>/subagents/*.jsonl` are attributed to that
 owning project with `SessionRef.is_subagent=True`, and are only dropped when
 you pass `--exclude-subagents`.
 

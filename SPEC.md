@@ -31,7 +31,7 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 - **S7 — raw discovery.** `iter_session_files(root="~/.claude/projects",
   project=None, since=None)` yields Claude Code JSONL paths, filtered by
   owning-project-dir substring (`project in rel.parts[0]`, so
-  `<project>/subagents/*.jsonl` still matches — TB-8; not merely
+  `<project>/<session-uuid>/subagents/*.jsonl` still matches — TB-8; not merely
   `path.parent.name`) and file mtime (`since`, ISO-8601); raises
   `FileNotFoundError` if `root` is missing.
 - **S8 — AgentsView listing.** `iter_agentsview_sessions(agent="all", …)`
@@ -96,7 +96,7 @@ and re-exports the public symbols historical imports expect.
 - **S13 — subagents.** Included by default; `--exclude-subagents` drops refs
   with `SessionRef.is_subagent` set at discovery. Raw discovery attributes
   project as the first path segment under the session root and sets the flag
-  for `<project>/subagents/*.jsonl` — never by stamping `project="subagents"`
+  for `<project>/<session-uuid>/subagents/*.jsonl` — never by stamping `project="subagents"`
   or filtering on a path substring after the fact.
 - **S14 — report sections.** Five, in order: (1) Agent breakdown, (2) Tool
   leaderboard (per agent+tool), (3) Model breakdown (per agent+model+tool,
@@ -199,8 +199,15 @@ and re-exports the public symbols historical imports expect.
   emits **at dispatch**. Attribution is per-entry, not per-session: a session is
   not owned by one run (29/158 straddle >1 branch), and delegators do not always
   run in worktrees (one is logged as having "Ran in ROOT checkout"), so neither
-  branch nor `cwd` partitions sessions cleanly. Verified lossless — 1834/1834
-  usage-bearing entries carry `gitBranch`. `ClaudeParser` buckets into
+  branch nor `cwd` partitions sessions cleanly. 1834/1834 usage-bearing entries
+  carry `gitBranch` — but **presence is not attributability** (TB-28): a detached
+  checkout stamps the literal `"HEAD"`, which is the absence of a branch and can
+  never match a manifest, so such usage is neither foldable into a run nor
+  disclaimable from it (a detached delegator and unrelated detached work are
+  indistinguishable). It is therefore booked to a separate `detached_*` bucket and
+  **named** in the run section — never folded into the total (which would fabricate
+  an attribution) and never dropped (which silently undercounts the run, the
+  project's signature failure). `ClaudeParser` buckets into
   `usage_by_branch` in its existing pass (no second interpreter, CQ 1.2), additive
   beside the S39 session totals, so `session total == sum of buckets` is an
   invariant. `unattributed` is the usage on non-run branches **within candidate
