@@ -1,0 +1,18 @@
+{
+  "wids": {
+    "origin": "https://github.com/mrojas54/wids-nyc-reading-group-assistant",
+    "sha": "a39cdd0",
+    "test_gate": "Bash(npx vitest run:*)",
+    "test_cmd": ["npx", "vitest", "run"],
+    "test_cwd": "web",
+    "serena_languages": ["typescript", "vue", "python"]
+  },
+  "maltese": {
+    "origin": "https://github.com/mrojas54/maltese-agent",
+    "sha": "7b8fa95",
+    "test_gate": "Bash(cargo test:*)",
+    "test_cmd": ["cargo", "test"],
+    "test_cwd": ".",
+    "serena_languages": ["rust", "typescript"]
+  }
+}

@@ -36,3 +36,6 @@ reports/
 
 # Serena: per-machine project cache, memories, and local config.
 .serena/
+
+# Complex-probe corpora: reproduce with corpus/vendor.sh (pinned SHAs in manifest.json)
+corpus/*/
