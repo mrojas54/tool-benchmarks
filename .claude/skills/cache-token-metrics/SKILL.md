@@ -56,7 +56,7 @@ PYTHONPATH=~/tool-benchmarks uv run --project ~/tool-benchmarks python -m toolbe
   change (per-ticket context extracts vs a shared contract) just moved cost between the two
   buckets; `TOTAL_BILLED` is unchanged. **This is why the reader always prints creation next
   to read** — cache-read alone misleads (S39). The eval
-  `test_prefix_sharing_trap_conserves_total` pins exactly this.
+  `test_prefix_sharing_trap_read_drop_offset_by_creation_rise` pins exactly this.
 - **Guardrails to check alongside tokens:** wall-clock (`run-state.md` timestamps),
   full-contract-escalation count (delegator completion comments — the Standard Clause 13
   flag), Result Validator pass rate. A token win that raises escalations or fails validation
