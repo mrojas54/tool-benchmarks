@@ -153,8 +153,12 @@ rather than silently absent (S38 / TB-24).
   refused with `NonIsolableTurns`.
 - **`cache_tokens.py`** — standalone run-aggregation façade over
   `ClaudeParser` (S39 / TB-26). Sums session-grain cache read + creation for a
-  manifest of Claude transcripts and optionally normalizes per ticket. Bridge
-  until TB-27 folds `--run-manifest` into passive; see
+  manifest of Claude transcripts and optionally normalizes per ticket. Manual
+  precursor until TB-27 implements `--run-manifest <run.json>` on passive under
+  the S40 entry-grain (`gitBranch`) criterion — **not** an `agents.md` session
+  set; see
+  [`docs/superpowers/specs/2026-07-12-tb-27-per-run-cache-grouping-design.md`](docs/superpowers/specs/2026-07-12-tb-27-per-run-cache-grouping-design.md)
+  and
   [`.claude/skills/cache-token-metrics/SKILL.md`](.claude/skills/cache-token-metrics/SKILL.md).
 
 ## Probe corpus
@@ -198,25 +202,31 @@ records (**S38** / TB-24), and Claude session-grain cache read+creation
 (**S39** / TB-26) with the standalone `cache_tokens` façade. CQ follow-ons
 split passive into `reducer`/`report`, fold probe into `ClaudeParser`
 (`keep_raw_input` / `track_turns`), and stamp inefficiency tags at emit.
-The strict gate (`uv run ruff check .`, `uv run mypy --strict toolbench tests`,
-`uv run pytest -q`) is green — **354** tests passing (1 skipped when the
-live hermes archive is absent). `mypy --strict` covers `tests` as well as
-`toolbench`.
+**TB-27 / S40** (per-run cache grouping) is design-approved —
+entry-grain attribution by `gitBranch` via `--run-manifest <run.json>`, not
+an `agents.md` session set — and not yet implemented. The strict gate
+(`uv run ruff check .`, `uv run mypy --strict toolbench tests`,
+`uv run pytest -q`) is green — **355** tests passing (2 skipped when live
+hermes / optional live paths are absent). `mypy --strict` covers `tests` as
+well as `toolbench`.
 
 Source-of-truth documents:
 
-- [`SPEC.md`](SPEC.md) — 39 numbered acceptance criteria (S1–S39).
+- [`SPEC.md`](SPEC.md) — 40 numbered acceptance criteria (S1–S40; S40 is the
+  approved TB-27 contract, not yet implemented).
 - [`EVALUATION.md`](EVALUATION.md) — verification map for every criterion.
 - [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the T1–T6 tickets
   plus post-merge TB/T rows.
 - [`docs/2026-07-07-tool-benchmarks-design.md`](docs/2026-07-07-tool-benchmarks-design.md)
   — full v2 design spec.
+- [`docs/superpowers/specs/2026-07-12-tb-27-per-run-cache-grouping-design.md`](docs/superpowers/specs/2026-07-12-tb-27-per-run-cache-grouping-design.md)
+  — TB-27 / S40 run-grain design (entry-by-`gitBranch`, `run.json` manifest).
 - [`protocols/active-probes.md`](protocols/active-probes.md) — probe corpus,
   arm matching (S17), isolability (S26), and the seeded `#8376` baseline table.
 - [`protocols/probe-run-sheet.md`](protocols/probe-run-sheet.md) — executable
   ten-turn operator run sheet for scoring a fresh probe session.
 - [`.claude/skills/cache-token-metrics/SKILL.md`](.claude/skills/cache-token-metrics/SKILL.md)
-  — operator recipe for per-run cache-token diffs (S39).
+  — operator recipe for per-run cache-token diffs (S39; manual precursor to S40).
 
 ## Agents / targets
 
@@ -358,7 +368,9 @@ moving, not your code (TB-22).
   reports `(<V> vanished since freeze)` for refs whose transcripts have since been
   deleted (`--verbose` names them). Over an unchanged corpus a replay is
   byte-identical; when the tail has moved, the vanished count names the mechanism
-  instead of letting it masquerade as a code effect.
+  instead of letting it masquerade as a code effect. Manifests store
+  `is_subagent` explicitly; older manifests that omit the flag recover it from
+  `/subagents/` in the path so `--exclude-subagents` still works on replay.
 
 The fast test suite is hermetic — it fakes the `agentsview` CLI, points
 `$HERMES_HOME` at a fixture database, and never touches `~/.claude` or
@@ -422,6 +434,7 @@ signal is ever divided into a per-call rate or mixed into `cache_assisted`.
 | `--freeze` replay reports vanished sessions | Frozen refs' transcripts aged out or AgentsView `source file not found` | Expected when the sliding window deletes mid-corpus. `--verbose` names them; rewrite the manifest only when you intentionally want a new pin. |
 | `cache_tokens` via `-m` fails from `~` | Package isn't on `sys.path` outside the checkout | From `~`, invoke by file path per the cache-token-metrics skill; from the repo root, `-m toolbench.cache_tokens` works. |
 | Summary cache read ↓ but creation ↑ by ~the same | Prefix-sharing moved cost between buckets (S39) | Not a win. Compare read **and** creation (and `TOTAL_BILLED` from `cache_tokens`); read alone misleads. |
+| Building a TB-27 run cost from `agents.md` / whole sessions | `agents.md` drops branch columns on completion; ~18% of sessions straddle branches (S40) | Use the approved criterion: entry-grain `gitBranch` ∈ run branch set via a dispatch-time `run.json`. Until TB-27 lands, keep hand-building a transcript list for `cache_tokens` and treat it as approximate. |
 
 ## Quality gate
 

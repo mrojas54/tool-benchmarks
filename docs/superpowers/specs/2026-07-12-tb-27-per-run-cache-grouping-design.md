@@ -3,7 +3,8 @@
 Date: 2026-07-12
 Ticket: `TB-27` (buildplan `T17`)
 Depends on: `TB-26` / `S39` (session-grain cache sums), landed
-Status: design approved, not yet implemented
+Status: design approved; contract rows authored in SPEC/EVALUATION/BUILDPLAN;
+implementation not yet started
 
 ## Why this exists
 
@@ -184,10 +185,11 @@ it.**
 - Retrofitting a manifest for historical runs. One can be hand-written, but the
   orchestrator emitting it at dispatch is the supported path.
 
-## Contract rows to author with the implementation
+## Contract rows
+
+Authored ahead of implementation so the premise correction is the living contract:
 
 - `SPEC.md` — **S40**, the run-grain criterion.
-- `EVALUATION.md` — S40 eval row (tests above).
-- `BUILDPLAN.md` — correct `T17`'s description; the `agents.md` input named there
-  does not hold.
-- `TB-27` — correct the ticket description on the board.
+- `EVALUATION.md` — S40 eval row (tests above; marked planned until TB-27 lands).
+- `BUILDPLAN.md` — `T17` corrected (`run.json` + entry-grain; not `agents.md`).
+- `TB-27` — ticket title/description corrected on the board.

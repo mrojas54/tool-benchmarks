@@ -23,7 +23,8 @@ raw roots + AgentsView exports
      └──────────┬──────────────┘
           reports/*.md
 
- cache_tokens.py  ── run-aggregation façade over ClaudeParser (S39)
+ cache_tokens.py  ── run-aggregation façade over ClaudeParser (S39;
+                      bridge until T17 / S40 `--run-manifest` on passive)
 ```
 
 - **Runtime:** Python stdlib only (`subprocess` shells to the AgentsView CLI).
@@ -79,7 +80,7 @@ parallel (T2, T3), then the two consumers (T4, T5), then docs + gate (T6).
 | **T14 — unjoinable tool records** (lattice `TB-24`) | `ParseResult.unjoinable` (kind → count) for records a parser recognizes but cannot join; `CodexParser` counts `web_search_call` there instead of dropping it; `Reducer` folds by `(agent, kind)`; the Summary names the gap (`Unjoinable tool records (seen, not joined): <T>` + attribution) rather than leaving codex's ~4% web-search undercount a silent zero; the count folds into `session_signature` so an appended `web_search_call` moves the fingerprint | S38 | T12, T13 |
 | **T15 — date-range cache-stat drop fixed** (lattice `TB-25`) | `_apply_date_range` reconstructs the `ParseResult` with `dataclasses.replace(result, calls=kept)` instead of hand-listing fields, so `session_cache_read_tokens` (S32) survives `--date-from`/`--date-to` instead of silently resetting to `None`; a session whose calls all fall outside the range still contributes its cache stat, since it was still measured | S32 | T11 |
 | **T16 — session-grain cache-token sums for Claude** (lattice `TB-26`) | Populate `session_cache_read_tokens` for Claude by summing per-message `usage.cache_read_input_tokens`; add `session_cache_creation_tokens` from `cache_creation_input_tokens`; both promote the `_is_cache_hit` boolean (S19) to a session total; NULL-vs-measured per S32; hermes path unchanged (no double-count); TB-25 date-range survival extends to the new field; Summary renders a read + creation caveat line, never a ranking column | S39 | T11, T15 |
-| **T17 — per-run cache grouping via `--run-manifest`** (lattice `TB-27`) | `--run-manifest <agents.md>` folds a lattice run's session set (actors/branches/worktrees from `.lattice/orchestration/agents.md`) into one reducer, emitting cache read + creation per run normalized per ticket — a new grouping dimension above session, plus corpus filtering (its own run-grain criterion specced at planning) | S39 | T16 |
+| **T17 — per-run cache grouping via `--run-manifest`** (lattice `TB-27`) | `--run-manifest <run.json>` (orchestrator-emitted `{run, tickets, branches, worktrees?}` — **not** `agents.md`, which discards branch data on completion) folds entry-grain usage whose `gitBranch` is in the run's branch set into one reducer; out-of-set usage within candidate sessions lands in `unattributed`; emits cache read + creation per run, normalized per ticket; Claude-only (`gitBranch`); retires the standalone `cache_tokens` façade once landed. Design: `docs/superpowers/specs/2026-07-12-tb-27-per-run-cache-grouping-design.md` | S40 | T16 |
 
 `T1`–`T6` are the original v2 build-contract tickets (board `TB-2`–`TB-7`) and
 predate the lattice board's use as the source of truth. `T7`–`T9` are recorded

@@ -38,6 +38,9 @@ Non-obvious notes for this environment:
   the repo root. From `~` (cwd hygiene for measuring `~/.claude`), invoke by
   file path as in `.claude/skills/cache-token-metrics/SKILL.md` — `-m` fails
   outside the checkout because the package is not installed into the venv.
+  Per-run grouping on passive is TB-27 / **S40** (design approved: entry-grain
+  by `gitBranch` via `--run-manifest <run.json>`, not `agents.md`) — see
+  `docs/superpowers/specs/2026-07-12-tb-27-per-run-cache-grouping-design.md`.
 - **Module split:** aggregation is `reducer.py`, markdown/fingerprint is
   `report.py`, freeze I/O is `freeze.py`; `passive.py` is CLI + orchestration
   and re-exports the historical public symbols.

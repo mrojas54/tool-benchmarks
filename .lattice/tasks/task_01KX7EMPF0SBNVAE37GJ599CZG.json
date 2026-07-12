@@ -1,16 +1,16 @@
 {
   "assigned_to": null,
   "branch_links": [],
-  "comment_count": 0,
+  "comment_count": 1,
   "complexity": "medium",
   "created_at": "2026-07-11T02:03:29Z",
   "created_by": "agent:claude",
   "custom_fields": {},
-  "description": "Add per-run grouping to the passive analyzer: a --run-manifest <agents.md> flag that folds a lattice run's session set (actors/branches/worktrees from .lattice/orchestration/agents.md) into one reducer, emitting cache read+creation per run, normalized per ticket. New grouping dimension above session + CLI + corpus filtering. Depends on TB-26 (session-grain cache sums).",
+  "description": "Add per-run grouping to the passive analyzer under SPEC S40: `passive --run-manifest <run.json>` where run.json is orchestrator-emitted at dispatch ({run, tickets, branches, worktrees?}). Fold entry-grain usage whose gitBranch is in the run branch set into one reducer; non-run-branch usage within candidate sessions accumulates as unattributed (reported, never silent). Emit cache read+creation per run, normalized per ticket. Claude-only. Retire the standalone cache_tokens façade once landed. NOT agents.md (discards branch data on completion) and NOT a session-set partition (sessions straddle branches). Design: docs/superpowers/specs/2026-07-12-tb-27-per-run-cache-grouping-design.md. Depends on TB-26 (S39).",
   "done_at": null,
   "evidence_refs": [],
   "id": "task_01KX7EMPF0SBNVAE37GJ599CZG",
-  "last_event_id": "ev_01KX7EMPJB3KKWS920MEXB60YA",
+  "last_event_id": "ev_01KXBDOC1S40TB27CONTRACT01",
   "last_status_changed_at": "2026-07-11T02:03:29Z",
   "priority": "medium",
   "relationships_out": [
@@ -27,8 +27,8 @@
   "short_id": "TB-27",
   "status": "backlog",
   "tags": null,
-  "title": "per-run cache-token grouping: --run-manifest <agents.md> flag folds a run's session set into one reducer, emitting read+creation per run",
+  "title": "per-run cache-token grouping (S40): --run-manifest <run.json> folds entry-grain gitBranch usage into one reducer",
   "type": "task",
-  "updated_at": "2026-07-11T02:03:29Z",
+  "updated_at": "2026-07-12T11:05:00Z",
   "urgency": null
 }

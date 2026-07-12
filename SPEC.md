@@ -191,7 +191,31 @@ and re-exports the public symbols historical imports expect.
   field passes `--date-from`/`--date-to` intact. Read and creation are surfaced
   together deliberately: a prefix-sharing change (per-ticket context extracts vs a
   shared contract) trades one for the other, so a read delta read alone misleads
-  (TB-26; foundation for the per-run `--run-manifest` grouping, TB-27).
+  (TB-26; foundation for the per-run `--run-manifest` grouping, TB-27 / S40).
+- **S40 — run-grain cache attribution is per entry by `gitBranch`, not per
+  session.** A run's cost is the sum of usage on every transcript *entry* whose
+  `gitBranch` is in the run's branch set. Attribution is per-entry because
+  sessions straddle branches (~18% in the project corpus) and because root-checkout
+  delegators are not always confined to a worktree — a session-grain partition
+  either over-counts (one touching entry donates the whole session) or under-counts
+  (straddlers dropped). A *candidate session* has at least one entry on a run
+  branch; `unattributed` is the usage on **non-run branches within candidate
+  sessions** (straddle spillover), counted and reported, never silently dropped.
+  Sessions that never touch a run branch are outside the run and contribute to
+  neither figure. The CLI input is `--run-manifest <run.json>` (not
+  `agents.md`): the orchestrator emits `{run, tickets, branches, worktrees?}` at
+  dispatch while branch data is still live — `agents.md`'s Active table is
+  overwritten each tick and its Archived table has no branch column.
+  `worktrees` is an optional scan-narrowing hint only, never a correctness input.
+  `ClaudeParser` gains an additive `usage_by_branch` bucket in the same pass as
+  the S39 session totals (which stay undisturbed); the reducer folds in-set
+  branches into run totals and out-of-set into `unattributed`; the report is a
+  caveat surface (totals, per-ticket normalization, unattributed tally) that never
+  ranks. A manifest branch matching zero entries is reported, not silently zero.
+  Non-Claude agents are out of scope (`gitBranch` is a Claude Code field). Design:
+  `docs/superpowers/specs/2026-07-12-tb-27-per-run-cache-grouping-design.md`
+  (TB-27 / BUILDPLAN T17; design approved, not yet implemented — until it lands,
+  `toolbench.cache_tokens` remains the manual run-aggregation precursor).
 
 ## Active probes — `toolbench/probe.py` + `protocols/active-probes.md`
 
@@ -240,7 +264,8 @@ and re-exports the public symbols historical imports expect.
   + `uv.lock`, empty runtime deps, `dev` group `ruff`/`mypy`/`pytest`).
 - **S21 — entry points.** Runnable as `uv run python -m toolbench.passive`,
   `… toolbench.probe`, and `… toolbench.cache_tokens` (S39 run-aggregation
-  façade); tests via `uv run pytest -q` (S31).
+  façade; bridge until TB-27 / S40 folds `--run-manifest` into passive);
+  tests via `uv run pytest -q` (S31).
 - **S22 — strict gate.** `uv run ruff check .`, `uv run mypy --strict
   toolbench tests`, and the full pytest suite are green before any PR.
 - **S23 — error handling.** Empty session selection → clear message,
