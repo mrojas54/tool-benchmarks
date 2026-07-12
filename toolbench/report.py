@@ -114,6 +114,7 @@ def render_report(
     verbose: bool = False,
     fingerprint: CorpusFingerprint | None = None,
     freeze_note: str | None = None,
+    run_tickets: int | None = None,
 ) -> str:
     """Render the five-section report (S14) with provenance (S15)."""
     lines: list[str] = ["# Tool Usage Report", ""]
@@ -249,6 +250,34 @@ def render_report(
             f"creation={cache_creation_total} "
             f"({measured_cache_sessions} measured sessions; S39 caveat, not ranked)"
         )
+    if reducer.run is not None:
+        # S40: per-run cache cost. Caveat only -- never ranked, never folded into an
+        # inefficiency ratio (S19). Read and creation always together (S39).
+        run_stats = reducer.run_stats
+        lines.append(
+            f"- Run cache tokens (run {reducer.run.run}): "
+            f"read={run_stats.read} creation={run_stats.creation} "
+            f"({run_stats.candidate_sessions} candidate session"
+            f"{'' if run_stats.candidate_sessions == 1 else 's'}; S40 caveat, not ranked)"
+        )
+        tickets = run_tickets if run_tickets is not None else reducer.run.ticket_count
+        if tickets > 0:
+            norm = run_stats.per_ticket(tickets)
+            lines.append(
+                f"  - per ticket ({tickets}): "
+                f"read={norm['cache_read']:.1f} creation={norm['cache_creation']:.1f}"
+            )
+        if run_stats.unattributed_read or run_stats.unattributed_creation:
+            # Straddle spillover: same-session work on branches outside the run. A
+            # large value means the run total is a narrow slice of what was spent.
+            lines.append(
+                f"  - unattributed: read={run_stats.unattributed_read} "
+                f"creation={run_stats.unattributed_creation} "
+                f"(same-session work off the run's branches)"
+            )
+        missing = run_stats.missing_branches(reducer.run)
+        if missing:
+            lines.append(f"  - matched no entries: {', '.join(missing)}")
     if reducer.unjoinable:
         # Records a parser saw but structurally could not join (TB-24): named here so
         # codex's ~4% web-search undercount is never a silent zero. Attributed by

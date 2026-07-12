@@ -1,0 +1,3 @@
+# TB-29: exclude-subagents flag is a silent no-op: is_subagent path detection tests the wrong path segment
+
+sources.py:102 tests rel.parts[1] == 'subagents', but the real raw layout is <project>/<session-uuid>/subagents/agent-*.jsonl — the session UUID sits at parts[1], so is_subagent is NEVER True on raw scans. Passing --exclude-subagents therefore prints 'Subagents included: no' in the report while still including them: the report states the opposite of what it did. Pre-existing (CQ 3.2), predates TB-27 and does not affect S40's run totals (subagent cost belongs in the run, which is what currently happens). Found by the TB-27 final whole-branch review.

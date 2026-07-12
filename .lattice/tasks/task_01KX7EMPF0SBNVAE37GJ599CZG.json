@@ -6,11 +6,11 @@
   "created_at": "2026-07-11T02:03:29Z",
   "created_by": "agent:claude",
   "custom_fields": {},
-  "description": "Add per-run grouping to the passive analyzer: a --run-manifest <agents.md> flag that folds a lattice run's session set (actors/branches/worktrees from .lattice/orchestration/agents.md) into one reducer, emitting cache read+creation per run, normalized per ticket. New grouping dimension above session + CLI + corpus filtering. Depends on TB-26 (session-grain cache sums).",
+  "description": "Per-run cache-token grouping (S40): --run-manifest <run.json> supplies a run's branch set; cache read+creation are attributed PER ENTRY by that entry's gitBranch, normalized per ticket. Entry-grain, not session-grain: sessions straddle branches (29/158) and delegators do not always run in worktrees, so no clean session->run partition exists. PREMISE CORRECTION: the original description named agents.md as the manifest input; it discards its Branch column on run completion and cannot serve. Spec: S40. Depends on TB-26.",
   "done_at": null,
   "evidence_refs": [],
   "id": "task_01KX7EMPF0SBNVAE37GJ599CZG",
-  "last_event_id": "ev_01KX7EMPJB3KKWS920MEXB60YA",
+  "last_event_id": "ev_01KXAWXWNNJZKEH437Q76FCG03",
   "last_status_changed_at": "2026-07-11T02:03:29Z",
   "priority": "medium",
   "relationships_out": [
@@ -27,8 +27,8 @@
   "short_id": "TB-27",
   "status": "backlog",
   "tags": null,
-  "title": "per-run cache-token grouping: --run-manifest <agents.md> flag folds a run's session set into one reducer, emitting read+creation per run",
+  "title": "Per-run cache-token grouping (S40): --run-manifest <run.json>, entry-grain by gitBranch",
   "type": "task",
-  "updated_at": "2026-07-11T02:03:29Z",
+  "updated_at": "2026-07-12T10:10:53Z",
   "urgency": null
 }
