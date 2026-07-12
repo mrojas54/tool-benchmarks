@@ -200,14 +200,33 @@ Matrix is 2 repos × 5 defects × 4 arms.
 5. **Agent-tool escape** — see §3. Ban is load-bearing; verify it is enforced, do
    not trust the flag.
 
-## Open items for implementation
+## Precheck results (run 2026-07-12 — resolved)
 
-- Confirm each of the five defect classes has a genuine precondition in **both**
-  repos before writing patches. If a class exists in only one, that cell is
-  confounded and must be flagged, not quietly reported.
-- Determine each repo's test command (the fix oracle) and whether the suite is
-  fast enough to run per trial.
-- Verify serena's language support for Rust and SQL on this machine (§4).
+| question | answer | consequence |
+|---|---|---|
+| Does serena index Rust? | **Yes, but only when configured.** `maltese-agent` auto-detected as `['typescript']` only and refused to extract any Rust symbol. With `languages: [rust, typescript]` it returned `{"Function": ["caesar_decode"], "Module": ["tests"]}`. `rust-analyzer` is installed. | Two-repo crossed design **survives**. Vendored corpora **must ship an explicit `.serena/project.yml`** — auto-detect is not trustworthy. |
+| Does serena index SQL? | **No, and it never can.** `activate_project` with `sql` raises `Invalid language: sql`; the 60+ supported languages do not include it. | D5's premise confirmed a priori. Structural, not a misconfiguration. |
+| Test commands? | `wids-nyc`: `npx vitest run` (in `web/`). `maltese-agent`: `cargo test`. | Fix oracle available for both repos. |
+| Pinned SHAs | `wids-nyc` `a39cdd0`; `maltese-agent` `7b8fa95` | — |
+
+**The auto-detection finding is the important one, and it is independent of this
+benchmark.** An unconfigured serena is invisibly weaker than a configured one. A
+benchmark run against the auto-detected config would have measured a crippled
+serena and blamed the tool — the same "confirmation, not verification" trap, in a
+new costume. Only running the precheck caught it.
+
+**Refinement to D2/D5, now measured rather than hypothesized:** serena is *not*
+blind to SQL. Its `search_for_pattern` is a plain regex search and works on any
+file. What dies on an unindexed language is serena's *symbolic* advantage — it
+degrades to **being a more expensive grep**. D5 therefore measures how much that
+forced fallback costs, not whether it happens.
+
+## Still open (for implementation)
+
+- Confirm each defect class has a genuine precondition in **both** repos before
+  writing patches. If a class exists in only one, that cell is confounded and must
+  be flagged, not quietly reported. **Manufacturing a seam to fill the matrix is
+  forbidden** — a defect must be one the corpus already had.
 
 ## Not doing (YAGNI)
 
