@@ -73,3 +73,26 @@ def test_branch_list_must_be_strings(tmp_path: Path) -> None:
     path = _write(tmp_path, {"run": "1", "tickets": ["TB-1"], "branches": [17]})
     with pytest.raises(MalformedRunManifest, match="branches"):
         read_run_manifest(path)
+
+
+def test_null_run_is_malformed(tmp_path: Path) -> None:
+    path = _write(tmp_path, {"run": None, "tickets": ["TB-1"], "branches": ["b"]})
+    with pytest.raises(MalformedRunManifest, match="run"):
+        read_run_manifest(path)
+
+
+def test_list_run_is_malformed(tmp_path: Path) -> None:
+    path = _write(tmp_path, {"run": [1, 2], "tickets": ["TB-1"], "branches": ["b"]})
+    with pytest.raises(MalformedRunManifest, match="run"):
+        read_run_manifest(path)
+
+
+def test_missing_run_key_defaults_to_empty_string(tmp_path: Path) -> None:
+    path = _write(tmp_path, {"tickets": ["TB-1"], "branches": ["b"]})
+    assert read_run_manifest(path).run == ""
+
+
+def test_nonexistent_path_is_malformed(tmp_path: Path) -> None:
+    path = tmp_path / "does-not-exist.json"
+    with pytest.raises(MalformedRunManifest):
+        read_run_manifest(str(path))

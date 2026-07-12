@@ -45,7 +45,10 @@ def _str_tuple(data: dict[str, object], key: str) -> tuple[str, ...]:
 
 def read_run_manifest(path: str) -> RunManifest:
     """Read a run-manifest. Raises MalformedRunManifest on anything unusable."""
-    text = Path(path).expanduser().read_text(encoding="utf-8")
+    try:
+        text = Path(path).expanduser().read_text(encoding="utf-8")
+    except OSError as exc:
+        raise MalformedRunManifest(f"{path} could not be read: {exc}") from exc
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -64,8 +67,10 @@ def read_run_manifest(path: str) -> RunManifest:
         )
 
     run = data.get("run", "")
+    if not isinstance(run, (str, int)):
+        raise MalformedRunManifest(f"`run` must be a string or int, got {type(run).__name__}")
     return RunManifest(
-        run=str(run) if isinstance(run, (str, int)) else "",
+        run=str(run),
         tickets=_str_tuple(data, "tickets"),
         branches=frozenset(branches),
         worktrees=_str_tuple(data, "worktrees"),
