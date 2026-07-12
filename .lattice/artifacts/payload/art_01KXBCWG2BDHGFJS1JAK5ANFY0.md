@@ -1,0 +1,13 @@
+Closed by PR #47 (merged 330a314).
+
+FIX: detached-checkout usage (gitBranch="HEAD") is now booked to a detached_* bucket on RunStats and NAMED in the run section — never folded into the run total (which would fabricate an attribution) and never dropped (which silently undercounts).
+
+PREMISE CORRECTION: the ticket's second suggested fix — consume RunManifest.worktrees — was rejected. SPEC S40 already establishes that neither branch nor cwd partitions sessions cleanly (a delegator is logged as having 'Ran in ROOT checkout'), and worktrees is populated by nothing on disk (defaults to (), only a test fixture sets it). A detached delegator is indistinguishable from unrelated detached work, so the usage can be neither claimed nor disclaimed. Naming the gap (S23/S38) is the only honest option. SPEC S40 corrected: its 'verified lossless — 1834/1834 entries carry gitBranch' is true about PRESENCE and invited the wrong inference. Presence is not attributability: "HEAD" is present and still drops.
+
+TWO LEAKS, NOT ONE: (1) an all-HEAD session hit the 'not in_set' early return and reached neither the run total nor unattributed — the silent drop; (2) a candidate session's HEAD usage was booked as 'unattributed', whose docstring promises 'work on another branch' — HEAD is not a branch. Fixing only (1) would have left unattributed polluted.
+
+MEASUREMENT (live corpus, run tb-27 manifest): run total (read=64,094,964 creation=4,485,953) and unattributed (read=18,103,825) are BYTE-IDENTICAL to pre-fix — no fabricated attribution, no double-count — while 1,113,904 previously-invisible tokens now surface (read=1,012,132 + creation=101,772, cross-checked against an independent raw-transcript scan). Pre-fix unattributed was identical, proving that session was the SEVERE leak (silent drop), not the mislabel.
+
+REVIEW CAUGHT: the first pass REPRODUCED the bug it was fixing. The blind spot was gated on cache tokens alone while the fold's 'continue' skipped HEAD unconditionally, so an UNCACHED detached turn (zero cache, real input/output — the normal shape of a first turn) fell through both and vanished exactly as before. My own test cemented it by conflating 'zero cache' with 'zero usage'. Now gated on _spent_anything() across read/creation/input/output; the report renders input/output because a bare 'read=0 creation=0' on the line whose job is disclosure is a lie by omission.
+
+GATE: ruff clean, mypy --strict clean, 390 passed (381 + 9 new). Plan: plans/task_01KXB84A2V7H52B516YZ7QWV33.md

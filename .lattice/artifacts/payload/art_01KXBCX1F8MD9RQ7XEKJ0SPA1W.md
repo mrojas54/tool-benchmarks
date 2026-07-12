@@ -1,0 +1,15 @@
+Closed by PR #47 (merged 330a314).
+
+FIX: sources.py::_project_and_subagent tested rel.parts[1] == 'subagents', but the real on-disk layout is <project>/<session-uuid>/subagents/agent-*.jsonl — parts[1] is the session UUID, so is_subagent was NEVER True on a raw scan. filter_subagents filtered nothing and the report printed 'Subagents included: no' while including every one. Now: '"subagents" in rel.parts[1:-1]' — any segment BETWEEN project and filename, so it will not re-break if nesting depth changes; the slice excludes parts[0] and parts[-1], so a project or session dir literally named 'subagents' cannot false-positive.
+
+WHY IT SURVIVED 381 TESTS — the suite did not miss this, it RATIFIED it. Every subagent fixture in tests/test_sources.py built a flat <project>/subagents/<file>.jsonl (3 parts) that exists NOWHERE on disk. Against that invented layout the buggy check is CORRECT. Test and code were written from the same wrong mental model, so the suite stayed green and the feature was dead. The fixtures had to move before the code could — fixing sources.py alone would have meant making it pass a layout reality never produces. The flag is now asserted on the FILTERED refs, never on the report's own echo of the flag — an assertion the no-op could not have faked.
+
+MEASUREMENT (live corpus): pre-fix --exclude-subagents returned 201 sessions, IDENTICAL to the default (a proven no-op, confirmed by running the same command on pre-fix main). Post-fix it returns 174, dropping 27 real subagent sessions. Incidental live proof: mid-session the subagent delta rose 27 -> 29, exactly matching the two review subagents dispatched while the corpus was being written.
+
+REVIEW CAUGHT: TB-29 survived on FREEZE REPLAY. freeze.py::_is_subagent_from_manifest let an explicit flag beat path re-derivation (the path fallback fired only when the key was absent). But manifests frozen before this fix persist an explicit '"is_subagent": false' for real subagent sessions — written by the very code that could never set it True — so '--freeze old.manifest --exclude-subagents' would have kept silently including subagents FOREVER: the exact TB-29 symptom, relocated into replay and immortalised in every frozen corpus. The path is ground truth; a stale flag is not. Now OR-ed, which also self-heals legacy manifests omitting the key; a genuine non-subagent still reads False.
+
+DOCS: SPEC.md, README.md and AGENTS.md all still documented the flat <project>/subagents/*.jsonl layout this ticket disproved — the contract contradicted its own fix. All corrected.
+
+SCOPE NOTE: pre-existing (CQ 3.2); does not affect S40 run totals — subagent cost BELONGS in the run, which is what already happened. The defect was never a wrong run number; it was a flag that lied about what it did.
+
+GATE: ruff clean, mypy --strict clean, 390 passed. Plan: plans/task_01KXB84JCEM09AV3D0EHNKF77Z.md

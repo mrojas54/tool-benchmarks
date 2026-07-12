@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-12T14:49:45Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "id": "art_01KXBCWG2BDHGFJS1JAK5ANFY0",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KXBCWG2BDHGFJS1JAK5ANFY0.md",
+    "size_bytes": 2522
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": "Closed by PR #47 (merged 330a314).\n\nFIX: detached-checkout usage (gitBranch=\"HEAD\") is now booked to a detached_* bucket on RunStats and NAMED in the run section \u2014 never folded into the run total (whi",
+  "tags": [],
+  "title": "Review findings",
+  "token_usage": null,
+  "type": "note"
+}
