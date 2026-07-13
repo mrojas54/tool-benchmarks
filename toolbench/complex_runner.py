@@ -24,6 +24,22 @@ Launch = Callable[[list[str], Path], Path]
 Oracle = Callable[[Path], bool]
 
 
+class UnprovisionedWorktree(RuntimeError):
+    """Raised when `run_trial` finds no `PROMPT.md` in the worktree.
+
+    A missing `PROMPT.md` means `provision_worktree` never ran (or failed)
+    against this worktree -- the trial is broken, not merely under-prompted.
+    The old behavior fell back to `defect.rationale`, but that field is the
+    predicted-winner justification (e.g. "serena should win here because...
+    "), not a bug report: handing it to the agent under test leaks the
+    answer straight into its input, the same defect class already fixed
+    four times over in fixture prompts that leaked the answer to `rg`.
+    There is no correct default prompt, so there is no fallback -- a broken
+    trial must fail loudly rather than quietly produce a plausible-looking,
+    compromised result.
+    """
+
+
 def build_claude_argv(prompt: str, arm: ArmSpec, cwd: Path) -> list[str]:
     """Headless invocation for one arm.
 
@@ -53,9 +69,19 @@ def run_trial(
     launch: Launch,
     oracle: Oracle,
 ) -> TrialResult:
-    """Run one cell and score it. The prompt is the defect's bug report."""
+    """Run one cell and score it. The prompt is the defect's bug report.
+
+    Raises `UnprovisionedWorktree` if `PROMPT.md` is absent -- see that class
+    for why there is no fallback prompt to substitute.
+    """
     prompt_path = workdir / "PROMPT.md"
-    prompt = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else defect.rationale
+    if not prompt_path.exists():
+        raise UnprovisionedWorktree(
+            f"{workdir} has no PROMPT.md: the worktree was not provisioned "
+            "(see provision_worktree). There is no default prompt to fall "
+            "back to."
+        )
+    prompt = prompt_path.read_text(encoding="utf-8")
     session_path = launch(build_claude_argv(prompt, arm, workdir), workdir)
     return score_trial(session_path, defect, arm, trial, oracle(workdir))
 

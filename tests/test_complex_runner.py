@@ -6,6 +6,7 @@ from pathlib import Path
 
 from toolbench.complex import ArmSpec, DefectSpec, Truth, build_arms
 from toolbench.complex_runner import (
+    UnprovisionedWorktree,
     branch_name,
     build_claude_argv,
     provision_worktree,
@@ -61,10 +62,63 @@ class RunTrialTests(unittest.TestCase):
         def fake_oracle(cwd: Path) -> bool:
             return False  # suite still red
 
-        result = run_trial(DEFECT, _arm("native"), 1, Path("/tmp/wt"), fake_launch, fake_oracle)
+        with tempfile.TemporaryDirectory() as tmp:
+            workdir = Path(tmp)
+            (workdir / "PROMPT.md").write_text("find the bug\n", encoding="utf-8")
+            result = run_trial(DEFECT, _arm("native"), 1, workdir, fake_launch, fake_oracle)
         self.assertEqual(launched, ["launched"])
         self.assertFalse(result.fixed)
         self.assertTrue(result.located)
+
+
+class RunTrialMissingPromptTests(unittest.TestCase):
+    """A worktree with no PROMPT.md means `provision_worktree` never ran against
+    it: the trial is broken, not merely under-prompted. `run_trial` must not
+    silently substitute `defect.rationale` (the predicted-winner justification,
+    e.g. "serena should win here because...") as a stand-in bug report -- that
+    leaks the answer straight into the agent's input, the same defect class
+    already fixed four times over in fixture prompts that leaked the answer to
+    `rg`. It must fail loudly instead."""
+
+    def test_missing_prompt_raises_instead_of_falling_back(self) -> None:
+        calls: list[str] = []
+
+        def fake_launch(argv: list[str], cwd: Path) -> Path:
+            calls.append("launched")
+            return FIXTURE
+
+        def fake_oracle(cwd: Path) -> bool:
+            return False
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workdir = Path(tmp)  # PROMPT.md deliberately absent
+            with self.assertRaises(UnprovisionedWorktree):
+                run_trial(DEFECT, _arm("native"), 1, workdir, fake_launch, fake_oracle)
+
+        self.assertEqual(calls, [], "launch must not run against an unprovisioned worktree")
+
+    def test_rationale_never_reaches_the_launched_prompt(self) -> None:
+        captured: list[str] = []
+
+        def fake_launch(argv: list[str], cwd: Path) -> Path:
+            captured.append(argv[argv.index("-p") + 1])
+            return FIXTURE
+
+        def fake_oracle(cwd: Path) -> bool:
+            return False
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workdir = Path(tmp)  # PROMPT.md deliberately absent
+            try:
+                run_trial(DEFECT, _arm("native"), 1, workdir, fake_launch, fake_oracle)
+            except UnprovisionedWorktree:
+                pass
+
+        self.assertTrue(
+            all(DEFECT.rationale not in prompt for prompt in captured),
+            "defect.rationale (the predicted-winner justification) must never "
+            "leak into the prompt handed to the agent under test",
+        )
 
 
 def _run(argv: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
