@@ -764,6 +764,86 @@ class ReadEscapeTests(unittest.TestCase):
         out = read_escapes([_rc("Bash", command="rg formatSlot ../../corpus")], TRIAL_ROOT)
         self.assertTrue(any("../../corpus" in e for e in out), out)
 
+    def test_serena_find_referencing_symbols_escaping_is_flagged_intree_is_not(self) -> None:
+        # B1: find_referencing_symbols is granted to serena/control and carries a
+        # relative_path, but was omitted from the audited dict -> escapes read the
+        # pristine source unflagged.
+        out = read_escapes(
+            [
+                _rc(
+                    f"{_SERENA}find_referencing_symbols",
+                    name_path="formatSlot",
+                    relative_path="../../corpus/wids/web/src/lib/schedule.ts",
+                )
+            ],
+            TRIAL_ROOT,
+        )
+        self.assertTrue(any(e.startswith("ReadEscape:") for e in out), out)
+        intree = read_escapes(
+            [
+                _rc(
+                    f"{_SERENA}find_referencing_symbols",
+                    name_path="formatSlot",
+                    relative_path="web/src/lib/schedule.ts",
+                )
+            ],
+            TRIAL_ROOT,
+        )
+        self.assertEqual(intree, ())
+
+    def test_bash_tilde_and_home_reads_are_flagged(self) -> None:
+        # B2: ~ / $HOME tokens are neither isabs nor `..`, so they slipped past the
+        # tripwire. `find ~` is the literal motivating escape.
+        for cmd in (
+            "find ~ -name schedule.ts",
+            "cat ~/tool-benchmarks/corpus/x.ts",
+            "cat $HOME/corpus/x.ts",
+            "cat ${HOME}/corpus/x.ts",
+        ):
+            out = read_escapes([_rc("Bash", command=cmd)], TRIAL_ROOT)
+            self.assertTrue(
+                any(e.startswith("ReadEscape:Bash:") for e in out), (cmd, out)
+            )
+
+    def test_bash_tilde_resolving_inside_trial_root_is_not_flagged(self) -> None:
+        # B2: flag by CONTAINMENT, not a blanket "any ~ escapes". A trial_root that
+        # itself sits under home must stay clean when the ~ token resolves inside it.
+        fake_home = Path("/tmp/tb-fake-home")
+        trial_root = fake_home / "trial"
+        old = os.environ.get("HOME")
+        os.environ["HOME"] = str(fake_home)
+        try:
+            out = read_escapes(
+                [_rc("Bash", command="cat ~/trial/src/x.ts")], trial_root
+            )
+        finally:
+            if old is None:
+                del os.environ["HOME"]
+            else:
+                os.environ["HOME"] = old
+        self.assertEqual(out, ())
+
+    def test_glob_pattern_escaping_the_tree_is_flagged(self) -> None:
+        # B3: Glob's pattern is the path-bearing arg; path stays "." (in-tree).
+        out = read_escapes(
+            [_rc("Glob", pattern="../../corpus/**/*.ts")], TRIAL_ROOT
+        )
+        self.assertTrue(any(e.startswith("ReadEscape:") for e in out), out)
+
+    def test_glob_intree_pattern_is_not_flagged(self) -> None:
+        self.assertEqual(
+            read_escapes([_rc("Glob", pattern="**/*.ts")], TRIAL_ROOT), ()
+        )
+        self.assertEqual(
+            read_escapes([_rc("Glob", pattern="src/**/*.ts")], TRIAL_ROOT), ()
+        )
+
+    def test_glob_absolute_path_arg_is_flagged_via_path(self) -> None:
+        out = read_escapes(
+            [_rc("Glob", path="/etc", pattern="*.conf")], TRIAL_ROOT
+        )
+        self.assertTrue(any("/etc" in e for e in out), out)
+
     def test_escapes_are_returned_sorted(self) -> None:
         calls = [
             _rc("Bash", command="cat /z/late.ts"),

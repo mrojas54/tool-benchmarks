@@ -523,6 +523,7 @@ _READ_PATH_ARG: dict[str, tuple[str, str | None]] = {
     "search_for_pattern": ("relative_path", None),
     "get_symbols_overview": ("relative_path", None),
     "find_symbol": ("relative_path", None),
+    "find_referencing_symbols": ("relative_path", None),
 }
 
 
@@ -553,15 +554,32 @@ def _bash_tokens(command: str) -> list[str]:
         return command.split()
 
 
+def _expand_home(token: str) -> str:
+    """Resolve a leading `~`/`~user` and `$HOME`/`${HOME}` to the real home dir.
+
+    `os.path.expanduser` handles `~` but NOT the `$HOME`/`${HOME}` env forms, so
+    those are substituted explicitly. A token bearing none of these is returned
+    unchanged, so this is safe to apply to any token. Containment (not the mere
+    presence of `~`) then decides whether the expanded path escapes -- a trial_root
+    that itself lives under home stays correct."""
+    expanded = os.path.expanduser(token)
+    home = os.path.expanduser("~")
+    return expanded.replace("${HOME}", home).replace("$HOME", home)
+
+
 def _bash_token_escapes(token: str, root: str) -> bool:
     """Best-effort: an absolute token outside `root`, or a `..`-bearing token that
-    escapes when joined to `root`. A token with neither shape is not path-like
-    enough to judge and is waved through -- the shell can still read via
-    indirection this cannot see, which is why full-shell arms are best-effort."""
-    if os.path.isabs(token):
-        return _path_escapes(token, root)
-    if ".." in token:
-        return _path_escapes(token, root)
+    escapes when joined to `root`. A leading `~`/`$HOME` is expanded first (it is
+    otherwise neither absolute nor `..`-bearing, so `find ~` -- the literal
+    motivating escape -- would slip through), then judged by containment. A token
+    with none of these shapes is not path-like enough to judge and is waved through
+    -- the shell can still read via indirection this cannot see, which is why
+    full-shell arms are best-effort."""
+    expanded = _expand_home(token)
+    if os.path.isabs(expanded):
+        return _path_escapes(expanded, root)
+    if ".." in expanded:
+        return _path_escapes(expanded, root)
     return False
 
 
@@ -607,11 +625,18 @@ def read_escapes(calls: list[ToolCall], trial_root: Path) -> tuple[str, ...]:
         payload = _tool_input(call)
         if payload is None:
             continue
-        raw = payload.get(key, default)
-        if not isinstance(raw, str):
-            continue
-        if _path_escapes(raw, root):
-            escapes.add(f"ReadEscape:{call.name}:{raw}")
+        candidates: list[object] = [payload.get(key, default)]
+        if logical == "Glob":
+            # Glob's `path` defaults to "." (in-tree) but its `pattern` is the arg
+            # that actually reaches the filesystem: a glob pattern is a path with
+            # metacharacters, so an escaping literal prefix (`../corpus/**/*.ts`, an
+            # absolute pattern) reads outside the tree while `path` stays ".".
+            candidates.append(payload.get("pattern"))
+        for raw in candidates:
+            if not isinstance(raw, str):
+                continue
+            if _path_escapes(_expand_home(raw), root):
+                escapes.add(f"ReadEscape:{call.name}:{raw}")
     return tuple(sorted(escapes))
 
 
