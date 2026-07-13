@@ -141,6 +141,33 @@ unrecoverable, so the precondition must be tested by something that is not an ar
   tokens by `gitBranch`, which is not the tool-result context-token metric below,
   but it does hand us per-cell cache accounting at no cost.
 
+**Enforcement is by transcript audit, not by filesystem walls (decided
+2026-07-12, post-implementation).** Two measurements forced this: (i) an
+`--allowedTools Bash(<cmd>:*)` gate does **not** restrict reads — bare `rg`/`cat`
+and `;`-chained reads run under a gate scoped to only the oracle command
+(measured; see `.superpowers/sdd/progress.md`); (ii) the bash/control arms have a
+full shell on a machine where the pristine corpus physically exists, so
+`find ~ -name <source>` reaches unpatched source regardless of where trial
+artifacts or dep caches live. Making the trial *tree* hermetic (single commit, no
+parent, no reachable dep-cache path) removes the *obvious* leaks — `git diff`, a
+`..`-walk off a symlink — but cannot remove the pristine clone from the disk.
+Therefore:
+
+- The trial tree is made hermetic (standalone repo, one commit; dep cache diverges
+  from the corpus checkout at the filesystem root) to close the discoverable
+  leaks, AND
+- `arm_violations` is extended to a **read-scope audit**: any tool call whose
+  resolved read path lies **outside the trial tree** voids the trial. This
+  generalizes over symlink-walk, `find`, and `git diff` in one rule, and is the
+  primary enforcement — a flag is a claim, the transcript is evidence.
+- **Chosen posture: audit now, sandbox later.** The pilot runs tamper-EVIDENT
+  (the audit voids offending trials) rather than tamper-PROOF. Whether the arms
+  actually reach for outside source is itself measured in the pilot; per-trial
+  filesystem sandboxing (a container with only the trial tree mounted) is deferred
+  and adopted for the real run only if the pilot shows arms attempting the escape.
+  Tamper-evident is sufficient for a benchmark whose failure mode is a *believable
+  wrong number*, because a voided trial produces no number at all.
+
 ### 6. Metrics
 
 Two checkpoints per trial:
