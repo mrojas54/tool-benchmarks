@@ -547,6 +547,25 @@ def _raw_session_refs(
         )
 
 
+# The only agent the raw filesystem path can discover; `_raw_session_refs` stamps it.
+RAW_AGENT = "claude-code"
+
+
+def _raw_census(root: str, project: str | None, since: str | None) -> AgentCensus:
+    """Denominator for the raw path: a filesystem count, no subprocess (TB-33).
+
+    A missing root is an UNAVAILABLE census, not an exception: `iter_sessions` is called
+    eagerly, and the `auto` path reaches here precisely when AgentsView is down and the
+    raw root may not exist either. `_discover_refs` still surfaces the FileNotFoundError
+    from the ref iterator as a MISSING_SOURCE skip -- this must not pre-empt it.
+    """
+    try:
+        count = sum(1 for _ in iter_session_files(root=root, project=project, since=since))
+    except FileNotFoundError as exc:
+        return AgentCensus(totals={}, archive_total=0, unavailable_reason=str(exc))
+    return AgentCensus(totals={RAW_AGENT: count}, archive_total=count)
+
+
 def iter_sessions(
     index_source: IndexSource = "auto",
     agent: str = "all",
@@ -555,22 +574,34 @@ def iter_sessions(
     limit: int = 500,
     root: str = "~/.claude/projects",
     runner: Runner | None = None,
-) -> tuple[Iterator[SessionRef], str | None]:
-    """Resolve the `--index-source` policy; return (refs, fallback_reason) (S10)."""
+) -> tuple[Iterator[SessionRef], str | None, AgentCensus]:
+    """Resolve the `--index-source` policy; return (refs, fallback_reason, census) (S10).
+
+    The census rides along rather than being fetched separately so it cannot drift from
+    the refs: same source, same filters, same call (TB-33).
+    """
     run = runner if runner is not None else _run_agentsview
     if index_source == "raw":
-        return _raw_session_refs(root, project, since), None
-    if index_source == "agentsview":
-        refs = iter_agentsview_sessions(
-            agent=agent, project=project, since=since, limit=limit, runner=run
+        return (
+            _raw_session_refs(root, project, since),
+            None,
+            _raw_census(root, project, since),
         )
-        return refs, None
+    if index_source == "agentsview":
+        census, refs = discover_agentsview(
+            run, agent=agent, project=project, since=since, limit=limit
+        )
+        return refs, None, census
     if index_source == "auto":
         reason = _probe_agentsview(run)
         if reason is None:
-            refs = iter_agentsview_sessions(
-                agent=agent, project=project, since=since, limit=limit, runner=run
+            census, refs = discover_agentsview(
+                run, agent=agent, project=project, since=since, limit=limit
             )
-            return refs, None
-        return _raw_session_refs(root, project, since), reason
+            return refs, None, census
+        return (
+            _raw_session_refs(root, project, since),
+            reason,
+            _raw_census(root, project, since),
+        )
     raise ValueError(f"unknown index_source: {index_source!r}")

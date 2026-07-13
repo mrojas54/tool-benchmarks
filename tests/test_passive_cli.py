@@ -346,7 +346,11 @@ class MainExitContractTests(unittest.TestCase):
         }
         runner = FakeRunner(
             [
-                # Parent probe, then the full listing -- discovery pages twice (TB-31).
+                # Parent probe, per-agent census (--limit 1, one agent seen: "claude")
+                # + the run-scoped archive total, then the full listing (TB-31, TB-33),
+                # then the session export.
+                completed(stdout=json.dumps(payload)),
+                completed(stdout=json.dumps(payload)),
                 completed(stdout=json.dumps(payload)),
                 completed(stdout=json.dumps(payload)),
                 completed(stdout=raw_text),
@@ -394,7 +398,10 @@ class NonUtf8SessionTests(unittest.TestCase):
         }
         runner = FakeRunner(
             [
-                # Parent probe, then the full listing -- discovery pages twice (TB-31).
+                # Parent probe, per-agent census (--limit 1, one agent seen: "claude")
+                # + the run-scoped archive total, then the full listing (TB-31, TB-33).
+                completed(stdout=json.dumps(payload)),
+                completed(stdout=json.dumps(payload)),
                 completed(stdout=json.dumps(payload)),
                 completed(stdout=json.dumps(payload)),
                 UnicodeDecodeError("utf-8", b"\xa0", 0, 1, "invalid start byte"),
@@ -458,7 +465,12 @@ class NonTranscriptExportTests(unittest.TestCase):
         }
         runner = FakeRunner(
             [
-                # Parent probe, then the full listing -- discovery pages twice (TB-31).
+                # Parent probe, per-agent census (--limit 1, two agents seen, sorted:
+                # "claude" then "cowork") + the run-scoped archive total, then the full
+                # listing (TB-31, TB-33).
+                completed(stdout=json.dumps(payload)),
+                completed(stdout=json.dumps(payload)),
+                completed(stdout=json.dumps(payload)),
                 completed(stdout=json.dumps(payload)),
                 completed(stdout=json.dumps(payload)),
                 completed(stdout=sqlite_payload),
@@ -489,7 +501,17 @@ class NonTranscriptExportTests(unittest.TestCase):
             "next_cursor": "",
             "total": 1,
         }
-        runner = FakeRunner([completed(stdout=json.dumps(payload)), completed(stdout=json.dumps(payload)), completed(stdout="SQLite format 3\x00")])
+        # Parent probe, per-agent census (--limit 1, one agent seen: "cowork") + the
+        # run-scoped archive total, then the full listing (TB-31, TB-33), then export.
+        runner = FakeRunner(
+            [
+                completed(stdout=json.dumps(payload)),
+                completed(stdout=json.dumps(payload)),
+                completed(stdout=json.dumps(payload)),
+                completed(stdout=json.dumps(payload)),
+                completed(stdout="SQLite format 3\x00"),
+            ]
+        )
         with redirect_stdout(io.StringIO()):
             main(["--index-source", "agentsview"], runner=runner)
         self.assertEqual(set(tmp_root.glob("*.jsonl")) - before, set())
@@ -628,7 +650,12 @@ class DiscoveryReconciliationMainTests(unittest.TestCase):
         }
         runner = FakeRunner(
             [
-                # Parent probe, then the full listing -- discovery pages twice (TB-31).
+                # Parent probe, per-agent census (--limit 1, two agents seen, sorted:
+                # "claude" then "cursor") + the run-scoped archive total, then the full
+                # listing (TB-31, TB-33).
+                completed(stdout=json.dumps(payload)),
+                completed(stdout=json.dumps(payload)),
+                completed(stdout=json.dumps(payload)),
                 completed(stdout=json.dumps(payload)),
                 completed(stdout=json.dumps(payload)),
                 completed(stdout=good),
@@ -674,8 +701,17 @@ class CorpusFingerprintMainTests(unittest.TestCase):
         good = (FIXTURES / "sample.jsonl").read_text()
         reports = []
         for _ in range(2):
+            # Parent probe, per-agent census (--limit 1, one agent seen: "claude") +
+            # the run-scoped archive total, then the full listing (TB-31, TB-33).
             runner = FakeRunner(
-                [completed(stdout=self._payload()), completed(stdout=self._payload()), completed(stdout=good), completed(stdout=good)]
+                [
+                    completed(stdout=self._payload()),
+                    completed(stdout=self._payload()),
+                    completed(stdout=self._payload()),
+                    completed(stdout=self._payload()),
+                    completed(stdout=good),
+                    completed(stdout=good),
+                ]
             )
             out = io.StringIO()
             with redirect_stdout(out):
@@ -685,13 +721,24 @@ class CorpusFingerprintMainTests(unittest.TestCase):
 
     def test_a_vanished_session_moves_the_fingerprint(self) -> None:
         good = (FIXTURES / "sample.jsonl").read_text()
-        # run 1: both sessions scan.
+        # run 1: both sessions scan. Parent probe, per-agent census (--limit 1, one
+        # agent seen: "claude") + the run-scoped archive total, then the full listing
+        # (TB-31, TB-33).
         r1 = FakeRunner(
-            [completed(stdout=self._payload()), completed(stdout=self._payload()), completed(stdout=good), completed(stdout=good)]
+            [
+                completed(stdout=self._payload()),
+                completed(stdout=self._payload()),
+                completed(stdout=self._payload()),
+                completed(stdout=self._payload()),
+                completed(stdout=good),
+                completed(stdout=good),
+            ]
         )
         # run 2: good-2's transcript has aged out of the retention window.
         r2 = FakeRunner(
             [
+                completed(stdout=self._payload()),
+                completed(stdout=self._payload()),
                 completed(stdout=self._payload()),
                 completed(stdout=self._payload()),
                 completed(stdout=good),
@@ -720,11 +767,27 @@ class CorpusFingerprintMainTests(unittest.TestCase):
             '"output_tokens":1},"model":"claude-opus-4-8"}}\n'
         )
         grown = good + extra
+        # Parent probe, per-agent census (--limit 1, one agent seen: "claude") + the
+        # run-scoped archive total, then the full listing (TB-31, TB-33).
         r1 = FakeRunner(
-            [completed(stdout=self._payload()), completed(stdout=self._payload()), completed(stdout=good), completed(stdout=good)]
+            [
+                completed(stdout=self._payload()),
+                completed(stdout=self._payload()),
+                completed(stdout=self._payload()),
+                completed(stdout=self._payload()),
+                completed(stdout=good),
+                completed(stdout=good),
+            ]
         )
         r2 = FakeRunner(
-            [completed(stdout=self._payload()), completed(stdout=self._payload()), completed(stdout=grown), completed(stdout=good)]
+            [
+                completed(stdout=self._payload()),
+                completed(stdout=self._payload()),
+                completed(stdout=self._payload()),
+                completed(stdout=self._payload()),
+                completed(stdout=grown),
+                completed(stdout=good),
+            ]
         )
         outs = []
         for runner in (r1, r2):
@@ -757,8 +820,17 @@ class CorpusFreezeMainTests(unittest.TestCase):
         good = (FIXTURES / "sample.jsonl").read_text()
         with TemporaryDirectory() as d:
             manifest = str(Path(d) / "corpus.manifest")
+            # Parent probe, per-agent census (--limit 1, one agent seen: "claude") +
+            # the run-scoped archive total, then the full listing (TB-31, TB-33).
             runner = FakeRunner(
-                [completed(stdout=self._payload()), completed(stdout=self._payload()), completed(stdout=good), completed(stdout=good)]
+                [
+                    completed(stdout=self._payload()),
+                    completed(stdout=self._payload()),
+                    completed(stdout=self._payload()),
+                    completed(stdout=self._payload()),
+                    completed(stdout=good),
+                    completed(stdout=good),
+                ]
             )
             with redirect_stdout(io.StringIO()):
                 code = main(["--index-source", "agentsview", "--freeze", manifest], runner=runner)
@@ -853,6 +925,10 @@ class SubagentExclusionAcrossIndexSourcesTests(unittest.TestCase):
         runner = FakeRunner(
             [
                 completed(stdout=self._listing(self._PARENT)),                 # parent probe
+                # per-agent census (--limit 1, one agent seen: "claude") + the
+                # run-scoped archive total (TB-33).
+                completed(stdout=self._listing(self._PARENT)),
+                completed(stdout=self._listing(self._PARENT)),
                 completed(stdout=self._listing(self._PARENT, self._CHILD)),    # full listing
                 *[completed(stdout=transcript) for _ in range(exports)],
             ]

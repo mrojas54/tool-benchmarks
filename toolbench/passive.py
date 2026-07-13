@@ -235,7 +235,7 @@ def _discover_refs(
     """Resolve the index-source policy into a bounded list of refs (S10, S23)."""
     project = None if args.all_projects else args.project
     page_limit = args.limit if args.limit is not None else 500
-    refs_iter, fallback_reason = iter_sessions(
+    refs_iter, fallback_reason, _census = iter_sessions(
         index_source=args.index_source,
         agent=args.agent,
         project=project,

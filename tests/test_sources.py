@@ -399,7 +399,7 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
             proj = Path(tmp) / "proj"
             proj.mkdir()
             (proj / "s1.jsonl").write_text("{}\n")
-            refs, reason = iter_sessions(index_source="raw", root=tmp, runner=FakeRunner([]))
+            refs, reason, _census = iter_sessions(index_source="raw", root=tmp, runner=FakeRunner([]))
             ref_list = list(refs)
             self.assertEqual(len(ref_list), 1)
             self.assertEqual(ref_list[0].source, "raw")
@@ -421,7 +421,7 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
             (session / "subagents").mkdir(parents=True)
             (proj / "parent.jsonl").write_text("{}\n")
             (session / "subagents" / "child.jsonl").write_text("{}\n")
-            refs, _reason = iter_sessions(index_source="raw", root=tmp, runner=FakeRunner([]))
+            refs, _reason, _census = iter_sessions(index_source="raw", root=tmp, runner=FakeRunner([]))
             by_id = {r.session_id: r for r in refs}
             parent = by_id["parent"]
             child = by_id["child"]
@@ -444,15 +444,18 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
             (session / "subagents").mkdir(parents=True)
             (proj / "parent.jsonl").write_text("{}\n")
             (session / "subagents" / "child.jsonl").write_text("{}\n")
-            refs, _reason = iter_sessions(index_source="raw", root=tmp, runner=FakeRunner([]))
+            refs, _reason, _census = iter_sessions(index_source="raw", root=tmp, runner=FakeRunner([]))
             kept = filter_subagents(list(refs))
             self.assertEqual([r.session_id for r in kept], ["parent"])
 
     def test_agentsview_mode_strict_raises_on_missing_binary(self) -> None:
+        # `discover_agentsview` runs its parent-probe pass EAGERLY (TB-33: the census
+        # cannot be gathered lazily, since callers may break out of the ref loop
+        # early), so a missing binary now surfaces from the `iter_sessions` call
+        # itself rather than from consuming the returned iterator.
         runner = FakeRunner([FileNotFoundError("no agentsview")])
-        refs, _reason = iter_sessions(index_source="agentsview", runner=runner)
         with self.assertRaises(FileNotFoundError):
-            list(refs)
+            iter_sessions(index_source="agentsview", runner=runner)
 
     def test_auto_uses_agentsview_when_available(self) -> None:
         payload = {
@@ -460,9 +463,10 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
             "next_cursor": "",
             "total": 1,
         }
-        # Availability probe, then the listing's own two passes: parent probe + full (TB-31).
-        runner = FakeRunner([completed(stdout=json.dumps(payload))] * 3)
-        refs, reason = iter_sessions(index_source="auto", runner=runner)
+        # Availability probe, parent probe, per-agent census (--limit 1, one agent seen)
+        # + archive total, then the full listing (TB-31, TB-33): 5 responses, not 3.
+        runner = FakeRunner([completed(stdout=json.dumps(payload))] * 5)
+        refs, reason, _census = iter_sessions(index_source="auto", runner=runner)
         ref_list = list(refs)
         self.assertIsNone(reason)
         self.assertEqual(len(ref_list), 1)
@@ -475,7 +479,7 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
             proj.mkdir()
             (proj / "s1.jsonl").write_text("{}\n")
             runner = FakeRunner([FileNotFoundError("no agentsview")])
-            refs, reason = iter_sessions(index_source="auto", root=tmp, runner=runner)
+            refs, reason, _census = iter_sessions(index_source="auto", root=tmp, runner=runner)
             ref_list = list(refs)
             self.assertIsNotNone(reason)
             assert reason is not None
@@ -488,7 +492,7 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
             proj = Path(tmp) / "proj"
             proj.mkdir()
             runner = FakeRunner([completed(stderr="daemon down", returncode=1)])
-            refs, reason = iter_sessions(index_source="auto", root=tmp, runner=runner)
+            refs, reason, _census = iter_sessions(index_source="auto", root=tmp, runner=runner)
             list(refs)
             self.assertIsNotNone(reason)
             assert reason is not None
@@ -497,6 +501,37 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
     def test_unknown_index_source_raises(self) -> None:
         with self.assertRaises(ValueError):
             iter_sessions(index_source="bogus", runner=FakeRunner([]))  # type: ignore[arg-type]
+
+
+class RawCensusTests(unittest.TestCase):
+    """`--limit` truncates the raw path too, and MORE arbitrarily (TB-33)."""
+
+    def test_raw_census_counts_every_discoverable_file(self) -> None:
+        with TemporaryDirectory() as tmp:
+            for name in ("a", "b", "c"):
+                proj = Path(tmp) / "proj"
+                proj.mkdir(exist_ok=True)
+                (proj / f"{name}.jsonl").write_text("{}\n")
+
+            _refs, _reason, census = iter_sessions(
+                index_source="raw", root=tmp, runner=FakeRunner([])
+            )
+
+            # iter_session_files sorts by PATH, so --limit takes an alphabetical slice of
+            # the project tree -- not even a recency window. One agent, so no cross-agent
+            # skew; but "you scanned 1 of 3" still has to be sayable.
+            self.assertEqual(census.totals, {"claude-code": 3})
+            self.assertEqual(census.archive_total, 3)
+            self.assertEqual(census.residual, 0)
+            self.assertIsNone(census.unavailable_reason)
+
+    def test_raw_census_on_a_missing_root_is_unavailable_not_a_crash(self) -> None:
+        _refs, _reason, census = iter_sessions(
+            index_source="raw", root="/nonexistent/root", runner=FakeRunner([])
+        )
+
+        self.assertIsNotNone(census.unavailable_reason)
+        self.assertEqual(census.totals, {})
 
 
 class NonUtf8DecodeTests(unittest.TestCase):
