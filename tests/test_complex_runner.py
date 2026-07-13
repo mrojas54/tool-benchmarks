@@ -1,8 +1,10 @@
 import json
+import os
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from toolbench.complex import ArmSpec, DefectSpec, Truth, build_arms
 from toolbench.complex_runner import (
@@ -269,6 +271,100 @@ class ProvisionWorktreeTests(unittest.TestCase):
             self.defect, _arm("bash"), 1, self.corpus_root, dest, fixture_root=self.fixture_root
         )
         self.assertFalse((dest / "b.txt").exists())
+
+
+class DepsCacheAncestryTests(unittest.TestCase):
+    """F1 -- the real guard, not a proxy. The dependency cache is symlinked into
+    each trial tree (`web/node_modules -> <cache>/web/node_modules`). Whatever the
+    symlink resolves to, none of its realpath ancestors may be a pristine corpus
+    clone: otherwise a bash/control arm can `cd node_modules && cd ../../..` back
+    into unpatched source. `corpus/.deps/<repo>` failed exactly this -- corpus_root
+    is its ancestor and `corpus_root/<repo>` is a live clone. The fix moves the
+    cache outside corpus_root entirely (default `$XDG_CACHE_HOME/toolbench/deps`).
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+
+        self.corpus_root = self.root / "corpus"
+        self.repo_dir = self.corpus_root / "toy"
+        (self.repo_dir / "web").mkdir(parents=True)
+        _run(["git", "init", "-q"], self.repo_dir)
+        _run(["git", "config", "user.email", "test@example.com"], self.repo_dir)
+        _run(["git", "config", "user.name", "Test"], self.repo_dir)
+        (self.repo_dir / "web" / "app.js").write_text("x\n", encoding="utf-8")
+        _run(["git", "add", "-A"], self.repo_dir)
+        _run(["git", "commit", "-q", "-m", "init"], self.repo_dir)
+        self.sha = _run(["git", "rev-parse", "HEAD"], self.repo_dir).stdout.strip()
+
+        (self.corpus_root / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "toy": {
+                        "sha": self.sha,
+                        "deps": [{"path": "web/node_modules", "npm_ci": "web"}],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        self.fixture_root = self.root / "probes" / "complex"
+        fixture_dir = self.fixture_root / "toy-D1-slug"
+        fixture_dir.mkdir(parents=True)
+        (fixture_dir / "prompt.md").write_text("find the toy bug\n", encoding="utf-8")
+
+        self.defect = DefectSpec(
+            id="D1",
+            repo="toy",
+            language="typescript",
+            truth=Truth("web/app.js", "a", (1, 1)),
+            predicted_winner="neutral",
+            rationale="toy fixture",
+            oracle_cmd=("true",),
+            oracle_cwd=".",
+            test_gate="Bash(true:*)",
+        )
+
+        # Pre-populate the cache under BOTH the OLD leaky layout (corpus/.deps/...)
+        # and the FIXED layout ($XDG_CACHE_HOME/toolbench/deps/...) so the symlink
+        # target exists either way and the test turns on ancestry, not on a missing
+        # cache. `_link_deps` only symlinks an existing target; no npm ci needed.
+        self._populate(self.corpus_root / ".deps" / "toy" / "web" / "node_modules")
+        self.xdg = self.root / "xdg-cache"
+        self._populate(self.xdg / "toolbench" / "deps" / "toy" / "web" / "node_modules")
+        patcher = mock.patch.dict(os.environ, {"XDG_CACHE_HOME": str(self.xdg)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def _populate(node_modules: Path) -> None:
+        node_modules.mkdir(parents=True)
+        (node_modules / "pkg.js").write_text("dep\n", encoding="utf-8")
+
+    def test_resolved_dep_symlink_has_no_corpus_clone_in_its_ancestry(self) -> None:
+        dest = self.root / "wt"
+        provision_worktree(
+            self.defect,
+            _arm("bash"),
+            1,
+            self.corpus_root,
+            dest,
+            fixture_root=self.fixture_root,
+            apply_defect=False,
+        )
+        link = dest / "web" / "node_modules"
+        self.assertTrue(link.is_symlink(), "dep must be symlinked into the trial tree")
+        real = link.resolve()
+        ancestry = [real, *real.parents]
+        for forbidden in (self.corpus_root.resolve(), (self.corpus_root / "toy").resolve()):
+            self.assertNotIn(
+                forbidden,
+                ancestry,
+                f"dep symlink resolves under {forbidden}; `..` walks back to source",
+            )
 
 
 class ShellOracleTests(unittest.TestCase):

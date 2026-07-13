@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -121,22 +122,32 @@ def _find_fixture_dir(fixture_root: Path, defect: DefectSpec) -> Path:
 
 # A tree exported from a pinned SHA carries only tracked files -- no node_modules,
 # no venv -- so 6 of 8 oracles (`npx vitest run …`) and rich's pytest cannot run
-# in it. Dependencies are provisioned ONCE into `corpus/.deps/<repo>/…` and
-# symlinked into each trial tree. This directory holds ONLY dependencies: it is
-# deliberately NOT nested inside the corpus clone, because a `node_modules` inside
-# `corpus/<repo>/` would give a bash-arm agent a filesystem path back into the
-# pristine, unpatched source (`node_modules/../../lib/...`) -- the identical leak
-# as C1 in a new costume. `.deps/<repo>/` reaches only other dependencies, never
-# source.
-DEPS_DIRNAME = ".deps"
+# in it. Dependencies are provisioned ONCE into a shared cache and symlinked into
+# each trial tree. The cache MUST live outside the tool-benchmarks tree entirely:
+# an agent that follows `web/node_modules` and walks up with `..` reaches only the
+# cache's own ancestors, and none of them may hold a pristine corpus clone. A
+# cache nested under `corpus_root` (`corpus/.deps/<repo>`) failed this -- `..` from
+# it reaches `corpus/` and its sibling clone `corpus/<repo>` = unpatched source, the
+# identical leak as C1 in a new costume. Even a repo-root sibling like `.trial-deps/`
+# fails, because the repo root has `corpus/` as a child. So the default base is
+# `$XDG_CACHE_HOME/toolbench/deps` (falling back to `~/.cache/...`): its ancestry is
+# `~/.cache/toolbench`, `~/.cache`, `~` -- all source-free. The base is a parameter
+# so tests can point it at a throwaway location.
+def _default_deps_base() -> Path:
+    base = os.environ.get("XDG_CACHE_HOME")
+    root = Path(base) if base else Path.home() / ".cache"
+    return root / "toolbench" / "deps"
 
 
-def _deps_root(corpus_root: Path, repo: str) -> Path:
-    return corpus_root / DEPS_DIRNAME / repo
+def _deps_root(deps_base: Path, repo: str) -> Path:
+    return deps_base / repo
 
 
-def ensure_deps(corpus_root: Path, repo: str) -> None:
-    """Build `repo`'s dependency cache under `corpus/.deps/<repo>/` if absent.
+def ensure_deps(corpus_root: Path, repo: str, deps_base: Path | None = None) -> None:
+    """Build `repo`'s dependency cache under `<deps_base>/<repo>/` if absent.
+
+    The cache lives outside `corpus_root` (see the module note above): its default
+    is `$XDG_CACHE_HOME/toolbench/deps`, whose ancestry holds no corpus source.
 
     Idempotent: a dep whose target path already exists is left alone, so this is
     cheap to call before every trial. All work here happens OUTSIDE the measured
@@ -148,10 +159,11 @@ def ensure_deps(corpus_root: Path, repo: str) -> None:
     the trial tree's own `rich/` (an editable `-e .` install would instead pin
     imports to whichever tree pip ran in, hiding the defect).
     """
+    deps_base = deps_base or _default_deps_base()
     manifest = json.loads((corpus_root / "manifest.json").read_text(encoding="utf-8"))
     entry = manifest[repo]
     repo_src = corpus_root / repo
-    deps_root = _deps_root(corpus_root, repo)
+    deps_root = _deps_root(deps_base, repo)
 
     for dep in entry.get("deps", []):
         target = deps_root / dep["path"]
@@ -202,7 +214,7 @@ def ensure_deps(corpus_root: Path, repo: str) -> None:
         subprocess.run(list(step), cwd=repo_src, check=True, capture_output=True, text=True)
 
 
-def _link_deps(entry: dict[str, object], corpus_root: Path, repo: str, dest: Path) -> None:
+def _link_deps(entry: dict[str, object], deps_base: Path, repo: str, dest: Path) -> None:
     """Symlink each of `repo`'s cached deps into the trial tree at its own path.
 
     Raises if a declared dep is missing from the cache rather than leaving a
@@ -210,7 +222,7 @@ def _link_deps(entry: dict[str, object], corpus_root: Path, repo: str, dest: Pat
     if the fix were wrong, which is the C7 failure this whole path exists to
     prevent. Call `ensure_deps` first.
     """
-    deps_root = _deps_root(corpus_root, repo)
+    deps_root = _deps_root(deps_base, repo)
     deps = entry.get("deps", [])
     assert isinstance(deps, list)
     for dep in deps:
@@ -234,6 +246,7 @@ def provision_worktree(
     dest: Path,
     fixture_root: Path = DEFAULT_FIXTURE_ROOT,
     apply_defect: bool = True,
+    deps_base: Path | None = None,
 ) -> Path:
     """A hermetic standalone trial repo of `defect`'s corpus repo at its pinned SHA,
     defect applied and committed, prompted for one trial.
@@ -262,6 +275,7 @@ def provision_worktree(
     `apply_defect=False` provisions the clean pinned tree (C7 asserts the oracle is
     GREEN there before proving the defect turns it RED).
     """
+    deps_base = deps_base or _default_deps_base()
     manifest = json.loads((corpus_root / "manifest.json").read_text(encoding="utf-8"))
     sha = manifest[defect.repo]["sha"]
     repo_path = corpus_root / defect.repo
@@ -297,9 +311,10 @@ def provision_worktree(
     (dest / "PROMPT.md").write_text(prompt_text, encoding="utf-8")
 
     # Symlinked before the commit so the links are part of the single initial add
-    # and `git status` stays clean. The targets live in `corpus/.deps/`, which
-    # holds only dependencies -- committing the link exposes no source.
-    _link_deps(manifest[defect.repo], corpus_root, defect.repo, dest)
+    # and `git status` stays clean. The targets live in the out-of-tree dep cache
+    # (`deps_base`), whose ancestry holds no corpus source -- committing the link
+    # exposes nothing, and following it upward reaches only other dependencies.
+    _link_deps(manifest[defect.repo], deps_base, defect.repo, dest)
 
     # A fresh repo whose single commit IS the defect state. Identity is set on the
     # commit invocation so provisioning needs no global git config. PROMPT.md is
