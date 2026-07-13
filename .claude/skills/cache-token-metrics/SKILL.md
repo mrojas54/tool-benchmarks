@@ -48,7 +48,7 @@ PYTHONPATH=~/tool-benchmarks uv run --project ~/tool-benchmarks python -m toolbe
     --agent claude --run-manifest run-A.json --tickets 12
 ```
 
-## Reading the result — the one trap
+## Reading the result — the traps
 
 - **Win** = `TOTAL_BILLED`/ticket ↓ **with** `cache_read`/ticket ↓ **and** `cache_creation`
   flat-or-down.
@@ -57,6 +57,14 @@ PYTHONPATH=~/tool-benchmarks uv run --project ~/tool-benchmarks python -m toolbe
   buckets; `TOTAL_BILLED` is unchanged. **This is why the reader always prints creation next
   to read** — cache-read alone misleads (S39). The eval
   `test_prefix_sharing_trap_read_drop_offset_by_creation_rise` pins exactly this.
+- **Incomplete run total** = a `detached-HEAD (unattributable)` line appears. Detached
+  checkouts stamp `gitBranch="HEAD"`, which can never match a manifest branch (TB-28). That
+  usage is named (including input/output, so an uncached first turn is not invisible) and
+  **never folded into the run** — folding would fabricate attribution; dropping would
+  silently undercount. Treat a large detached line as "the headline may be low."
+- **Narrow slice** = a large `unattributed` line. That is same-session work on non-run
+  branches inside candidate sessions (S40), not corpus-wide `main`. The run total is only
+  the in-set entry slice.
 - **Guardrails to check alongside tokens:** wall-clock (`run-state.md` timestamps),
   full-contract-escalation count (delegator completion comments — the Standard Clause 13
   flag), Result Validator pass rate. A token win that raises escalations or fails validation
@@ -81,8 +89,10 @@ cd ~/tool-benchmarks && uv run pytest -q tests/test_parsers.py tests/test_reduce
 - **`tests/test_reducer.py`** — run aggregation restricted to manifest branches, the
   straddling-session counter-trap (a session touching a run branch for one entry donates
   only that entry, not its session total), missing-branch reporting, per-ticket
-  normalization (and its `tickets > 0` guard), and the prefix-sharing trap
-  (`test_prefix_sharing_trap_read_drop_offset_by_creation_rise`).
+  normalization (and its `tickets > 0` guard), the prefix-sharing trap
+  (`test_prefix_sharing_trap_read_drop_offset_by_creation_rise`), and the detached-HEAD
+  blind spot (named, not folded, not mislabelled as `unattributed`; an uncached detached
+  turn with real input/output is still surfaced — TB-28).
 - **`tests/test_run_manifest.py`** — the run-manifest JSON reader itself (malformed/empty
   `branches`, non-JSON input, UTF-8 errors).
 

@@ -52,6 +52,7 @@ raw roots + AgentsView exports
      │                         │
  reducer.py → report.py        │  (ClaudeParser keep_raw + track_turns)
  freeze.py (opt-in pin)        │
+ run_manifest.py (S40 opt-in)  │
      └──────────┬──────────────┘
           reports/*.md
 ```
@@ -140,7 +141,13 @@ rather than silently absent (S38 / TB-24).
   records, S39 cache totals).
 - **`freeze.py`** — write-once / replay corpus manifest for `--freeze`
   (S37). Round-trips `SessionRef` (including `is_subagent`) so replay bypasses
-  live discovery without an import cycle on `passive`.
+  live discovery without an import cycle on `passive`. On replay, a path under
+  `…/subagents/…` still counts as a subagent even if a pre-TB-29 manifest stored
+  `"is_subagent": false` — the path is ground truth (TB-29).
+- **`run_manifest.py`** — JSON reader for `--run-manifest` (S40). Defines a
+  run's branch set (`branches` required; empty/missing is refused). Not
+  `.lattice/orchestration/agents.md` — that file drops its Branch column when
+  the run finishes.
 - **`probe.py`** — scores matched tool-vs-Bash probe pairs from a dedicated
   session JSONL and emits a context-token + usage comparison table under
   `reports/`. Joins via `ClaudeParser(keep_raw_input=True, track_turns=True)`
@@ -188,13 +195,16 @@ folded into the per-call `cache_assisted` column), the codex schema
 TB-23), corpus fingerprint + `--freeze` (**S36–S37** / TB-22), unjoinable
 records (**S38** / TB-24), Claude session-grain cache read+creation
 (**S39** / TB-26), and per-run cache-token grouping via `--run-manifest`,
-entry-grain by `gitBranch` (**S40** / TB-27). CQ follow-ons
+entry-grain by `gitBranch` (**S40** / TB-27). Follow-ons name the
+detached-HEAD attribution blind spot (**TB-28**) and make
+`--exclude-subagents` match the real nested
+`<project>/<session-uuid>/subagents/` layout (**TB-29**). CQ follow-ons
 split passive into `reducer`/`report`, fold probe into `ClaudeParser`
 (`keep_raw_input` / `track_turns`), and stamp inefficiency tags at emit.
 The strict gate (`uv run ruff check .`, `uv run mypy --strict toolbench tests`,
-`uv run pytest -q`) is green — **354** tests passing (1 skipped when the
-live hermes archive is absent). `mypy --strict` covers `tests` as well as
-`toolbench`.
+`uv run pytest -q`) is green — **389** tests passing (2 skipped when the
+live hermes archive / optional live paths are absent). `mypy --strict`
+covers `tests` as well as `toolbench`.
 
 Source-of-truth documents:
 
@@ -389,6 +399,27 @@ caveat, not ranked)` — read and creation together, because a prefix-sharing
 change can trade one for the other while `TOTAL_BILLED` stays flat. Neither
 signal is ever divided into a per-call rate or mixed into `cache_assisted`.
 
+With `--run-manifest`, the Summary also emits a **Run cache tokens** block
+(S40 caveat, never ranked):
+
+```text
+- Run cache tokens (run tb-27): read=… creation=… (N candidate sessions; S40 caveat, not ranked)
+  - per ticket (T): read=… creation=…
+  - unattributed: read=… creation=… (same-session work off the run's branches)
+  - detached-HEAD (unattributable): read=… creation=… input=… output=…
+    (M sessions; may include run delegators -- run total may be low)
+  - matched no entries: feat/missing-branch
+```
+
+Attribution is **per entry** by `gitBranch`, not per session. `unattributed`
+is spillover inside candidate sessions (sessions with ≥1 entry on a run
+branch) — not corpus-wide `main`. `detached-HEAD` is usage stamped
+`gitBranch="HEAD"` (a detached checkout): it cannot match any manifest
+branch, so it is **named and never folded into the run total** (TB-28).
+Input/output appear on that line because an uncached detached turn can have
+zero cache and still be real billed work. A large detached or unattributed
+line means the run headline may understate what the orchestration spent.
+
 ### Troubleshooting / common pitfalls
 
 | Symptom | Likely cause | What to do |
@@ -415,6 +446,10 @@ signal is ever divided into a per-call rate or mixed into `cache_assisted`.
 | `--freeze` replay reports vanished sessions | Frozen refs' transcripts aged out or AgentsView `source file not found` | Expected when the sliding window deletes mid-corpus. `--verbose` names them; rewrite the manifest only when you intentionally want a new pin. |
 | `toolbench.passive` via `-m` fails from `~` | Package isn't on `sys.path` outside the checkout | From `~`, invoke by file path per the cache-token-metrics skill; from the repo root, `-m toolbench.passive` works. |
 | Summary cache read ↓ but creation ↑ by ~the same | Prefix-sharing moved cost between buckets (S39/S40) | Not a win. Compare read **and** creation together; read alone misleads. |
+| `--run-manifest` run total looks too low vs wall-clock spend | Detached-HEAD usage (`gitBranch="HEAD"`) cannot match any branch set (TB-28) | Read the `detached-HEAD (unattributable)` line (includes input/output). Do not fold it into the run — a detached delegator is indistinguishable from unrelated detached work. |
+| `--run-manifest` shows a large `unattributed` line | Candidate sessions also ran on non-run branches (straddle spillover, S40) | Expected. The run total is only the in-set entry slice; do not treat session totals as run-owned. |
+| `--run-manifest path.md` (or empty `branches`) exits 1 | Manifest must be JSON with a non-empty `branches` list (S40) | Use a dispatch-time JSON like `.lattice/orchestration/run-tb21-23.json`; `agents.md` cannot serve (Branch column is discarded on completion). |
+| `--exclude-subagents` still includes nested subagents / freeze replay ignores the flag | Pre-TB-29 discovery checked `rel.parts[1] == "subagents"` (flat layout that does not exist on disk); freeze manifests could pin stale `"is_subagent": false` | Current code matches `"subagents" in rel.parts[1:-1]` and ORs path re-derivation on freeze replay. Re-run on current `main`; rewrite the freeze manifest only if you intentionally want a new pin. |
 
 ## Quality gate
 
