@@ -13,7 +13,9 @@ to keep that measurable.
 from __future__ import annotations
 
 import json
+import os
 import re
+import shlex
 import statistics
 from collections import defaultdict
 from dataclasses import dataclass
@@ -49,6 +51,11 @@ SERENA_TOOLS: tuple[str, ...] = tuple(
     )
 )
 NATIVE_TOOLS: tuple[str, ...] = ("Grep", "Glob", "Edit")
+
+# Arms granted a bare, unrestricted `Bash` (a full shell) by `build_arms`. Their
+# read-scope audit is BEST-EFFORT only -- a shell reads via indirection no static
+# audit can follow -- so the profile discloses this whenever such an arm is present.
+FULL_SHELL_ARMS: frozenset[str] = frozenset({"bash", "control"})
 
 
 @dataclass(frozen=True)
@@ -432,6 +439,16 @@ class TrialResult:
     total: int
     steps: int
     violations: tuple[str, ...]
+    # Reads outside the trial tree (the primary arm-enforcement gate). A trial with
+    # any read escape may have gotten the answer for free, so -- like `violations` --
+    # it is VOID: its numbers are discarded from rates/medians and it is named.
+    read_escapes: tuple[str, ...]
+
+    @property
+    def void(self) -> bool:
+        """A trial whose numbers must not be trusted: it used a tool its arm was
+        not granted (`violations`) or read outside its own tree (`read_escapes`)."""
+        return bool(self.violations or self.read_escapes)
 
 
 def load_calls(path: str | Path) -> list[ToolCall]:
@@ -460,11 +477,12 @@ def load_calls(path: str | Path) -> list[ToolCall]:
 _SHELL_CHAIN_RE = re.compile(r"[;&|`$()<>\n]")
 
 
-def _bash_command(call: ToolCall) -> str | None:
-    """The `command` string of a Bash ToolCall, from its kept raw input.
+def _tool_input(call: ToolCall) -> dict[str, object] | None:
+    """The kept raw input of a ToolCall as a dict, or `None` if unreadable.
 
-    `None` when the input cannot be read as a command -- itself suspicious for a
-    gated arm, so the caller treats it as an escape rather than waving it through.
+    The audits reach a call's arguments here rather than re-interpreting the
+    transcript: `keep_raw_input=True` (see `load_calls`) records the exact input
+    object the agent sent, which is where a path argument or a gate escape lives.
     """
     if call.raw_input is None:
         return None
@@ -472,8 +490,129 @@ def _bash_command(call: ToolCall) -> str | None:
         payload = json.loads(call.raw_input)
     except json.JSONDecodeError:
         return None
-    command = payload.get("command") if isinstance(payload, dict) else None
+    return payload if isinstance(payload, dict) else None
+
+
+def _bash_command(call: ToolCall) -> str | None:
+    """The `command` string of a Bash ToolCall, from its kept raw input.
+
+    `None` when the input cannot be read as a command -- itself suspicious for a
+    gated arm, so the caller treats it as an escape rather than waving it through.
+    """
+    payload = _tool_input(call)
+    command = payload.get("command") if payload is not None else None
     return command if isinstance(command, str) else None
+
+
+_SERENA_TOOL_PREFIX = "mcp__plugin_serena_serena__"
+
+# Structured read tools -> (path-argument key, default when the key is absent).
+# A `None` default means "no path argument when the key is absent" -- e.g. serena's
+# `search_for_pattern`/`find_symbol` operate project-wide unless a `relative_path`
+# restriction is given, so an absent key is not a read to audit. `Grep`/`Glob`
+# default their scope to the cwd (".") -> the trial root, which is always in-tree.
+# Keys are the LOGICAL tool name: native tools by their own name, serena tools by
+# their name with `_SERENA_TOOL_PREFIX` stripped.
+_READ_PATH_ARG: dict[str, tuple[str, str | None]] = {
+    "Read": ("file_path", None),
+    "Grep": ("path", "."),
+    "Glob": ("path", "."),
+    "read_file": ("relative_path", None),
+    "find_file": ("relative_path", None),
+    "list_dir": ("relative_path", None),
+    "search_for_pattern": ("relative_path", None),
+    "get_symbols_overview": ("relative_path", None),
+    "find_symbol": ("relative_path", None),
+}
+
+
+def _normalized_root(trial_root: Path) -> str:
+    return os.path.normpath(str(trial_root))
+
+
+def _path_escapes(path_str: str, root: str) -> bool:
+    """True iff `path_str` resolves outside `root`, by PURE LEXICAL logic.
+
+    Absolute paths are normalized as-is; relative paths are joined to `root` first.
+    Never stats the filesystem: the trial tree is a temp dir that may be gone at
+    scoring time, so this is `os.path.normpath` against the recorded root only.
+    """
+    if os.path.isabs(path_str):
+        normalized = os.path.normpath(path_str)
+    else:
+        normalized = os.path.normpath(os.path.join(root, path_str))
+    return not (normalized == root or normalized.startswith(root + os.sep))
+
+
+def _bash_tokens(command: str) -> list[str]:
+    """Best-effort tokenization of a shell command. Falls back to whitespace
+    splitting when the command is not valid POSIX shlex (an unbalanced quote)."""
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return command.split()
+
+
+def _bash_token_escapes(token: str, root: str) -> bool:
+    """Best-effort: an absolute token outside `root`, or a `..`-bearing token that
+    escapes when joined to `root`. A token with neither shape is not path-like
+    enough to judge and is waved through -- the shell can still read via
+    indirection this cannot see, which is why full-shell arms are best-effort."""
+    if os.path.isabs(token):
+        return _path_escapes(token, root)
+    if ".." in token:
+        return _path_escapes(token, root)
+    return False
+
+
+def read_escapes(calls: list[ToolCall], trial_root: Path) -> tuple[str, ...]:
+    """Reads whose resolved path lies outside the trial tree. Voids the trial.
+
+    Precise for structured read tools; best-effort for full-shell Bash (a shell
+    can read via indirection no static audit sees -- `bash script.sh`,
+    `cat $(locate x)`, a compiled helper -- the reason per-trial filesystem
+    sandboxing is the deferred stronger option for full-shell arms).
+
+    Structured read tools (`Read`/`Grep`/`Glob`, serena symbolic reads) carry an
+    explicit path argument: it is extracted, resolved against `trial_root`, and
+    flagged if it is not `trial_root` or a descendant. Bash is scanned token by
+    token for absolute paths outside the tree and `..` sequences that escape it --
+    a tripwire, not a proof, and deliberately not a full shell parse.
+
+    Comparison is PURE LEXICAL (`os.path.normpath` against the passed `trial_root`):
+    the trial tree is a temp dir that may be gone at scoring time, so nothing here
+    stats the filesystem. Returns a sorted tuple for determinism.
+    """
+    root = _normalized_root(trial_root)
+    escapes: set[str] = set()
+    for call in calls:
+        if call.name == "Bash":
+            command = _bash_command(call)
+            if command is None:
+                # Unreadable Bash is already a gate violation via `arm_violations`;
+                # it carries no legible path, so it adds no read-scope signal here.
+                continue
+            for token in _bash_tokens(command):
+                if _bash_token_escapes(token, root):
+                    escapes.add(f"ReadEscape:Bash:{token}")
+            continue
+        if call.name.startswith(_SERENA_TOOL_PREFIX):
+            logical = call.name[len(_SERENA_TOOL_PREFIX) :]
+        else:
+            logical = call.name
+        spec = _READ_PATH_ARG.get(logical)
+        if spec is None:
+            continue
+        key, default = spec
+        payload = _tool_input(call)
+        if payload is None:
+            continue
+        raw = payload.get(key, default)
+        if not isinstance(raw, str):
+            continue
+        if _path_escapes(raw, root):
+            escapes.add(f"ReadEscape:{call.name}:{raw}")
+    return tuple(sorted(escapes))
 
 
 def _gate_prefixes(arm: ArmSpec) -> tuple[str, ...]:
@@ -553,8 +692,15 @@ def score_trial(
     arm: ArmSpec,
     trial: int,
     fixed: bool,
+    trial_root: Path,
 ) -> TrialResult:
-    """Score one trial. `fixed` is the oracle's verdict, supplied by the runner."""
+    """Score one trial. `fixed` is the oracle's verdict, supplied by the runner.
+
+    `trial_root` is the trial tree's own directory (the runner's `dest`): reads
+    resolved outside it void the trial. Passed explicitly rather than inferred from
+    parser internals -- it is what the runner already knows and what the read-scope
+    audit compares against lexically.
+    """
     calls = load_calls(session_path)
     hit = find_located(session_path)
     located = hit is not None and located_correct(hit[1], defect.truth)
@@ -582,6 +728,7 @@ def score_trial(
         total=sum(call.tokens for call in calls),
         steps=len(calls),
         violations=arm_violations(calls, arm),
+        read_escapes=read_escapes(calls, trial_root),
     )
 
 
@@ -620,6 +767,11 @@ class ProfileRow:
     # so the table names them instead of dropping them.
     fixed_unlocated: int
     violations: tuple[str, ...]
+    # Trials voided by the arm-enforcement gates (tool/gate `violations` OR
+    # read-scope `read_escapes`). Excluded from every rate and median in this row;
+    # counted here and named via `read_escapes` so the table shows the hole.
+    void: int
+    read_escapes: tuple[str, ...]
 
 
 def _median_or_none(values: list[int]) -> int | None:
@@ -639,28 +791,37 @@ def build_profile(results: list[TrialResult]) -> list[ProfileRow]:
 
     rows: list[ProfileRow] = []
     for (repo, defect_id, arm), trials in sorted(grouped.items()):
-        located = [t for t in trials if t.located]
-        fixed = [t for t in trials if t.fixed]
+        # A void trial (tool/gate violation OR read outside its tree) may have gotten
+        # the answer for free: its numbers are meaningless, so it is excluded from
+        # every rate and median and measured only over the VALID trials. It is still
+        # counted (`void`) and named (`read_escapes`) -- visibly incomplete, never
+        # quietly wrong. Guard the empty-valid case: an all-void cell has no rate.
+        void_trials = [t for t in trials if t.void]
+        valid = [t for t in trials if not t.void]
+        located = [t for t in valid if t.located]
+        fixed = [t for t in valid if t.fixed]
         # N2 is edit cost, which only exists once the trial has located: median it
         # over trials that BOTH located and fixed, never over `fixed` alone. A fix
         # that never located has n2 is None, so folding it in would median it away
         # -- but it would still corrupt the count it was drawn from.
-        located_and_fixed = [t for t in trials if t.located and t.fixed]
+        located_and_fixed = [t for t in valid if t.located and t.fixed]
         rows.append(
             ProfileRow(
                 repo=repo,
                 defect_id=defect_id,
                 arm=arm,
                 trials=len(trials),
-                locate_rate=len(located) / len(trials),
-                fix_rate=len(fixed) / len(trials),
+                locate_rate=len(located) / len(valid) if valid else 0.0,
+                fix_rate=len(fixed) / len(valid) if valid else 0.0,
                 median_n1=_median_or_none([t.n1 for t in located if t.n1 is not None]),
                 median_n2=_median_or_none(
                     [t.n2 for t in located_and_fixed if t.n2 is not None]
                 ),
-                unsolved=len(trials) - len(fixed),
+                unsolved=len(valid) - len(fixed),
                 fixed_unlocated=sum(1 for t in fixed if not t.located),
                 violations=tuple(sorted({v for t in trials for v in t.violations})),
+                void=len(void_trials),
+                read_escapes=tuple(sorted({e for t in trials for e in t.read_escapes})),
             )
         )
     return rows
@@ -679,8 +840,8 @@ def render_profile(rows: list[ProfileRow]) -> str:
         "between arms (TB-17).",
         "",
         "| repo | defect | arm | trials | locate | fix | median N1 | median N2 "
-        "| fixed, unlocated | unsolved |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| fixed, unlocated | unsolved | void |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for row in rows:
         n1 = str(row.median_n1) if row.median_n1 is not None else "—"
@@ -688,7 +849,7 @@ def render_profile(rows: list[ProfileRow]) -> str:
         lines.append(
             f"| {row.repo} | {row.defect_id} | {row.arm} | {row.trials} "
             f"| {row.locate_rate:.0%} | {row.fix_rate:.0%} | {n1} | {n2} "
-            f"| {row.fixed_unlocated} | {row.unsolved} |"
+            f"| {row.fixed_unlocated} | {row.unsolved} | {row.void} |"
         )
     lines.append("")
     lines.append(
@@ -701,6 +862,24 @@ def render_profile(rows: list[ProfileRow]) -> str:
         "the fix has no N2 by construction. Those trials ARE solved; their cost is "
         "real but is not edit cost, and it is not back-filled into median N2."
     )
+    lines.append(
+        "`void` = trials excluded from every rate and median in the row because "
+        "the arm was not enforced (used an ungranted tool, or read outside its own "
+        "trial tree). Their numbers may be free; they are named below, never scored."
+    )
+
+    if any(row.arm in FULL_SHELL_ARMS for row in rows):
+        lines.append("")
+        lines.append(
+            "> **Read-scope audit is best-effort for full-shell arms.** The "
+            f"{', '.join(sorted(FULL_SHELL_ARMS))} arms hold an unrestricted shell, "
+            "which can read via indirection (`bash script.sh`, `cat $(locate x)`, a "
+            "compiled helper) that no static transcript audit can follow. The audit "
+            "flags the escapes it CAN see -- absolute paths and `..` sequences "
+            "leaving the tree -- as a tripwire; it does not prove a full-shell arm "
+            "stayed in-tree. That is precisely why per-trial filesystem sandboxing "
+            "is the deferred stronger option for these arms."
+        )
 
     offenders = [row for row in rows if row.violations]
     if offenders:
@@ -714,6 +893,21 @@ def render_profile(rows: list[ProfileRow]) -> str:
         for row in offenders:
             lines.append(
                 f"- {row.repo}/{row.defect_id}/{row.arm}: {', '.join(row.violations)}"
+            )
+
+    read_offenders = [row for row in rows if row.read_escapes]
+    if read_offenders:
+        lines.append("")
+        lines.append("## VOID — read outside the trial tree")
+        lines.append("")
+        lines.append(
+            "These cells read a path outside their own trial tree, so they may have "
+            "gotten the answer for free. Their numbers are **void**: discarded from "
+            "the rates and medians above, and named here instead of dropped."
+        )
+        for row in read_offenders:
+            lines.append(
+                f"- {row.repo}/{row.defect_id}/{row.arm}: {', '.join(row.read_escapes)}"
             )
 
     lines.append("")

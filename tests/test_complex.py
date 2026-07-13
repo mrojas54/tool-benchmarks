@@ -24,9 +24,11 @@ from toolbench.complex import (
     load_calls,
     load_defects,
     located_correct,
+    read_escapes,
     render_profile,
     score_trial,
 )
+from toolbench.transcript import ToolCall, UsageProvenance
 
 FIXTURE = "tests/fixtures/complex_session_located.jsonl"
 
@@ -584,7 +586,7 @@ class LocatedTests(unittest.TestCase):
 
 class TrialScoringTests(unittest.TestCase):
     def test_n1_counts_only_calls_before_the_located_line(self) -> None:
-        result = score_trial(FIXTURE, D_FIX, _arm("native"), trial=1, fixed=True)
+        result = score_trial(FIXTURE, D_FIX, _arm("native"), trial=1, fixed=True, trial_root=TRIAL_ROOT)
         self.assertTrue(result.located)
         # Grep's tool_result is "web/src/lib/schedule.ts:12:formatSlot" (37 chars),
         # joined BEFORE the LOCATED: line -- DERIVED, not copied from the brief:
@@ -596,7 +598,7 @@ class TrialScoringTests(unittest.TestCase):
     def test_unlocated_but_fixed_records_no_navigation_number(self) -> None:
         # Guessing its way to green is a real outcome and must stay visible.
         wrong = replace(D_FIX, truth=Truth("nope.ts", "nope", (1, 2)))
-        result = score_trial(FIXTURE, wrong, _arm("native"), trial=1, fixed=True)
+        result = score_trial(FIXTURE, wrong, _arm("native"), trial=1, fixed=True, trial_root=TRIAL_ROOT)
         self.assertFalse(result.located)
         self.assertIsNone(result.n1)
         self.assertTrue(result.fixed)
@@ -609,7 +611,7 @@ class TrialScoringTests(unittest.TestCase):
         # under one label. The design's rule: "a solved fix with no navigation
         # measurement -- recorded as such, not back-filled."
         wrong = replace(D_FIX, truth=Truth("nope.ts", "nope", (1, 2)))
-        result = score_trial(FIXTURE, wrong, _arm("native"), trial=1, fixed=True)
+        result = score_trial(FIXTURE, wrong, _arm("native"), trial=1, fixed=True, trial_root=TRIAL_ROOT)
         self.assertFalse(result.located)
         self.assertTrue(result.fixed)
         self.assertIsNone(result.n2)
@@ -618,12 +620,12 @@ class TrialScoringTests(unittest.TestCase):
         # Dropping the back-fill must not lose the number. `total` is every call's
         # tokens, defined for every trial -- it is simply not called N2.
         wrong = replace(D_FIX, truth=Truth("nope.ts", "nope", (1, 2)))
-        result = score_trial(FIXTURE, wrong, _arm("native"), trial=1, fixed=True)
+        result = score_trial(FIXTURE, wrong, _arm("native"), trial=1, fixed=True, trial_root=TRIAL_ROOT)
         # Grep's result is 37 chars (37 // 4 == 9), Edit's is 2 chars (2 // 4 == 0).
         self.assertEqual(result.total, 9)
 
     def test_total_equals_n1_plus_n2_when_the_trial_located(self) -> None:
-        result = score_trial(FIXTURE, D_FIX, _arm("native"), trial=1, fixed=True)
+        result = score_trial(FIXTURE, D_FIX, _arm("native"), trial=1, fixed=True, trial_root=TRIAL_ROOT)
         assert result.n1 is not None and result.n2 is not None
         self.assertEqual(result.total, result.n1 + result.n2)
 
@@ -698,6 +700,80 @@ class GateTokenBoundaryTests(unittest.TestCase):
         )
 
 
+def _rc(name: str, **inp: object) -> ToolCall:
+    """A ToolCall carrying `inp` as its kept raw_input -- the shape read_escapes sees."""
+    return ToolCall(
+        agent="claude-code",
+        source="raw",
+        project="p",
+        name=name,
+        input_chars=0,
+        output_chars=0,
+        session_id="s",
+        ts="2026-01-01T00:00:00Z",
+        usage=None,
+        usage_provenance=UsageProvenance.ABSENT_BY_SCHEMA,
+        duration_ms=None,
+        error=None,
+        model=None,
+        raw_input=json.dumps(inp),
+    )
+
+
+_SERENA = "mcp__plugin_serena_serena__"
+# A concrete, absent-from-disk temp path: read_escapes must be pure lexical and
+# never stat it, so it need not exist.
+TRIAL_ROOT = Path("/tmp/tb-trial-xyz")
+
+
+class ReadEscapeTests(unittest.TestCase):
+    """The primary arm-enforcement gate: any read outside the trial tree voids
+    the trial. Precise for structured read tools; best-effort for full-shell Bash."""
+
+    def test_native_read_escaping_the_tree_is_flagged_intree_is_not(self) -> None:
+        escaped = read_escapes([_rc("Read", file_path="../../secret.txt")], TRIAL_ROOT)
+        self.assertTrue(any(e.startswith("ReadEscape:") for e in escaped), escaped)
+        clean = read_escapes([_rc("Read", file_path="src/schedule.ts")], TRIAL_ROOT)
+        self.assertEqual(clean, ())
+
+    def test_native_grep_with_absolute_path_outside_the_tree_is_flagged(self) -> None:
+        calls = [_rc("Grep", pattern="x", path="/Users/me/corpus/wids")]
+        escaped = read_escapes(calls, TRIAL_ROOT)
+        self.assertTrue(any("/Users/me/corpus/wids" in e for e in escaped), escaped)
+
+    def test_serena_read_file_escaping_relative_path_is_flagged_intree_is_not(self) -> None:
+        out = read_escapes(
+            [_rc(f"{_SERENA}read_file", relative_path="../../corpus/wids/web/lib/x.ts")],
+            TRIAL_ROOT,
+        )
+        self.assertTrue(any(e.startswith("ReadEscape:") for e in out), out)
+        intree = read_escapes(
+            [_rc(f"{_SERENA}read_file", relative_path="web/lib/x.ts")], TRIAL_ROOT
+        )
+        self.assertEqual(intree, ())
+
+    def test_bash_absolute_read_outside_is_flagged_oracle_and_intree_are_not(self) -> None:
+        outside = read_escapes(
+            [_rc("Bash", command="cat /Users/me/corpus/wids/web/lib/x.ts")], TRIAL_ROOT
+        )
+        self.assertTrue(any("/Users/me/corpus/wids/web/lib/x.ts" in e for e in outside), outside)
+        self.assertEqual(read_escapes([_rc("Bash", command="npx vitest run")], TRIAL_ROOT), ())
+        self.assertEqual(read_escapes([_rc("Bash", command="cat ./src/x.ts")], TRIAL_ROOT), ())
+
+    def test_bash_dotdot_read_escaping_the_tree_is_flagged(self) -> None:
+        out = read_escapes([_rc("Bash", command="rg formatSlot ../../corpus")], TRIAL_ROOT)
+        self.assertTrue(any("../../corpus" in e for e in out), out)
+
+    def test_escapes_are_returned_sorted(self) -> None:
+        calls = [
+            _rc("Bash", command="cat /z/late.ts"),
+            _rc("Read", file_path="/a/early.ts"),
+        ]
+        out = read_escapes(calls, TRIAL_ROOT)
+        self.assertEqual(list(out), sorted(out))
+        self.assertEqual(len(out), 2)
+
+
 def _trial(
     arm: str,
     located: bool,
@@ -706,8 +782,11 @@ def _trial(
     n2: int | None,
     violations: tuple[str, ...] = (),
     total: int = 0,
+    read_escapes: tuple[str, ...] = (),
 ) -> TrialResult:
-    return TrialResult("D1", "wids", arm, 1, located, fixed, n1, n2, total, 3, violations)
+    return TrialResult(
+        "D1", "wids", arm, 1, located, fixed, n1, n2, total, 3, violations, read_escapes
+    )
 
 
 class ProfileTests(unittest.TestCase):
@@ -774,3 +853,39 @@ class ProfileTests(unittest.TestCase):
     def test_a_violation_is_shouted_because_it_voids_the_arm(self) -> None:
         text = render_profile(build_profile([_trial("serena", True, True, 5, 5, ("Task",))]))
         self.assertIn("VIOLATION", text)
+
+    def test_a_void_trial_is_excluded_from_rates_and_medians_and_counted(self) -> None:
+        # A read-scope escape voids the trial: its numbers may be free, so they
+        # must not enter locate/fix rates or the cost medians. OLD behavior counted
+        # every trial in the rates -- with the void trial folded in, median_n1 would
+        # be median(100, 999) == 549 and both rates 100%. The change: only the clean
+        # trial is measured, so median_n1 == 100, rates over 1 valid trial, void == 1.
+        rows = build_profile([
+            _trial("serena", True, True, 100, 10),
+            _trial(
+                "serena", True, True, 999, 999,
+                read_escapes=("ReadEscape:Bash:/Users/me/corpus/x.ts",),
+            ),
+        ])
+        row = next(r for r in rows if r.arm == "serena")
+        self.assertEqual(row.void, 1)
+        self.assertEqual(row.median_n1, 100)
+        self.assertEqual(row.median_n2, 10)
+        self.assertAlmostEqual(row.locate_rate, 1.0)
+        self.assertAlmostEqual(row.fix_rate, 1.0)
+
+    def test_a_void_trial_is_named_in_the_report(self) -> None:
+        text = render_profile(build_profile([
+            _trial(
+                "serena", True, True, 5, 5,
+                read_escapes=("ReadEscape:Bash:/Users/me/corpus/x.ts",),
+            ),
+        ]))
+        self.assertIn("/Users/me/corpus/x.ts", text)
+
+    def test_full_shell_arm_gets_a_best_effort_audit_disclosure(self) -> None:
+        # A full shell can read via indirection no static audit sees, so the report
+        # must disclose that bash/control are audited best-effort -- never claim the
+        # Bash read audit is complete.
+        text = render_profile(build_profile([_trial("bash", True, True, 5, 5)]))
+        self.assertIn("best-effort", text.lower())

@@ -86,7 +86,10 @@ def run_trial(
         )
     prompt = prompt_path.read_text(encoding="utf-8")
     session_path = launch(build_claude_argv(prompt, arm, workdir), workdir)
-    return score_trial(session_path, defect, arm, trial, oracle(workdir))
+    # workdir is the trial tree's root (dest): the read-scope audit voids any read
+    # resolved outside it. Passed explicitly so enforcement does not depend on
+    # parser internals.
+    return score_trial(session_path, defect, arm, trial, oracle(workdir), trial_root=workdir)
 
 
 def shell_oracle(test_cmd: list[str], test_cwd: str) -> Oracle:
