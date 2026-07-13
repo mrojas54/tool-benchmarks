@@ -1,0 +1,40 @@
+{
+  "assigned_to": null,
+  "branch_links": [],
+  "comment_count": 1,
+  "complexity": "medium",
+  "created_at": "2026-07-13T16:09:59Z",
+  "created_by": {
+    "agent_type": "review",
+    "base_name": "Argus",
+    "framework": "claude-code",
+    "model": "claude-opus-4-8",
+    "name": "Argus-1",
+    "serial": 1,
+    "session": "sess_01KXE3VPXAC2C9HYRXW1FFDRMW"
+  },
+  "custom_fields": {},
+  "description": "iter_agentsview_sessions (toolbench/sources.py:153) builds:\n\n    argv = [\"agentsview\", \"session\", \"list\", \"--json\", \"--limit\", str(limit)]\n\nThe design doc (docs/2026-07-07-tool-benchmarks-design.md:57) mandates:\n\n    agentsview session list ... --include-children --include-automated --include-one-shot --limit 500 --json\n\nNone of the three --include-* flags are passed. agentsview excludes one-shot, automated, and child sessions BY DEFAULT and announces it on stderr:\n\n    Excluded 7494 sessions by default: 7433 one-shot, 61 automated.\n\nsources.py checks only returncode and parses stdout, so the banner is discarded.\n\nMEASURED (full cursor pagination, live archive, 2026-07-13):\n  toolbench actual call (no flags):  3534 sessions\n  design-mandated (all 3 includes): 11950 sessions\n  SILENTLY EXCLUDED:                 8416  (70.4% of the archive)\n\nWHY S35 CANNOT SEE IT: the loss is UPSTREAM of discovery. The Summary prints a\nperfectly balanced 'Sessions discovered: 200 / scanned: 200 / skipped: 0' because\nD is already truncated. This is the TB-21 family (unreconciled corpus loss) one\nlevel further up: not skipped, never discovered.\n\nCONSEQUENCE FOR S10 (the real damage): auto->raw fallback is NOT corpus-preserving.\nSame agent, same --limit 50, only --index-source differs:\n  raw:        50 scanned, 693 calls,  fingerprint d67c5c93fc1e67e7\n  agentsview: 50 scanned, 4016 calls, fingerprint e432354b624ff485\nA 5.8x call-density difference. The report names the fallback reason, which implies\na PROVENANCE change; it is actually a POPULATION change. Numbers measured across a\nfallback boundary are not comparable, and S37 freeze pins a different population\ndepending on which index source was live.\n\nFIX: pass --include-children --include-automated --include-one-shot in\niter_agentsview_sessions; surface agentsview stderr exclusion banner rather than\ndiscarding it. Add a test asserting the argv carries all three flags, and an\nindex-source equivalence test (raw vs agentsview over the same project must agree\non the discovered session-id set).\n\nFound by: operator smoke checkpoint CP2/CP3 (EVALUATION.md), 2026-07-13.",
+  "done_at": null,
+  "evidence_refs": [],
+  "id": "task_01KXE3W4J4J2JS635D8RB2RX2W",
+  "last_event_id": "ev_01KXE46B4FMMMC9WEYHX7KVH48",
+  "last_status_changed_at": "2026-07-13T16:09:59Z",
+  "priority": "high",
+  "relationships_out": [],
+  "reopened_count": 0,
+  "schema_version": 1,
+  "short_id": "TB-30",
+  "status": "backlog",
+  "tags": [
+    "index-source",
+    "discovery",
+    "s10",
+    "s35",
+    "agentsview"
+  ],
+  "title": "agentsview index path silently excludes 70% of the archive: --include-{children,automated,one-shot} never passed",
+  "type": "bug",
+  "updated_at": "2026-07-13T16:15:34Z",
+  "urgency": "high"
+}

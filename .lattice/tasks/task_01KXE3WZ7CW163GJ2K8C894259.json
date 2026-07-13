@@ -1,0 +1,56 @@
+{
+  "assigned_to": null,
+  "branch_links": [],
+  "comment_count": 0,
+  "complexity": "low",
+  "created_at": "2026-07-13T16:10:26Z",
+  "created_by": {
+    "agent_type": "review",
+    "base_name": "Argus",
+    "framework": "claude-code",
+    "model": "claude-opus-4-8",
+    "name": "Argus-1",
+    "serial": 1,
+    "session": "sess_01KXE3VPXAC2C9HYRXW1FFDRMW"
+  },
+  "custom_fields": {},
+  "description": "TB-29 fixed --exclude-subagents on the RAW path (is_subagent path detection). The\nAGENTSVIEW path was never covered, and there the flag does nothing at all.\n\nMEASURED (live archive, --agent claude --all --limit 40, 2026-07-13):\n\n  raw path (TB-29 fix works):\n    [none]                620 calls, fingerprint 332fff82da4be971\n    [--exclude-subagents] 521 calls, fingerprint 5c3854a59d2c2641   <- moves, correct\n\n  agentsview path (no-op):\n    [none]                3251 calls, fingerprint 6d146170ac125aff\n    [--exclude-subagents] 3251 calls, fingerprint 6d146170ac125aff  <- IDENTICAL\n\nIdentical call count AND identical corpus fingerprint with the flag on and off:\nnothing was excluded. But the Summary still flips its provenance line to\n'Subagents included: no' -- an unearned claim. The report asserts an exclusion\nthat demonstrably did not occur.\n\nROOT CAUSE: shares TB-30's root cause. Without --include-children, agentsview never\nLISTS subagent/child sessions, so no ref ever carries is_subagent=True and the\nfilter has nothing to remove. TB-29 hardened the predicate; this path never\nreceives the rows to apply it to.\n\nNOTE ON ORDERING: fixing TB-30 (passing --include-children) is necessary but likely\nnot sufficient -- once child sessions are listed, is_subagent must actually be\nderived for agentsview-sourced refs, which have path=None and so cannot use the\nraw path's '<project>/<session-uuid>/subagents/' path-segment detection. The\nagentsview row shape must supply the signal (e.g. a parent/child field on the\nsession-list JSON). Fix TB-30 first, then re-run this A/B: if the fingerprint still\ndoes not move, the is_subagent derivation is the remaining gap.\n\nFIX: after TB-30, derive is_subagent for agentsview refs from the session-list\npayload, and assert in tests that --exclude-subagents moves the fingerprint on BOTH\nindex sources (the TB-29 test asserted on the FILTERED refs -- mirror that here).\nThe 'Subagents included:' provenance line should reflect what was actually filtered,\nnot merely which flag was passed.\n\nFound by: operator smoke checkpoint CP3 (EVALUATION.md), 2026-07-13.",
+  "done_at": null,
+  "evidence_refs": [],
+  "id": "task_01KXE3WZ7CW163GJ2K8C894259",
+  "last_event_id": "ev_01KXE3X4CZ3JV2XQTFQT0T0XYR",
+  "last_status_changed_at": "2026-07-13T16:10:26Z",
+  "priority": "high",
+  "relationships_out": [
+    {
+      "created_at": "2026-07-13T16:10:32Z",
+      "created_by": {
+        "agent_type": "review",
+        "base_name": "Argus",
+        "framework": "claude-code",
+        "model": "claude-opus-4-8",
+        "name": "Argus-1",
+        "serial": 1,
+        "session": "sess_01KXE3VPXAC2C9HYRXW1FFDRMW"
+      },
+      "note": null,
+      "target_task_id": "task_01KXE3W4J4J2JS635D8RB2RX2W",
+      "type": "depends_on"
+    }
+  ],
+  "reopened_count": 0,
+  "schema_version": 1,
+  "short_id": "TB-31",
+  "status": "backlog",
+  "tags": [
+    "index-source",
+    "subagents",
+    "s13",
+    "tb-29",
+    "agentsview"
+  ],
+  "title": "--exclude-subagents is a silent no-op on the agentsview index path, and the Summary claims an exclusion that never happened",
+  "type": "bug",
+  "updated_at": "2026-07-13T16:10:32Z",
+  "urgency": "high"
+}
