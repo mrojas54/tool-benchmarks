@@ -64,22 +64,24 @@ def _connect(db: Path) -> sqlite3.Connection:
 
     mode=ro: a running hermes owns this file. Never open it writable.
 
-    On some SQLite builds (observed 3.43.x), a WAL-header database with no `-shm`
-    sidecar cannot be read under `mode=ro` at all -- SQLite needs the shared-memory
-    file to take a read lock, and read-only mode may not create it. Idle hermes
-    profiles have been found in exactly that state. Newer builds (observed 3.45.x)
-    can read the same on-disk shape under `mode=ro`; the fallback below is then
-    unused but still correct.
+    On many SQLite builds, a WAL-header database with no `-shm` sidecar cannot be
+    read under `mode=ro` at all -- SQLite needs the shared-memory file to take a
+    read lock, and read-only mode may not create it. Idle hermes profiles have been
+    found in exactly that state. Whether a build rejects the shape does not track
+    version order, so treat the fallback as live, not vestigial: 3.43.x rejects,
+    3.45.x reads it fine, 3.51.x rejects again.
 
-    `immutable=1` opens a sidecar-less WAL file on the older builds, but it ignores
-    the WAL entirely and will silently return stale rows if frames are pending.
-    Fall back to it only when no `-wal` sidecar exists, which is precisely when
-    there are no frames to miss.
+    `immutable=1` opens a sidecar-less WAL file on the rejecting builds, but it
+    ignores the WAL entirely and will silently return stale rows if frames are
+    pending. Fall back to it only when no `-wal` sidecar exists, which is precisely
+    when there are no frames to miss.
 
-    The probe must touch a page. `sqlite3.connect` is lazy, and `SELECT 1` is a
-    constant expression that never opens a read transaction -- both succeed on a
-    database that cannot actually be read. Reading `sqlite_master` is what fails
-    on builds that still reject the sidecar-less shape.
+    The probe must touch a page, and `SELECT 1` will not do. `sqlite3.connect` is
+    lazy, and `SELECT 1` is a constant expression touching no page, so on a build
+    that defers the failure (3.43.x) both succeed against a database that cannot
+    actually be read. Builds that reject at the first statement (3.51.x) do raise
+    on `SELECT 1`, but relying on that would pin one regime's timing. Reading
+    `sqlite_master` fails under every rejecting build, so it is the probe.
     """
     try:
         conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
