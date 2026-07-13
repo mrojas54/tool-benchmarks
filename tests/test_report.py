@@ -10,8 +10,10 @@ from toolbench.passive import (
     render_report,
     session_signature,
 )
+from toolbench.reducer import AgentStats
 from toolbench.run_manifest import RunManifest
 from toolbench.sources import (
+    AgentCensus,
     SkipReason,
     SkipRecord,
 )
@@ -45,6 +47,7 @@ class RenderReportTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         headers = [
             "## Agent Breakdown",
@@ -66,6 +69,7 @@ class RenderReportTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note="2026-07-01",
+            census=AgentCensus(totals={}, archive_total=0),
         )
         for expected in (
             "Index source: raw",
@@ -108,6 +112,7 @@ class RenderReportTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         start = report.index("## Inefficiency Callouts")
         return report[start : report.index("## Summary")]
@@ -165,6 +170,7 @@ class RenderReportTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         leaderboard = report[report.index("## Tool Leaderboard") : report.index("## Model Breakdown")]
         self.assertLess(leaderboard.index("Bash"), leaderboard.index("Read"))
@@ -190,6 +196,7 @@ class RenderReportTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         section = report[report.index("## Model Breakdown") : report.index("## Inefficiency Callouts")]
         self.assertIn("| claude-code | claude-opus-4-8 | Read | 1 | 100 |", section)
@@ -222,6 +229,7 @@ class RenderReportTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         self.assertIn("0 candidate sessions", report)
         self.assertIn("matched no entries: never/existed", report)
@@ -237,6 +245,7 @@ class RenderReportTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         self.assertNotIn("Run cache tokens", report)
 
@@ -266,6 +275,7 @@ class RenderReportTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         self.assertIn("Run cache tokens (run 2): read=900 creation=90", report)
         self.assertIn("unattributed: read=50 creation=5", report)
@@ -293,6 +303,7 @@ class RenderReportTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         self.assertIn("per ticket (2): read=450.0 creation=45.0", report)
 
@@ -322,6 +333,7 @@ class RenderReportTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         self.assertIn("matched no entries: typo/never-pushed", report)
 
@@ -340,6 +352,7 @@ class UnjoinableReconciliationRenderTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         return report[report.index("## Summary") :]
 
@@ -369,6 +382,7 @@ class CacheNoteRenderTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         row = next(line for line in report.splitlines() if "| Read |" in line)
         return row.rstrip("|").rsplit("|", 1)[-1].strip()
@@ -423,6 +437,7 @@ class SessionGrainCacheCaveatRenderTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         return report[report.index("## Agent Breakdown") : report.index("## Tool Leaderboard")]
 
@@ -461,6 +476,7 @@ class SessionGrainCacheCaveatRenderTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         summary = report[report.index("## Summary") :]
         self.assertIn("Session-grain cache tokens: read=300 creation=30", summary)
@@ -497,6 +513,7 @@ class SessionGrainCacheCaveatRenderTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         headers = [
             "## Agent Breakdown",
@@ -537,6 +554,7 @@ class SessionGrainCacheCaveatRenderTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         leaderboard = report[report.index("## Tool Leaderboard") : report.index("## Model Breakdown")]
         row = next(line for line in leaderboard.splitlines() if "| hermes |" in line)
@@ -565,6 +583,7 @@ class DiscoveryReconciliationRenderTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
             verbose=verbose,
         )
         return report[report.index("## Summary") :]
@@ -683,6 +702,7 @@ class CorpusFingerprintRenderTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
             fingerprint=fingerprint,
         )
         return report[report.index("## Summary") :]
@@ -732,6 +752,7 @@ class CorpusFingerprintRenderTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         # The run total stays honest -- detached usage is NOT folded in.
         self.assertIn("Run cache tokens (run 2): read=900 creation=90", report)
@@ -762,5 +783,97 @@ class CorpusFingerprintRenderTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         self.assertNotIn("detached-HEAD", report)
+
+
+def _reducer_with(**sessions_by_agent: int) -> Reducer:
+    r = Reducer()
+    for agent, n in sessions_by_agent.items():
+        r.agents[agent] = AgentStats(sessions=n, calls=n * 10)
+    r.calls_joined = sum(n * 10 for n in sessions_by_agent.values())
+    return r
+
+
+def _render(reducer: Reducer, census: AgentCensus) -> str:
+    return render_report(
+        reducer,
+        index_source="agentsview",
+        fallback_reason=None,
+        skips=[],
+        include_subagents=True,
+        subagents_found=0,
+        sessions_discovered=sum(s.sessions for s in reducer.agents.values()),
+        since_note=None,
+        census=census,
+    )
+
+
+class SamplingDisclosureTests(unittest.TestCase):
+    """The Agent Breakdown must never render an incomparable table in silence (TB-33)."""
+
+    def test_unreached_agent_gets_a_named_row(self) -> None:
+        # cursor is in the archive with 73 sessions and was never scanned. A four-agent
+        # table that simply omits it is the bug.
+        reducer = _reducer_with(claude=135)
+        census = AgentCensus(totals={"claude": 8595, "cursor": 73}, archive_total=8668)
+
+        out = _render(reducer, census)
+
+        self.assertIn("| cursor |", out)
+        self.assertIn("0 of 73", out)
+        self.assertIn("135 of 8595", out)
+        # Absence is STATED, never inferred from a zero.
+        self.assertIn("not reached", out.lower())
+
+    def test_uneven_sampling_line_fires_above_threshold(self) -> None:
+        # codex 40/183 = 21.9%; claude 135/8595 = 1.6%. Spread ~13.9x.
+        reducer = _reducer_with(claude=135, codex=40)
+        census = AgentCensus(totals={"claude": 8595, "codex": 183}, archive_total=8778)
+
+        out = _render(reducer, census)
+
+        self.assertIn("Sampling is uneven", out)
+        self.assertIn("not comparable", out)
+
+    def test_even_sampling_emits_no_warning_line(self) -> None:
+        # Both at ~1.6%: the table IS comparable, so say nothing.
+        reducer = _reducer_with(claude=100, codex=10)
+        census = AgentCensus(totals={"claude": 6250, "codex": 625}, archive_total=6875)
+
+        out = _render(reducer, census)
+
+        self.assertNotIn("Sampling is uneven", out)
+
+    def test_residual_is_named(self) -> None:
+        reducer = _reducer_with(claude=100)
+        census = AgentCensus(totals={"claude": 8595}, archive_total=8700)
+
+        out = _render(reducer, census)
+
+        self.assertIn("105", out)
+        self.assertIn("belong to no agent", out)
+
+    def test_unavailable_census_says_why_and_renders_unknown(self) -> None:
+        reducer = _reducer_with(claude=100)
+        census = AgentCensus(
+            totals={}, archive_total=0, unavailable_reason="agentsview exited 1: daemon down"
+        )
+
+        out = _render(reducer, census)
+
+        self.assertIn("unknown", out)
+        self.assertIn("daemon down", out)
+        # A dropped column would be the exact sin this ticket closes.
+        self.assertIn("| claude |", out)
+
+    def test_summary_lists_every_agents_sampling_fraction(self) -> None:
+        reducer = _reducer_with(claude=135)
+        census = AgentCensus(totals={"claude": 8595, "cursor": 73}, archive_total=8668)
+
+        out = _render(reducer, census)
+        summary = out.split("## Summary")[1]
+
+        self.assertIn("claude: 135 of 8595", summary)
+        self.assertIn("cursor: 0 of 73", summary)

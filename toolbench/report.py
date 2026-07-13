@@ -7,8 +7,88 @@ from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from toolbench.reducer import OVERSIZED_OUTPUT_TOKENS, Reducer
-from toolbench.sources import SkipReason, SkipRecord
+from toolbench.reducer import OVERSIZED_OUTPUT_TOKENS, AgentStats, Reducer
+from toolbench.sources import AgentCensus, SkipReason, SkipRecord
+
+# Ratio of the largest per-agent sampling fraction to the smallest, above which
+# cross-agent numbers stop being comparable and the report says so. Arbitrary but
+# STATED -- and it can only fire when a `--limit` actually truncated the corpus, so it
+# never nags a full run.
+SPREAD_THRESHOLD = 4.0
+
+
+def _sampled_cell(scanned: int, total: int | None, unavailable: bool) -> str:
+    """One agent's `sampled` cell: the numerator, its denominator, and the fraction."""
+    if unavailable:
+        return "unknown"
+    if total is None:
+        # Scanned, but absent from the census universe -- i.e. an agent the child-excluded
+        # probe never saw. `residual` names it in aggregate; this names it in place.
+        return f"{scanned} of unknown"
+    if total == 0:
+        return "0 of 0"
+    return f"{scanned} of {total} ({scanned / total * 100:.1f}%)"
+
+
+def _sampling_spread(reducer: Reducer, census: AgentCensus) -> float | None:
+    """max/min sampling fraction across agents with >= 1 scanned session.
+
+    Agents with zero scanned sessions are excluded: their fraction is 0, which would send
+    the ratio to infinity and drown the real signal. They are disclosed by name instead.
+    """
+    fractions = [
+        stats.sessions / total
+        for agent, stats in reducer.agents.items()
+        if stats.sessions and (total := census.totals.get(agent))
+    ]
+    if len(fractions) < 2:
+        return None
+    return max(fractions) / min(fractions)
+
+
+def _sampling_notes(reducer: Reducer, census: AgentCensus) -> list[str]:
+    """Disclosure that belongs BESIDE the table, not forty lines below it (TB-33).
+
+    A reader forming a calls/session ratio across two rows never scrolls to the Summary,
+    so the qualification has to sit where the comparison is made.
+    """
+    if census.unavailable_reason is not None:
+        return [
+            f"- Sampling fractions unavailable: {census.unavailable_reason}. Each row above "
+            "may rest on a different fraction of its agent's archive; this run cannot say."
+        ]
+
+    notes: list[str] = []
+    unreached = sorted(
+        agent
+        for agent, total in census.totals.items()
+        if total > 0 and reducer.agents.get(agent, AgentStats()).sessions == 0
+    )
+    if unreached:
+        named = ", ".join(f"{a} ({census.totals[a]} sessions)" for a in unreached)
+        notes.append(
+            f"- Present in the archive, not reached by this window: {named}. Their rows are "
+            "zeros because we did not look, not because they did no work."
+        )
+
+    spread = _sampling_spread(reducer, census)
+    if spread is not None and spread >= SPREAD_THRESHOLD:
+        notes.append(
+            f"- **Sampling is uneven ({spread:.1f}x spread).** Each row is a different "
+            "fraction of a different-sized population, so any ratio formed ACROSS rows "
+            "(calls/session, tokens/call, error rate) mixes sampling depth into the "
+            "comparison and is not comparable. Re-run without --limit for a like-for-like "
+            "table."
+        )
+
+    if census.residual > 0:
+        notes.append(
+            f"- Reconciliation: {census.residual} archive sessions belong to no agent we "
+            "enumerated. The census universe comes from the child-excluded probe listing, "
+            "so an agent whose sessions are ALL children is invisible to it -- the "
+            "denominators above are incomplete."
+        )
+    return notes
 
 
 @dataclass(frozen=True)
@@ -113,6 +193,7 @@ def render_report(
     subagents_found: int,
     sessions_discovered: int,
     since_note: str | None,
+    census: AgentCensus,
     verbose: bool = False,
     fingerprint: CorpusFingerprint | None = None,
     freeze_note: str | None = None,
@@ -123,13 +204,20 @@ def render_report(
 
     lines.append("## Agent Breakdown")
     lines.append("")
-    lines.append("| agent | sessions | calls | output_tokens | input_tokens | errors | no_result |")
-    lines.append("|---|---|---|---|---|---|---|")
+    lines.append(
+        "| agent | sampled | sessions | calls | output_tokens | input_tokens | errors | no_result |"
+    )
+    lines.append("|---|---|---|---|---|---|---|---|")
     cache_caveats: list[str] = []
-    for agent in sorted(reducer.agents):
-        s = reducer.agents[agent]
+    # Union, not `reducer.agents`: an agent the window never reached has no AgentStats at
+    # all, and dropping its row is the headline bug (TB-33).
+    for agent in sorted(set(reducer.agents) | set(census.totals)):
+        s = reducer.agents.get(agent, AgentStats())
+        sampled = _sampled_cell(
+            s.sessions, census.totals.get(agent), census.unavailable_reason is not None
+        )
         lines.append(
-            f"| {agent} | {s.sessions} | {s.calls} | {s.output_tokens} | "
+            f"| {agent} | {sampled} | {s.sessions} | {s.calls} | {s.output_tokens} | "
             f"{s.input_tokens} | {s.errors} | {s.no_result} |"
         )
         if s.sessions_with_cache_data > 0:
@@ -141,6 +229,7 @@ def render_report(
                 "(S32: session grain only — not attributable to individual tool calls)."
             )
     lines.extend(cache_caveats)
+    lines.extend(_sampling_notes(reducer, census))
     lines.append("")
 
     lines.append("## Tool Leaderboard")
@@ -223,6 +312,14 @@ def render_report(
     lines.append(
         f"- Sessions discovered: {scanned + skipped} / scanned: {scanned} / skipped: {skipped}"
     )
+    if census.unavailable_reason is None and census.totals:
+        lines.append("- Sampling (scanned of each agent's own archive):")
+        for agent in sorted(census.totals):
+            total = census.totals[agent]
+            scanned_agent = reducer.agents.get(agent, AgentStats()).sessions
+            pct = f"{scanned_agent / total * 100:.1f}%" if total else "n/a"
+            tail = " — not reached by this window" if scanned_agent == 0 else ""
+            lines.append(f"  - {agent}: {scanned_agent} of {total} ({pct}){tail}")
     if fingerprint is not None:
         # Identity of the set that produced the numbers above: two reports whose
         # fingerprints match are diffable; a delta between them is code, not the

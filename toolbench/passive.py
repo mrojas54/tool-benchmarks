@@ -31,6 +31,7 @@ from toolbench.report import (
 )
 from toolbench.run_manifest import MalformedRunManifest, RunManifest, read_run_manifest
 from toolbench.sources import (
+    AgentCensus,
     IndexSource,
     MissingSourceExport,
     NonTranscriptExport,
@@ -416,6 +417,10 @@ def main(
         subagents_found=subagents_found,
         sessions_discovered=sessions_discovered,
         since_note=args.since,
+        # TB-33: full wiring (freeze-replay disclosure, discovery-path census) is
+        # Task 4's job. A neutral census here keeps the report honest in the
+        # meantime -- `unknown`/empty rather than a fabricated denominator.
+        census=AgentCensus(totals={}, archive_total=0),
         verbose=args.verbose,
         fingerprint=fingerprint,
         freeze_note=freeze_note,
