@@ -492,19 +492,34 @@ class ConnectWalWithoutShm(unittest.TestCase):
     def test_plain_mode_ro_cannot_read_such_a_db(self) -> None:
         """Pins the classic bug, and pins why `SELECT 1` is not a health check.
 
-        `SELECT 1` is a constant expression: it reads no page, opens no read
-        transaction, and therefore succeeds even when a page touch would fail.
+        Builds disagree on *when* they reject the sidecar-less shape, so probe for
+        the regime rather than pin one:
 
-        On SQLite builds that still reject sidecar-less WAL under `mode=ro`
-        (observed 3.43.x), `sqlite_master` raises. On newer builds (observed
-        3.45.x) that read succeeds — skip rather than pin obsolete behaviour.
+        * Reject at the first statement, so even `SELECT 1` raises (observed
+          3.51.x). SQLite cannot create the `-shm` it needs to take a read lock,
+          so it cannot complete the schema load, and no statement gets to run.
+        * Admit `SELECT 1` and raise only on a real read (observed 3.43.x).
+          `SELECT 1` is a constant expression: it touches no page, so it can
+          succeed on a database that cannot actually be read. That leniency is
+          precisely why it is not a health check.
+        * Read the shape without complaint (observed 3.45.x) — the reject pin is
+          N/A, so skip rather than pin obsolete behaviour.
+
+        Either reject regime pins the bug that `_connect`'s fallback exists for.
+        Under all three, `_connect` must probe with a page-touching read, never
+        with `SELECT 1`.
         """
         with TemporaryDirectory() as tmp:
             db = Path(tmp) / "state.db"
             self._make_wal_db(db)
             conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-            conn.execute("SELECT 1").fetchone()  # succeeds — proves the probe is useless
             try:
+                conn.execute("SELECT 1").fetchone()
+            except sqlite3.OperationalError:
+                return  # rejected outright: bug pinned, and `SELECT 1` probes nothing here
+            try:
+                # Reached only where `SELECT 1` passed on a DB that may still be
+                # unreadable — the page touch is what actually settles it.
                 conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
             except sqlite3.OperationalError:
                 return
