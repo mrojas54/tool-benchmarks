@@ -82,6 +82,27 @@ identical `--project` / `--since` filters as discovery.* A denominator gathered 
 different filters describes a different population than the numerator, and the fraction
 becomes a lie with a decimal point on it.
 
+**The census must also inherit `--exclude-subagents`** — a hole this spec originally
+missed, found by the final whole-branch review and proven with a live repro. `filter_subagents`
+runs *after* discovery, so under that flag the numerator counts **parents only** while a
+naive denominator (`_ALL_INCLUDES`) counts **parents + children**. Different populations.
+The report then mis-discloses rather than merely failing to disclose: with **no `--limit` at
+all**, an agent whose archive is mostly children renders `1 of 10 (10.0%)` and fires
+*"Sampling is uneven (10.0x spread) … Re-run without --limit"* — declaring a perfectly
+comparable table incomparable and prescribing a remedy that changes nothing. Under `--limit`
+it is worse: it reports `0 of 5 — "zeros because we did not look"` for sessions it *did* look
+at and deliberately excluded, contradicting its own `Subagents included: no (4 of 5 …)` line
+two rows down. A confidently wrong column is worse than no column.
+
+The fix is structural, not a special case: `filter_subagents` keeps exactly the refs whose
+ids are in `parent_ids` — which is exactly the `_PROBE_INCLUDES` listing. So under
+`--exclude-subagents` the census gathers both the per-agent totals and `archive_total` with
+`_PROBE_INCLUDES`, and the denominator becomes exactly right rather than approximately
+wrong. `include_subagents` threads from `CliArgs` → `iter_sessions` → `discover_agentsview`
+→ `_agent_census` → `_list_total`, and `_raw_census` inherits it via the path-derived
+`is_subagent` flag. Verified live: claude's denominator moves 8659 → 7998 and cowork's
+946 → 654 under the flag, matching what the numerator counts.
+
 ### 2. Acquisition — reuse the pass we already pay for
 
 The parent-probe pass in `iter_agentsview_sessions` already drains the entire index to
@@ -201,8 +222,19 @@ centralized: the shared `_av()` helper (`tests/test_sources.py:44`) already enco
 pass order, so teaching it to inject census responses fixes most call sites at once.
 `_page()` already emits a `total` key, so the fake is already shaped for this.
 
+**The reconciliation residual cannot catch a wrong `includes` tuple**, and this is worth
+stating because the design leans on it as a safety net. `_list_total` builds *both* the
+per-agent totals and `archive_total`, so if its `includes` were wrong they would move
+together and `residual` would stay `0`. The final review proved it: mutating `_list_total`
+to `_PROBE_INCLUDES` — re-importing the exact TB-30 bug into the denominator — left the
+whole suite green. The `includes` tuple must therefore be pinned by *direct argv assertions*,
+not inferred from a clean reconciliation.
+
 Cases:
 
+- every census argv carries all three `--include-*` flags on a default run, and omits
+  **only** `--include-children` under `--exclude-subagents` (asserted on the argv itself)
+- under `--exclude-subagents`, a fully-scanned corpus does NOT fire the uneven-sampling line
 - an agent present in the census but with zero scanned sessions gets a row reading
   `not reached`, not a bare `0`
 - `residual > 0` is named in the Summary
