@@ -930,6 +930,19 @@ class ProfileTests(unittest.TestCase):
         text = render_profile(build_profile([_trial("bash", False, False, None, None)]))
         self.assertIn("Unsolved trials: 1", text)
 
+    def test_unsolved_denominator_excludes_void_trials(self) -> None:
+        # B4: the "Unsolved X of Y" line reported unsolved (over valid trials) OVER
+        # sum(trials) (includes void). A void trial is in the denominator but never
+        # the numerator, so the ratio misleads. Denominator must be valid trials.
+        text = render_profile(build_profile([
+            _trial("bash", False, False, None, None),  # valid, unsolved
+            _trial(
+                "bash", True, True, 5, 5,
+                read_escapes=("ReadEscape:Bash:/Users/me/corpus/x.ts",),
+            ),  # void -> not counted in either
+        ]))
+        self.assertIn("Unsolved trials: 1 of 1.", text)
+
     def test_a_violation_is_shouted_because_it_voids_the_arm(self) -> None:
         text = render_profile(build_profile([_trial("serena", True, True, 5, 5, ("Task",))]))
         self.assertIn("VIOLATION", text)

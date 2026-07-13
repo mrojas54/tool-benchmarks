@@ -936,7 +936,10 @@ def render_profile(rows: list[ProfileRow]) -> str:
             )
 
     lines.append("")
-    lines.append(
-        f"Unsolved trials: {sum(r.unsolved for r in rows)} of {sum(r.trials for r in rows)}."
-    )
+    # Denominator must match the numerator's population: `unsolved` is counted over
+    # VALID (non-void) trials only, so the "of" total is valid trials too, not
+    # `trials` (which includes voids). A void is in neither term; the VOID section
+    # above carries the void count separately.
+    valid_total = sum(r.trials - r.void for r in rows)
+    lines.append(f"Unsolved trials: {sum(r.unsolved for r in rows)} of {valid_total}.")
     return "\n".join(lines)
