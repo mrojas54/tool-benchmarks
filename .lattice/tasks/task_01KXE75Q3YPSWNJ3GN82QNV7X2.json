@@ -1,6 +1,13 @@
 {
   "assigned_to": null,
-  "branch_links": [],
+  "branch_links": [
+    {
+      "branch": "fix/tb-33-agent-sampling-disclosure",
+      "linked_at": "2026-07-13T17:41:00Z",
+      "linked_by": "agent:Vulcan-1",
+      "repo": null
+    }
+  ],
   "comment_count": 0,
   "complexity": "medium",
   "created_at": "2026-07-13T17:07:39Z",
@@ -18,8 +25,8 @@
   "done_at": null,
   "evidence_refs": [],
   "id": "task_01KXE75Q3YPSWNJ3GN82QNV7X2",
-  "last_event_id": "ev_01KXE76P65TFD5ZM36MGGA7JGF",
-  "last_status_changed_at": "2026-07-13T17:07:39Z",
+  "last_event_id": "ev_01KXE931SEVPWEF7NBZ3WRJNH3",
+  "last_status_changed_at": "2026-07-13T17:41:09Z",
   "priority": "high",
   "relationships_out": [
     {
@@ -56,7 +63,7 @@
   "reopened_count": 0,
   "schema_version": 1,
   "short_id": "TB-33",
-  "status": "backlog",
+  "status": "in_planning",
   "tags": [
     "reporting",
     "provenance",
@@ -64,6 +71,6 @@
   ],
   "title": "Agent Breakdown compares agents across undisclosed sampling fractions, and silently omits agents the window never reached",
   "type": "bug",
-  "updated_at": "2026-07-13T17:08:11Z",
+  "updated_at": "2026-07-13T17:41:09Z",
   "urgency": "normal"
 }
