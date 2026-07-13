@@ -1,0 +1,5 @@
+{
+  "cmd": ["npx", "vitest", "run", "lib/suggest/__tests__/orchestrator.test.ts"],
+  "cwd": "web",
+  "language": "typescript"
+}

@@ -1,0 +1,5 @@
+{
+  "cmd": ["npx", "vitest", "run", "lib/paperpal/__tests__/hint.test.ts"],
+  "cwd": "web",
+  "language": "typescript"
+}

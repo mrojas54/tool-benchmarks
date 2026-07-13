@@ -1,0 +1,5 @@
+{
+  "cmd": ["cargo", "test", "-p", "falcon-mcp", "--lib", "sandbox"],
+  "cwd": ".",
+  "language": "rust"
+}

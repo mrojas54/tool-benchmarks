@@ -1,0 +1,5 @@
+{
+  "cmd": ["npx", "vitest", "run", "tests/handlers/proposeFix.test.ts"],
+  "cwd": "falcon-detective",
+  "language": "typescript"
+}
