@@ -17,6 +17,10 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from toolbench.adapters import detect_parser
+from toolbench.parsers import ClaudeParser
+from toolbench.transcript import ToolCall
+
 # The agent emits this once, as soon as it believes it has localized the defect.
 # Making the moment explicit beats inferring it: N1 is the tokens before it.
 LOCATED_PREFIX = "LOCATED:"
@@ -329,6 +333,93 @@ def located_correct(obj: dict[str, object], truth: Truth) -> bool:
     if not isinstance(low, int) or not isinstance(high, int):
         return False
     return not (high < truth.lines[0] or low > truth.lines[1])
+
+
+@dataclass(frozen=True)
+class TrialResult:
+    """One (defect, arm, trial) cell.
+
+    `n1` is navigation cost, `n2` edit cost. Either may be None: an arm that never
+    localized has no navigation number, one that never fixed has no edit number.
+    They are never back-filled -- an arm that fails is cheap, and its cheapness
+    means nothing.
+    """
+
+    defect_id: str
+    repo: str
+    arm: str
+    trial: int
+    located: bool
+    fixed: bool
+    n1: int | None
+    n2: int | None
+    steps: int
+    violations: tuple[str, ...]
+
+
+def load_calls(path: str | Path) -> list[ToolCall]:
+    """Joined tool calls for one trial session, via the existing Claude parser."""
+    session_path = Path(path)
+    with session_path.open(encoding="utf-8") as handle:
+        _parser, replayed = detect_parser(handle)
+        result = ClaudeParser().parse(
+            replayed,
+            agent="claude-code",
+            source="raw",
+            project=session_path.parent.name,
+        )
+    return result.calls
+
+
+def arm_violations(calls: list[ToolCall], arm: ArmSpec) -> tuple[str, ...]:
+    """Tool names the arm used but was not granted -- plus any banned tool, always.
+
+    The restriction is verified from the transcript, never trusted from the
+    `--allowedTools` flag. A flag that silently fails to restrict is the TB-29
+    `--exclude-subagents` no-op: the suite ratified it while it did nothing.
+    """
+    granted = {name for name in arm.allowed_tools if not name.startswith("Bash(")}
+    if any(name.startswith("Bash(") for name in arm.allowed_tools):
+        granted.add("Bash")
+    used = {call.name for call in calls}
+    return tuple(sorted((used - granted) | (used & set(BANNED_TOOLS))))
+
+
+def score_trial(
+    session_path: str | Path,
+    defect: DefectSpec,
+    arm: ArmSpec,
+    trial: int,
+    fixed: bool,
+) -> TrialResult:
+    """Score one trial. `fixed` is the oracle's verdict, supplied by the runner."""
+    calls = load_calls(session_path)
+    hit = find_located(session_path)
+    located = hit is not None and located_correct(hit[1], defect.truth)
+
+    n1: int | None = None
+    n2: int | None = None
+    if located and hit is not None:
+        located_ts = hit[0]
+        # ISO-8601 Z timestamps sort lexicographically.
+        n1 = sum(call.tokens for call in calls if call.ts < located_ts)
+        n2 = sum(call.tokens for call in calls if call.ts >= located_ts)
+    elif fixed:
+        # Solved without ever claiming a localization. Real outcome, no N1.
+        n2 = sum(call.tokens for call in calls)
+
+    return TrialResult(
+        defect_id=defect.id,
+        repo=defect.repo,
+        arm=arm.name,
+        trial=trial,
+        located=located,
+        fixed=fixed,
+        n1=n1,
+        n2=n2,
+        steps=len(calls),
+        violations=arm_violations(calls, arm),
+    )
 
 
 def build_arms(test_gate: str) -> tuple[ArmSpec, ...]:

@@ -3,21 +3,49 @@ import os
 import re
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from toolbench.complex import (
     BANNED_TOOLS,
     DEFAULT_FIXTURE_ROOT,
     DEFECTS,
+    ArmSpec,
+    DefectSpec,
     Truth,
+    arm_violations,
     build_arms,
     derive_test_gate,
     find_located,
+    load_calls,
     load_defects,
     located_correct,
+    score_trial,
 )
 
 FIXTURE = "tests/fixtures/complex_session_located.jsonl"
+
+# `DefectSpec` requires a real oracle (Tasks 1-3): a scoped `vitest run` command,
+# and `GATE` is that command's OWN derivation (`derive_test_gate`), matching the
+# convention enforced by `TestGateTests` above -- a gate must come from its own
+# defect's oracle, never be hand-picked to match a fixture's expectations.
+GATE = "Bash(npx vitest run:*)"
+
+D_FIX = DefectSpec(
+    id="DT",
+    repo="wids",
+    language="typescript",
+    truth=Truth("web/src/lib/schedule.ts", "formatSlot", (12, 20)),
+    predicted_winner="native",
+    rationale="test fixture",
+    oracle_cmd=("npx", "vitest", "run", "tests/schedule.test.ts"),
+    oracle_cwd=".",
+    test_gate=GATE,
+)
+
+
+def _arm(name: str) -> ArmSpec:
+    return next(a for a in build_arms(GATE) if a.name == name)
 
 
 def _write_fixture(
@@ -475,3 +503,32 @@ class LocatedTests(unittest.TestCase):
 
     def test_a_session_that_never_locates_returns_none(self) -> None:
         self.assertIsNone(find_located("tests/fixtures/complex_session_agent_escape.jsonl"))
+
+
+class TrialScoringTests(unittest.TestCase):
+    def test_n1_counts_only_calls_before_the_located_line(self) -> None:
+        result = score_trial(FIXTURE, D_FIX, _arm("native"), trial=1, fixed=True)
+        self.assertTrue(result.located)
+        # Grep's tool_result is "web/src/lib/schedule.ts:12:formatSlot" (37 chars),
+        # joined BEFORE the LOCATED: line -- DERIVED, not copied from the brief:
+        # ToolCall.tokens == output_chars // 4 == 37 // 4 == 9.
+        # Edit's tool_result is "ok" (2 chars // 4 == 0), joined AFTER LOCATED:.
+        self.assertEqual(result.n1, 9)
+        self.assertEqual(result.n2, 0)
+
+    def test_unlocated_but_fixed_records_no_navigation_number(self) -> None:
+        # Guessing its way to green is a real outcome and must stay visible.
+        wrong = replace(D_FIX, truth=Truth("nope.ts", "nope", (1, 2)))
+        result = score_trial(FIXTURE, wrong, _arm("native"), trial=1, fixed=True)
+        self.assertFalse(result.located)
+        self.assertIsNone(result.n1)
+        self.assertTrue(result.fixed)
+
+    def test_a_call_outside_the_arm_is_a_violation(self) -> None:
+        calls = load_calls(FIXTURE)  # fixture uses Grep + Edit
+        self.assertEqual(arm_violations(calls, _arm("serena")), ("Edit", "Grep"))
+
+    def test_the_agent_tool_is_a_violation_even_for_the_control_arm(self) -> None:
+        # The ban is verified from the transcript, never trusted from the flag.
+        calls = load_calls("tests/fixtures/complex_session_agent_escape.jsonl")
+        self.assertIn("Task", arm_violations(calls, _arm("control")))
