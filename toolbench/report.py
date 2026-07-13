@@ -13,7 +13,14 @@ from toolbench.sources import AgentCensus, SkipReason, SkipRecord
 # Ratio of the largest per-agent sampling fraction to the smallest, above which
 # cross-agent numbers stop being comparable and the report says so. Arbitrary but
 # STATED -- and it can only fire when a `--limit` actually truncated the corpus, so it
-# never nags a full run.
+# never nags a full run. True because the census now inherits the SAME --include-*
+# population filters the numerator does (TB-33 Finding 1): under `--exclude-subagents`,
+# `_agent_census` is called with `_PROBE_INCLUDES`, exactly matching what
+# `filter_subagents` keeps, so `stats.sessions / total` is always scanned-of-the-same-
+# population. Before that fix, an agent's own child/parent ratio alone could move the
+# spread even with no `--limit` at all (a fully-scanned population still divided by an
+# inflated denominator) -- it is the filter-parity fix, not merely "no --limit means a
+# full scan", that makes this comment true again.
 SPREAD_THRESHOLD = 4.0
 
 
@@ -31,6 +38,11 @@ def _sampled_cell(scanned: int, total: int | None, unavailable: bool) -> str:
         # non-atomic agentsview invocations). Printing "0 of 0" over a nonzero
         # `scanned` would be the exact silent zero this ticket exists to close.
         return f"{scanned} of 0"
+    # NOT clamped to 100%: `scanned` and `total` come from separate, non-atomic
+    # agentsview calls (the full listing vs. the `--limit 1` census probe), so a session
+    # created between the two calls can leave scanned > total and print e.g. "5 of 2
+    # (250.0%)". That is a visible bug report -- something drifted between the calls --
+    # and clamping it to 100% would silently launder that signal into a lie.
     return f"{scanned} of {total} ({scanned / total * 100:.1f}%)"
 
 

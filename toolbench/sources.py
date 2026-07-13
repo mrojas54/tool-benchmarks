@@ -294,11 +294,23 @@ def _probe_pass(
 
 
 def _list_total(
-    runner: Runner, *, agent: str, project: str | None, since: str | None
+    runner: Runner,
+    *,
+    agent: str,
+    project: str | None,
+    since: str | None,
+    includes: tuple[str, ...],
 ) -> int:
-    """The `total` for one scoped listing. `--limit 1` because we want the COUNT, not rows."""
+    """The `total` for one scoped listing. `--limit 1` because we want the COUNT, not rows.
+
+    `includes` is a parameter, not a hardcoded `_ALL_INCLUDES`, because the census must
+    be able to describe the SAME population `filter_subagents` will leave behind (TB-33
+    Finding 1): under `--exclude-subagents` that population is the `_PROBE_INCLUDES`
+    listing, and a denominator gathered with `_ALL_INCLUDES` there would count children
+    the numerator has already dropped.
+    """
     result = runner(
-        _list_argv(agent=agent, project=project, since=since, limit=1, includes=_ALL_INCLUDES)
+        _list_argv(agent=agent, project=project, since=since, limit=1, includes=includes)
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -317,6 +329,7 @@ def _agent_census(
     agent: str,
     project: str | None,
     since: str | None,
+    includes: tuple[str, ...],
 ) -> AgentCensus:
     """One scoped `--limit 1` per agent, plus the run-scoped archive total (TB-33).
 
@@ -324,11 +337,16 @@ def _agent_census(
     `--agent codex` the run's population IS codex, so an UNSCOPED archive total would
     compute a residual of every other agent's sessions and scream about thousands of
     "unenumerated" sessions that were never in scope.
+
+    `includes` is threaded straight through to every `_list_total` call rather than
+    decided here, so the caller -- which also decides what the numerator will look
+    like -- is the one place that can guarantee the two agree.
     """
     totals = {
-        a: _list_total(runner, agent=a, project=project, since=since) for a in sorted(agents_seen)
+        a: _list_total(runner, agent=a, project=project, since=since, includes=includes)
+        for a in sorted(agents_seen)
     }
-    archive_total = _list_total(runner, agent=agent, project=project, since=since)
+    archive_total = _list_total(runner, agent=agent, project=project, since=since, includes=includes)
     return AgentCensus(totals=totals, archive_total=archive_total)
 
 
@@ -377,6 +395,7 @@ def discover_agentsview(
     project: str | None = None,
     since: str | None = None,
     limit: int = 500,
+    include_subagents: bool = True,
 ) -> tuple[AgentCensus, Iterator[SessionRef]]:
     """Census + refs (TB-30, TB-31, TB-33).
 
@@ -399,6 +418,16 @@ def discover_agentsview(
     window disappears from the report with no note at all. The census is the denominator
     that makes the rendered rows comparable, and the roll-call that makes absence sayable.
 
+    `include_subagents` decides which population the CENSUS describes (TB-33 Finding 1).
+    `filter_subagents` (passive.py) keeps exactly the refs whose ids are in `parent_ids`
+    -- i.e. exactly the `_PROBE_INCLUDES` listing -- when `--exclude-subagents` is set. If
+    the census kept using `_ALL_INCLUDES` regardless, its denominator would count parents
+    PLUS children while the numerator counted parents only: two different populations
+    wearing the same fraction. So the census includes tracks the numerator's includes
+    exactly, via `_agent_census`'s `includes` parameter -- the refs listing itself
+    (`_yield_refs`) still always uses `_ALL_INCLUDES`, since children must be discovered
+    (and stamped) before `filter_subagents` can drop them.
+
     The census is computed EAGERLY, before the caller consumes a single ref: the caller
     breaks out of the ref loop early precisely when `--limit` is set, so a census gathered
     lazily during iteration would be missing exactly when it is needed most. A generator
@@ -407,15 +436,20 @@ def discover_agentsview(
     parent_ids, agents_seen = _probe_pass(
         runner, agent=agent, project=project, since=since, limit=limit
     )
+    census_includes = _ALL_INCLUDES if include_subagents else _PROBE_INCLUDES
     try:
         census = _agent_census(
-            runner, agents_seen, agent=agent, project=project, since=since
+            runner, agents_seen, agent=agent, project=project, since=since, includes=census_includes
         )
     except (RuntimeError, ValueError) as exc:
         # A census we cannot take is disclosed as UNKNOWN, never dropped -- a quietly
         # missing column is the sin this ticket exists to close. Discovery itself is
-        # unaffected: the refs are already ours. (json.JSONDecodeError subclasses
-        # ValueError, so a garbled payload lands here too.)
+        # unaffected: the refs are already ours. This guards ONLY the `_agent_census`
+        # call above -- json.JSONDecodeError subclasses ValueError, so a garbled CENSUS
+        # payload lands here, but a garbled payload from `_probe_pass` (already run,
+        # above, before this try) or from `_yield_refs` (lazy -- its requests do not
+        # fire until the caller iterates the returned refs) is NOT caught here and
+        # propagates to that caller instead.
         census = AgentCensus(totals={}, archive_total=0, unavailable_reason=str(exc))
     refs = _yield_refs(
         runner, parent_ids, agent=agent, project=project, since=since, limit=limit
@@ -529,6 +563,14 @@ def _probe_agentsview(runner: Runner) -> str | None:
     return None
 
 
+# The only agent the raw filesystem path can discover; `_raw_session_refs` stamps it.
+# Defined above `_raw_session_refs` and referenced there rather than duplicated as a
+# literal: if the two ever drifted, `_raw_census` would key totals under a name no ref
+# carries, and every "claude-code" row would render `N of unknown` with a spurious
+# residual -- exactly the class of bug this ticket exists to close (TB-33 Finding 3).
+RAW_AGENT = "claude-code"
+
+
 def _raw_session_refs(
     root: str,
     project: str | None,
@@ -538,7 +580,7 @@ def _raw_session_refs(
     for path in iter_session_files(root=root, project=project, since=since):
         owning_project, is_subagent = _project_and_subagent(base, path)
         yield SessionRef(
-            agent="claude-code",
+            agent=RAW_AGENT,
             source="raw",
             project=owning_project,
             session_id=path.stem,
@@ -547,20 +589,36 @@ def _raw_session_refs(
         )
 
 
-# The only agent the raw filesystem path can discover; `_raw_session_refs` stamps it.
-RAW_AGENT = "claude-code"
-
-
-def _raw_census(root: str, project: str | None, since: str | None) -> AgentCensus:
+def _raw_census(
+    root: str,
+    project: str | None,
+    since: str | None,
+    *,
+    include_subagents: bool = True,
+) -> AgentCensus:
     """Denominator for the raw path: a filesystem count, no subprocess (TB-33).
 
     A missing root is an UNAVAILABLE census, not an exception: `iter_sessions` is called
     eagerly, and the `auto` path reaches here precisely when AgentsView is down and the
     raw root may not exist either. `_discover_refs` still surfaces the FileNotFoundError
     from the ref iterator as a MISSING_SOURCE skip -- this must not pre-empt it.
+
+    `include_subagents=False` must count only NON-subagent files (TB-33 Finding 1): under
+    `--exclude-subagents`, `filter_subagents` (passive.py) drops every ref stamped
+    `is_subagent`, so the numerator is parents-only. A denominator that kept counting
+    every `.jsonl` under the root regardless would describe parents plus children -- the
+    same population mismatch the AgentsView census closes, one source over.
     """
     try:
-        count = sum(1 for _ in iter_session_files(root=root, project=project, since=since))
+        if include_subagents:
+            count = sum(1 for _ in iter_session_files(root=root, project=project, since=since))
+        else:
+            base = Path(root).expanduser()
+            count = sum(
+                1
+                for path in iter_session_files(root=root, project=project, since=since)
+                if not _project_and_subagent(base, path)[1]
+            )
     except FileNotFoundError as exc:
         return AgentCensus(totals={}, archive_total=0, unavailable_reason=str(exc))
     return AgentCensus(totals={RAW_AGENT: count}, archive_total=count)
@@ -574,34 +632,50 @@ def iter_sessions(
     limit: int = 500,
     root: str = "~/.claude/projects",
     runner: Runner | None = None,
+    include_subagents: bool = True,
 ) -> tuple[Iterator[SessionRef], str | None, AgentCensus]:
     """Resolve the `--index-source` policy; return (refs, fallback_reason, census) (S10).
 
     The census rides along rather than being fetched separately so it cannot drift from
     the refs: same source, same filters, same call (TB-33).
+
+    `include_subagents` is the caller's `not args.exclude_subagents` (TB-33 Finding 1):
+    the numerator (`filter_subagents`, applied in passive.py AFTER discovery) and the
+    census denominator must describe the same population, so this flag has to reach
+    every source's census the same way it reaches `filter_subagents`.
     """
     run = runner if runner is not None else _run_agentsview
     if index_source == "raw":
         return (
             _raw_session_refs(root, project, since),
             None,
-            _raw_census(root, project, since),
+            _raw_census(root, project, since, include_subagents=include_subagents),
         )
     if index_source == "agentsview":
         census, refs = discover_agentsview(
-            run, agent=agent, project=project, since=since, limit=limit
+            run,
+            agent=agent,
+            project=project,
+            since=since,
+            limit=limit,
+            include_subagents=include_subagents,
         )
         return refs, None, census
     if index_source == "auto":
         reason = _probe_agentsview(run)
         if reason is None:
             census, refs = discover_agentsview(
-                run, agent=agent, project=project, since=since, limit=limit
+                run,
+                agent=agent,
+                project=project,
+                since=since,
+                limit=limit,
+                include_subagents=include_subagents,
             )
             return refs, None, census
         return (
             _raw_session_refs(root, project, since),
             reason,
-            _raw_census(root, project, since),
+            _raw_census(root, project, since, include_subagents=include_subagents),
         )
     raise ValueError(f"unknown index_source: {index_source!r}")

@@ -252,6 +252,71 @@ class AgentCensusTests(unittest.TestCase):
             self.assertIn("--date-from", argv)
             self.assertIn("2026-07-01", argv)
 
+    # -- TB-33 Finding 1/2: the census `--include-*` flags must track the numerator ---
+
+    def _population_scripted_runner(self) -> FakeRunner:
+        """Two agents, so the census makes 3 `--limit 1` calls: claude, codex, archive."""
+        probe = _page(
+            {"id": "s1", "agent": "claude", "project": "p"},
+            {"id": "s2", "agent": "codex", "project": "p"},
+        )
+        return FakeRunner([
+            completed(stdout=probe),            # probe pass
+            completed(stdout=_total_page(80)),  # census: claude
+            completed(stdout=_total_page(20)),  # census: codex
+            completed(stdout=_total_page(100)), # census: archive total
+            completed(stdout=probe),            # full listing
+        ])
+
+    @staticmethod
+    def _census_calls(runner: FakeRunner) -> list[list[str]]:
+        """The `--limit 1` calls only -- excludes the probe pass and full listing,
+        which both page at the run's `limit` instead."""
+        return [c for c in runner.calls if "--limit" in c and c[c.index("--limit") + 1] == "1"]
+
+    def test_default_census_carries_all_three_include_flags(self) -> None:
+        """`include_subagents=True` (the default -- no `--exclude-subagents`) must send
+        every census call the SAME three flags the full listing uses. Mutating
+        `discover_agentsview` to hardcode `_PROBE_INCLUDES` for the census regardless of
+        `include_subagents` -- i.e. re-importing the TB-30 bug into the denominator --
+        must fail this test; see the report for the mutation proof."""
+        runner = self._population_scripted_runner()
+        census, refs = discover_agentsview(
+            runner, agent="all", project=None, since=None, limit=500, include_subagents=True
+        )
+        list(refs)
+
+        census_calls = self._census_calls(runner)
+        self.assertEqual(len(census_calls), 3)
+        for argv in census_calls:
+            self.assertIn("--include-children", argv)
+            self.assertIn("--include-automated", argv)
+            self.assertIn("--include-one-shot", argv)
+        # Sanity: the census actually took (not the unavailable/error branch).
+        self.assertEqual(census.totals, {"claude": 80, "codex": 20})
+
+    def test_exclude_subagents_census_omits_include_children_only(self) -> None:
+        """`include_subagents=False` (`--exclude-subagents`) must send every census call
+        `--include-automated`/`--include-one-shot` but NOT `--include-children` -- the
+        exact set `filter_subagents` (passive.py) leaves in the numerator, since it keeps
+        only refs whose ids came back on the `_PROBE_INCLUDES` listing. Mutating
+        `discover_agentsview` to keep sending `_ALL_INCLUDES` for the census regardless
+        of `include_subagents` must fail this test; see the report for the mutation
+        proof."""
+        runner = self._population_scripted_runner()
+        census, refs = discover_agentsview(
+            runner, agent="all", project=None, since=None, limit=500, include_subagents=False
+        )
+        list(refs)
+
+        census_calls = self._census_calls(runner)
+        self.assertEqual(len(census_calls), 3)
+        for argv in census_calls:
+            self.assertNotIn("--include-children", argv)
+            self.assertIn("--include-automated", argv)
+            self.assertIn("--include-one-shot", argv)
+        self.assertEqual(census.totals, {"claude": 80, "codex": 20})
+
     def test_scoped_agent_run_reconciles_to_zero(self) -> None:
         # Under `--agent codex` the run's population IS codex. An UNSCOPED archive total
         # would compute a residual of every other agent's sessions and scream about

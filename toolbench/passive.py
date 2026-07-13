@@ -262,6 +262,7 @@ def _discover_refs(
             limit=page_limit,
             root=root,
             runner=runner,
+            include_subagents=not args.exclude_subagents,
         )
         for ref in refs_iter:
             refs.append(ref)

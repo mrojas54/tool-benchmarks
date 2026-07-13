@@ -29,6 +29,7 @@ from toolbench.passive import (
 from toolbench.sources import (
     MissingSourceExport,
     NonTranscriptExport,
+    Runner,
     SessionRef,
     SkipReason,
     SkipRecord,
@@ -384,6 +385,85 @@ class MainExitContractTests(unittest.TestCase):
         report = out.getvalue()
         self.assertIn("## Summary", report)
         self.assertIn("Malformed lines: 1", report)
+
+
+def _exclude_subagents_population_runner() -> "Runner":
+    """A realistic `agentsview` double for scenario (A) of TB-33 Finding 1.
+
+    `alpha` is 2 parent sessions, 0 children. `beta` is 1 parent, 9 children. Unlike
+    `FakeRunner`, which returns a scripted response regardless of the argv it was sent,
+    this inspects `--include-children` and `--agent` and answers as the REAL agentsview
+    would -- which is what makes it possible to fail on the pre-fix code: pre-fix, the
+    census always requested `_ALL_INCLUDES` (parents + children) no matter what
+    `--exclude-subagents` said, so `beta`'s census total came back 10, not 1, even
+    though only its 1 parent could ever be scanned under that flag.
+    """
+    totals = {
+        ("alpha", True): 2,
+        ("alpha", False): 2,
+        ("beta", True): 10,
+        ("beta", False): 1,
+        ("all", True): 12,
+        ("all", False): 3,
+    }
+    probe_page = _json_page(
+        {"id": "alpha-p1", "project": "p", "agent": "alpha"},
+        {"id": "alpha-p2", "project": "p", "agent": "alpha"},
+        {"id": "beta-p1", "project": "p", "agent": "beta"},
+    )
+    full_page = _json_page(
+        {"id": "alpha-p1", "project": "p", "agent": "alpha"},
+        {"id": "alpha-p2", "project": "p", "agent": "alpha"},
+        {"id": "beta-p1", "project": "p", "agent": "beta"},
+        *(
+            {"id": f"beta-c{i}", "project": "p", "agent": "beta"}
+            for i in range(9)
+        ),
+    )
+    raw_text = (FIXTURES / "sample.jsonl").read_text()
+
+    def runner(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        if argv[:3] == ["agentsview", "session", "export"]:
+            return completed(stdout=raw_text)
+        has_children = "--include-children" in argv
+        agent = argv[argv.index("--agent") + 1] if "--agent" in argv else "all"
+        if argv[argv.index("--limit") + 1] == "1":
+            return completed(stdout=_json_total(totals[(agent, has_children)]))
+        return completed(stdout=full_page if has_children else probe_page)
+
+    return runner
+
+
+def _json_page(*sessions: dict[str, str]) -> str:
+    return json.dumps({"sessions": list(sessions), "next_cursor": "", "total": len(sessions)})
+
+
+def _json_total(total: int) -> str:
+    return json.dumps({"sessions": [], "next_cursor": "", "total": total})
+
+
+class ExcludeSubagentsCensusPopulationTests(unittest.TestCase):
+    """The census denominator must describe the SAME population `--exclude-subagents`
+    leaves in the numerator (TB-33 Finding 1). Models failure scenario (A) from the
+    ticket: no `--limit` at all, an agent (`beta`) whose archive is mostly children.
+    """
+
+    def test_fully_scanned_population_renders_100_percent_and_no_uneven_warning(self) -> None:
+        runner = _exclude_subagents_population_runner()
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = main(["--index-source", "agentsview", "--exclude-subagents"], runner=runner)
+        self.assertEqual(code, 0)
+        report = out.getvalue()
+
+        # Both agents were scanned to 100% of the population THIS RUN measures (parents
+        # only) -- not a misleading "1 of 10 (10.0%)" for beta, whose denominator would
+        # be inflated by 9 children this run structurally cannot ever reach.
+        self.assertIn("alpha | 2 of 2 (100.0%)", report)
+        self.assertIn("beta | 1 of 1 (100.0%)", report)
+        self.assertNotIn("Sampling is uneven", report)
+        self.assertIn("Subagents included: no", report)
+
 
 class NonUtf8SessionTests(unittest.TestCase):
     """One corrupt session must not abort the corpus scan (TB-10)."""
