@@ -508,6 +508,43 @@ class LocatedTests(unittest.TestCase):
     def test_a_session_that_never_locates_returns_none(self) -> None:
         self.assertIsNone(find_located("tests/fixtures/complex_session_agent_escape.jsonl"))
 
+    def test_an_overlap_everything_claim_is_rejected_not_scored_correct(self) -> None:
+        # THE defect this guards against: overlap alone is not a guard, because
+        # [0, 99999] overlaps every truth there is. A sloppy (or gaming) agent
+        # claiming a vacuous span must not be scored as a correct localization --
+        # that silently inflates the benchmark's one load-bearing number.
+        truth = Truth("web/src/lib/schedule.ts", "formatSlot", (12, 20))
+        obj: dict[str, object] = {"file": truth.file, "symbol": truth.symbol, "lines": [0, 99999]}
+        self.assertFalse(located_correct(obj, truth))
+
+    def test_a_claim_spanning_most_of_a_real_file_is_rejected(self) -> None:
+        # wids-D2's truth is a single line (32, 32). [1, 200] -- most of a
+        # 200-line file -- overlaps it trivially but describes nothing: a
+        # file-sized guess, not a find.
+        truth = Truth("web/lib/paperpal/hint.ts", "fetchHint", (32, 32))
+        obj: dict[str, object] = {"file": truth.file, "symbol": truth.symbol, "lines": [1, 200]}
+        self.assertFalse(located_correct(obj, truth))
+
+    def test_a_slightly_offset_claim_still_passes(self) -> None:
+        # Guard against over-tightening: a range a few lines off from truth (not
+        # exact, not huge) is exactly the "reported the whole function body"
+        # case located_correct exists to accept.
+        truth = Truth("web/src/lib/schedule.ts", "formatSlot", (12, 20))
+        obj: dict[str, object] = {"file": truth.file, "symbol": truth.symbol, "lines": [10, 22]}
+        self.assertTrue(located_correct(obj, truth))
+
+    def test_the_widest_real_symbols_own_span_still_passes(self) -> None:
+        # maltese-D5's commitOneHandle is 24 lines -- the widest real symbol
+        # shipped in probes/complex/*/truth.json. Naming that symbol's own,
+        # exact span must still score correct: a bound tighter than a real
+        # symbol would score a CORRECT localization as wrong, which is the
+        # opposite failure from the one this guard fixes, and worse.
+        truth = Truth(
+            "falcon-detective/src/handlers/commit.ts", "commitOneHandle", (29, 52)
+        )
+        obj: dict[str, object] = {"file": truth.file, "symbol": truth.symbol, "lines": [29, 52]}
+        self.assertTrue(located_correct(obj, truth))
+
 
 class TrialScoringTests(unittest.TestCase):
     def test_n1_counts_only_calls_before_the_located_line(self) -> None:

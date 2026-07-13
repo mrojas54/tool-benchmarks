@@ -320,11 +320,37 @@ def find_located(path: str | Path) -> tuple[str, dict[str, object]] | None:
     return None
 
 
+# The most extra width a claimed `lines` range may carry BEYOND the truth
+# range's own span and still score as a correct localization. Overlap alone is
+# not a guard: [0, 99999] overlaps every truth there is, so an overlap-only
+# check cannot fail, and a check that cannot fail is not a check -- the same
+# defect class the patch<->truth guard in tests/test_complex.py (MAX_TRUTH_SLACK)
+# already exists to catch, one layer over (there: truth vs. the patch it
+# describes; here: a claim vs. the truth it is scored against).
+#
+# Why 30, reusing that guard's constant rather than picking a fresh number for
+# the same idea: the widest real symbol shipped across the 8 fixtures in
+# probes/complex/*/truth.json is maltese-D5's `commitOneHandle` at 24 lines
+# (29-52). A bound under 24 would score that symbol's own, exact, correct span
+# as WRONG -- the opposite failure from the one being fixed, and worse, since it
+# would fail a genuinely correct find. 30 clears 24 with headroom for a somewhat
+# larger function, while a vacuous claim like [0, 99999] (span ~100000) or a
+# whole-file guess like [1, 200] against a 1-line truth misses by two to four
+# orders of magnitude -- there is no legitimate localization in the gap between
+# 30 and those.
+MAX_LOCATED_SLACK = 30
+
+
 def located_correct(obj: dict[str, object], truth: Truth) -> bool:
-    """File and symbol must match exactly; line ranges need only overlap.
+    """File and symbol must match exactly; lines must overlap AND stay tight.
 
     Exact line equality would be brittle: an agent that reports a whole function
-    body while the patch touched one line inside it has still localized correctly.
+    body while the patch touched one line inside it has still localized
+    correctly. But overlap by itself is vacuous -- `[0, 99999]` overlaps any
+    truth, so a sloppy (or gaming) agent claiming a huge span would be scored as
+    a correct find, silently inflating solve rate, the one number this benchmark
+    exists to produce. MAX_LOCATED_SLACK bounds how much wider than the truth's
+    own span a claim may be while still counting as a real localization.
     """
     if obj.get("file") != truth.file or obj.get("symbol") != truth.symbol:
         return False
@@ -332,9 +358,13 @@ def located_correct(obj: dict[str, object], truth: Truth) -> bool:
     if not isinstance(lines, list) or len(lines) != 2:
         return False
     low, high = lines
-    if not isinstance(low, int) or not isinstance(high, int):
+    if not isinstance(low, int) or not isinstance(high, int) or high < low:
         return False
-    return not (high < truth.lines[0] or low > truth.lines[1])
+    if high < truth.lines[0] or low > truth.lines[1]:
+        return False
+    truth_span = truth.lines[1] - truth.lines[0] + 1
+    claimed_span = high - low + 1
+    return claimed_span - truth_span <= MAX_LOCATED_SLACK
 
 
 @dataclass(frozen=True)
