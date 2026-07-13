@@ -10,8 +10,10 @@
 # `provision` exists because a clone is not a runnable corpus. rich's oracle is
 # pytest against an importable `rich`, and a bare clone has neither -- so D1 would
 # have run only on the one machine that happened to have a venv lying around, and
-# nowhere else. The venv is gitignored: it costs the repo nothing and costs a
-# clean checkout one `uv` call.
+# nowhere else. The venv is gitignored: it costs the repo nothing, and costs a
+# clean checkout one `python3 -m venv` plus two `pip install`s (rich's manifest
+# `provision` steps below) -- stdlib venv + pip, NOT `uv`, so provisioning the
+# corpus needs nothing installed beyond a python3.
 set -euo pipefail
 cd "$(dirname "$0")"
 

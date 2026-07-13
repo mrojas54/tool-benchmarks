@@ -269,6 +269,60 @@ def _patch_facts(patch_text: str) -> tuple[str, set[int]]:
     return target, added
 
 
+# The most lines of truth range allowed BEYOND the region the patch actually
+# changes. Containment alone is not a guard: a truth of [1, 5000] contains every
+# patch ever written, so a test that only checks containment cannot fail, and a
+# guard that cannot fail is worthless. (Proved: reverting rich-D1's truth to the
+# stale [756,769] did not trip the containment check.)
+#
+# Why 30. `truth.lines` is not the changed line -- it is meant to bound the
+# ENCLOSING SYMBOL, so that `located_correct`'s overlap match still scores an
+# agent that reports the function rather than the exact line. So the bound has to
+# admit a symbol and reject a file. The widest symbol shipped is maltese-D5's
+# `commitOneHandle`: a 24-line function around a 1-line change, i.e. 23 lines of
+# slack. 30 clears that with room for a somewhat larger function, while a
+# file-sized range (progress.py alone is ~1700 lines) misses by two orders of
+# magnitude. There is no gap in between that a legitimate truth would land in.
+#
+# This is also the only tightness check available here: the suite is hermetic (it
+# never reads corpus/), so it cannot bound a truth against the real file's length.
+MAX_TRUTH_SLACK = 30
+
+
+def _truth_violations(added: set[int], truth_lines: tuple[int, int]) -> list[str]:
+    """Every way a truth range can fail to describe the patch it ships with.
+
+    Two independent failures, because each catches what the other cannot:
+      - containment: the truth must cover every line the patch changed (a truth
+        pointing somewhere else describes a defect that is not there);
+      - tightness:   the truth must not be much wider than that changed region
+        (a truth covering everything localizes nothing, and would score a
+        blind guess as a correct find).
+    """
+    if not added:
+        return ["defect.patch adds no line -- it seeds nothing"]
+
+    start, end = truth_lines
+    problems = [
+        f"defect.patch changes post-patch line {lineno}, outside truth.lines "
+        f"{truth_lines} -- the ground truth does not describe the defect it ships"
+        for lineno in sorted(added)
+        if not start <= lineno <= end
+    ]
+
+    changed_span = max(added) - min(added) + 1
+    truth_span = end - start + 1
+    slack = truth_span - changed_span
+    if slack > MAX_TRUTH_SLACK:
+        problems.append(
+            f"truth.lines {truth_lines} spans {truth_span} lines around a "
+            f"{changed_span}-line change -- {slack} lines of slack, over the "
+            f"{MAX_TRUTH_SLACK} allowed. A truth this wide contains the defect "
+            f"only in the sense that it contains everything; it localizes nothing."
+        )
+    return problems
+
+
 class PatchTruthTests(unittest.TestCase):
     """Every truth.json must agree with the patch it claims to describe.
 
@@ -296,7 +350,7 @@ class PatchTruthTests(unittest.TestCase):
         self.assertEqual(target, "x.ts")
         self.assertEqual(added, {11, 12})
 
-    def test_every_patch_changes_a_line_inside_its_own_truth_range(self) -> None:
+    def test_every_truth_both_contains_its_patch_and_stays_tight_around_it(self) -> None:
         for defect in DEFECTS:
             fixture = next(
                 d
@@ -310,15 +364,56 @@ class PatchTruthTests(unittest.TestCase):
 
             self.assertEqual(target, defect.truth.file, f"{label}: patch target != truth.file")
             self.assertTrue(added, f"{label}: defect.patch adds no line -- it seeds nothing")
+            self.assertEqual(
+                _truth_violations(added, defect.truth.lines), [], f"{label}"
+            )
 
-            start, end = defect.truth.lines
-            for lineno in sorted(added):
-                self.assertTrue(
-                    start <= lineno <= end,
-                    f"{label}: defect.patch changes post-patch line {lineno}, outside "
-                    f"truth.lines {defect.truth.lines} -- the ground truth does not "
-                    f"describe the defect it ships.",
-                )
+    def test_an_absurdly_wide_truth_is_rejected_even_though_it_contains_the_patch(
+        self,
+    ) -> None:
+        # THE point of the tightness rule. [1, 5000] passes containment trivially --
+        # it contains every patch there is -- and the containment-only guard this
+        # replaces waved it through. If this test ever stops failing the wide truth,
+        # the guard has gone vacuous again.
+        wide = _truth_violations({760, 761, 762}, (1, 5000))
+        self.assertTrue(wide, "a [1, 5000] truth must be rejected, and was not")
+        self.assertIn("slack", " ".join(wide))
+        # ...and the same patch under its real, symbol-sized truth passes.
+        self.assertEqual(_truth_violations({760, 761, 762}, (756, 771)), [])
+
+    def test_a_truth_pointing_away_from_the_patch_is_rejected(self) -> None:
+        off = _truth_violations({112}, (200, 210))
+        self.assertTrue(off)
+        self.assertIn("outside truth.lines", " ".join(off))
+
+    def test_the_widest_shipped_truth_sits_inside_the_slack_bound(self) -> None:
+        # maltese-D5 (`commitOneHandle`, 24 lines around a 1-line change, 23 slack)
+        # is what MAX_TRUTH_SLACK=30 is calibrated against. If a future fixture
+        # needs more, that is a deliberate decision to make -- not a number to
+        # quietly raise until the suite goes green.
+        worst = max(
+            (
+                (defect.truth.lines[1] - defect.truth.lines[0] + 1)
+                - (max(added) - min(added) + 1)
+                for defect in DEFECTS
+                for added in [
+                    _patch_facts(
+                        next(
+                            d
+                            for d in DEFAULT_FIXTURE_ROOT.iterdir()
+                            if d.is_dir()
+                            and d.name.startswith(f"{defect.repo}-{defect.id}-")
+                        )
+                        .joinpath("defect.patch")
+                        .read_text(encoding="utf-8")
+                    )[1]
+                ]
+            )
+        )
+        self.assertLessEqual(worst, MAX_TRUTH_SLACK)
+        # The bound is not slack-plus-epsilon fitted to the fixtures, but it is
+        # also not so wide it admits a file: assert it stays in symbol territory.
+        self.assertLess(MAX_TRUTH_SLACK, 100)
 
     def test_every_fixture_ships_a_prompt(self) -> None:
         for fixture in sorted(DEFAULT_FIXTURE_ROOT.iterdir()):
