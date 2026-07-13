@@ -18,10 +18,41 @@
   "done_at": null,
   "evidence_refs": [],
   "id": "task_01KXE75Q3YPSWNJ3GN82QNV7X2",
-  "last_event_id": "ev_01KXE75Q4450G3AMPZ0YK8TMN5",
+  "last_event_id": "ev_01KXE76P65TFD5ZM36MGGA7JGF",
   "last_status_changed_at": "2026-07-13T17:07:39Z",
   "priority": "high",
-  "relationships_out": [],
+  "relationships_out": [
+    {
+      "created_at": "2026-07-13T17:08:10Z",
+      "created_by": {
+        "agent_type": "advance",
+        "base_name": "Vulcan",
+        "framework": "claude-code",
+        "model": "claude-opus-4-8",
+        "name": "Vulcan-1",
+        "serial": 1,
+        "session": "sess_01KXE6GYAJ6320TK4NJ29NKA4P"
+      },
+      "note": "Same failure mode (undisclosed non-uniform per-agent sampling), different cause: TB-30 was agentsview's hidden default exclusions (fixed in PR #53); TB-33 is --limit recency truncation, still undisclosed.",
+      "target_task_id": "task_01KXE3W4J4J2JS635D8RB2RX2W",
+      "type": "related_to"
+    },
+    {
+      "created_at": "2026-07-13T17:08:11Z",
+      "created_by": {
+        "agent_type": "advance",
+        "base_name": "Vulcan",
+        "framework": "claude-code",
+        "model": "claude-opus-4-8",
+        "name": "Vulcan-1",
+        "serial": 1,
+        "session": "sess_01KXE6GYAJ6320TK4NJ29NKA4P"
+      },
+      "note": "Surfaced while fixing TB-30.",
+      "target_task_id": "task_01KXE3W4J4J2JS635D8RB2RX2W",
+      "type": "spawned_by"
+    }
+  ],
   "reopened_count": 0,
   "schema_version": 1,
   "short_id": "TB-33",
@@ -33,6 +64,6 @@
   ],
   "title": "Agent Breakdown compares agents across undisclosed sampling fractions, and silently omits agents the window never reached",
   "type": "bug",
-  "updated_at": "2026-07-13T17:07:39Z",
+  "updated_at": "2026-07-13T17:08:11Z",
   "urgency": "normal"
 }
