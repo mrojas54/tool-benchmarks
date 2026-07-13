@@ -443,23 +443,95 @@ def load_calls(path: str | Path) -> list[ToolCall]:
             replayed,
             agent="claude-code",
             source="raw",
+            # keep_raw_input so arm_violations can read each Bash call's command
+            # string -- a gate escape is a fact about the command, not the tool name.
+            keep_raw_input=True,
             project=session_path.parent.name,
         )
     return result.calls
 
 
+# Shell control operators that reach a SECOND command past the gated prefix:
+# `;` `&&` `||` `|` `&`, command substitution (backtick, `$(`), and redirections.
+# A gated arm's only permitted Bash is its scoped oracle invocation; any of these
+# turns `npx vitest run` into `npx vitest run; rg ...`, which is how the serena arm
+# reaches search it was never granted. Detecting the operator is enough -- I5 makes
+# the escape visible, it does not have to make it impossible.
+_SHELL_CHAIN_RE = re.compile(r"[;&|`$()<>\n]")
+
+
+def _bash_command(call: ToolCall) -> str | None:
+    """The `command` string of a Bash ToolCall, from its kept raw input.
+
+    `None` when the input cannot be read as a command -- itself suspicious for a
+    gated arm, so the caller treats it as an escape rather than waving it through.
+    """
+    if call.raw_input is None:
+        return None
+    try:
+        payload = json.loads(call.raw_input)
+    except json.JSONDecodeError:
+        return None
+    command = payload.get("command") if isinstance(payload, dict) else None
+    return command if isinstance(command, str) else None
+
+
+def _gate_prefixes(arm: ArmSpec) -> tuple[str, ...]:
+    """The command prefixes the arm's `Bash(<prefix>:*)` rules permit."""
+    return tuple(
+        rule[len("Bash(") : -len(":*)")]
+        for rule in arm.allowed_tools
+        if rule.startswith("Bash(") and rule.endswith(":*)")
+    )
+
+
 def arm_violations(calls: list[ToolCall], arm: ArmSpec) -> tuple[str, ...]:
-    """Tool names the arm used but was not granted -- plus any banned tool, always.
+    """Tool names the arm used but was not granted -- plus any banned tool, always,
+    plus any gated Bash call whose command escaped the gate.
 
     The restriction is verified from the transcript, never trusted from the
     `--allowedTools` flag. A flag that silently fails to restrict is the TB-29
     `--exclude-subagents` no-op: the suite ratified it while it did nothing.
+
+    For an arm without a full shell, granting `Bash(<oracle>:*)` collapses to the
+    tool name "Bash", so a call that chains `rg` after the oracle is invisible to a
+    name-only audit -- the very escape the gate exists to prevent. So each such
+    Bash call's command string is inspected here: permitted iff it starts with a
+    gate prefix and reaches no second command. The full-shell arms (bare "Bash")
+    are exempt: chaining is not an escape when the shell is the point.
     """
     granted = {name for name in arm.allowed_tools if not name.startswith("Bash(")}
-    if any(name.startswith("Bash(") for name in arm.allowed_tools):
+    full_shell = "Bash" in granted
+    gate_prefixes = _gate_prefixes(arm)
+    if gate_prefixes:
         granted.add("Bash")
     used = {call.name for call in calls}
-    return tuple(sorted((used - granted) | (used & set(BANNED_TOOLS))))
+    violations = (used - granted) | (used & set(BANNED_TOOLS))
+
+    if not full_shell and gate_prefixes:
+        for call in calls:
+            if call.name != "Bash":
+                continue
+            command = _bash_command(call)
+            if command is None:
+                violations.add("Bash:<unreadable command>")
+            elif _command_escapes_gate(command, gate_prefixes):
+                violations.add(f"Bash:{command}")
+    return tuple(sorted(violations))
+
+
+def _command_escapes_gate(command: str, gate_prefixes: tuple[str, ...]) -> bool:
+    """True iff `command` is not one of the arm's permitted oracle invocations.
+
+    Permitted means: it starts with a granted prefix AND carries no shell operator
+    that would reach a second command. Both halves are load-bearing -- a command
+    that starts with the prefix but chains (`npx vitest run; rg`) escapes just as
+    surely as one that never matched the prefix at all.
+    """
+    stripped = command.strip()
+    if not any(stripped.startswith(prefix) for prefix in gate_prefixes):
+        return True
+    return _SHELL_CHAIN_RE.search(stripped) is not None
 
 
 def score_trial(

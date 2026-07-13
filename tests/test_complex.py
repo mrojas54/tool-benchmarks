@@ -635,6 +635,35 @@ class TrialScoringTests(unittest.TestCase):
         calls = load_calls("tests/fixtures/complex_session_agent_escape.jsonl")
         self.assertIn("Task", arm_violations(calls, _arm("control")))
 
+    def test_a_bash_call_that_chains_past_the_gate_is_a_violation(self) -> None:
+        # The whole point of I5: a serena-arm agent that reaches rg by chaining
+        # inside its test-command gate (`npx vitest run; rg formatSlot`) escaped
+        # the restriction. Collapsing every Bash rule to the tool name "Bash" made
+        # that invisible to the audit built to catch it -- inspect the command.
+        calls = load_calls("tests/fixtures/complex_session_gate_escape.jsonl")
+        violations = arm_violations(calls, _arm("serena"))
+        self.assertTrue(
+            any(v.startswith("Bash:") and "rg formatSlot" in v for v in violations),
+            violations,
+        )
+
+    def test_a_clean_gated_bash_call_is_not_flagged(self) -> None:
+        # The first call in the fixture is exactly the permitted oracle invocation
+        # (`npx vitest run <path>`). It must NOT be reported, or the audit cries
+        # wolf on every legitimate fix checkpoint.
+        calls = load_calls("tests/fixtures/complex_session_gate_escape.jsonl")
+        violations = arm_violations(calls, _arm("serena"))
+        self.assertFalse(
+            any(v.startswith("Bash:") and "hint.test.ts" in v for v in violations),
+            violations,
+        )
+
+    def test_the_full_bash_arm_is_not_flagged_for_chaining(self) -> None:
+        # The bash arm is granted a full shell on purpose; chaining is not an
+        # escape there, so command inspection must not fire.
+        calls = load_calls("tests/fixtures/complex_session_gate_escape.jsonl")
+        self.assertEqual(arm_violations(calls, _arm("bash")), ())
+
 
 def _trial(
     arm: str,
