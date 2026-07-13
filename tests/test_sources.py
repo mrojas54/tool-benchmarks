@@ -12,6 +12,7 @@ import pytest
 from tests.fakes import FakeRunner, completed
 from toolbench.passive import filter_subagents
 from toolbench.sources import (
+    AgentCensus,
     AgentsViewExclusionWarning,
     AgentsViewLoader,
     MissingSourceExport,
@@ -22,6 +23,7 @@ from toolbench.sources import (
     SkipReason,
     SkipRecord,
     _run_agentsview,
+    discover_agentsview,
     iter_agentsview_sessions,
     iter_session_files,
     iter_sessions,
@@ -39,6 +41,11 @@ _EMIT_NON_UTF8 = 'import sys; sys.stdout.buffer.write(b\'{"note": "caf\\xa0"}\\n
 
 def _page(*sessions: dict[str, str], cursor: str = "") -> str:
     return json.dumps({"sessions": list(sessions), "next_cursor": cursor, "total": len(sessions)})
+
+
+def _total_page(total: int) -> str:
+    """A `--limit 1` census response: we read `total`, never the rows."""
+    return json.dumps({"sessions": [], "next_cursor": "", "total": total})
 
 
 def _av(*pages: str, stderr: str = "") -> FakeRunner:
@@ -180,6 +187,115 @@ class IterAgentsviewSessionsTests(unittest.TestCase):
         with self.assertWarns(AgentsViewExclusionWarning) as caught:
             list(iter_agentsview_sessions(runner=runner))
         self.assertIn("7497", str(caught.warning))
+
+
+class AgentCensusTests(unittest.TestCase):
+    """Per-agent denominators, gathered under the run's own filters (TB-33)."""
+
+    def test_totals_reconcile_to_zero_residual(self) -> None:
+        # probe pass: two agents present as non-children.
+        probe = _page(
+            {"id": "s1", "agent": "claude", "project": "p"},
+            {"id": "s2", "agent": "codex", "project": "p"},
+        )
+        runner = FakeRunner([
+            completed(stdout=probe),            # probe pass
+            completed(stdout=_total_page(80)),  # census: --agent claude
+            completed(stdout=_total_page(20)),  # census: --agent codex
+            completed(stdout=_total_page(100)), # census: archive total (agent=all)
+            completed(stdout=probe),            # full listing
+        ])
+        census, refs = discover_agentsview(runner, agent="all", project=None, since=None, limit=500)
+        list(refs)
+
+        self.assertIsInstance(census, AgentCensus)
+        self.assertEqual(census.totals, {"claude": 80, "codex": 20})
+        self.assertEqual(census.archive_total, 100)
+        self.assertEqual(census.residual, 0)
+        self.assertIsNone(census.unavailable_reason)
+
+    def test_residual_names_an_agent_the_probe_never_saw(self) -> None:
+        # The probe listing excludes children, so an agent whose sessions are ALL
+        # children is invisible to it. Reconciliation is the only thing that catches it.
+        probe = _page({"id": "s1", "agent": "claude", "project": "p"})
+        runner = FakeRunner([
+            completed(stdout=probe),
+            completed(stdout=_total_page(80)),   # claude
+            completed(stdout=_total_page(100)),  # archive
+            completed(stdout=probe),
+        ])
+        census, refs = discover_agentsview(runner, agent="all", project=None, since=None, limit=500)
+        list(refs)
+
+        self.assertEqual(census.residual, 20)
+
+    def test_census_inherits_project_and_since_filters(self) -> None:
+        probe = _page({"id": "s1", "agent": "claude", "project": "p"})
+        runner = FakeRunner([
+            completed(stdout=probe),
+            completed(stdout=_total_page(5)),
+            completed(stdout=_total_page(5)),
+            completed(stdout=probe),
+        ])
+        census, refs = discover_agentsview(
+            runner, agent="all", project="tool-benchmarks", since="2026-07-01", limit=500
+        )
+        list(refs)
+
+        # A denominator gathered under different filters describes a different
+        # population than the numerator. Every census call must carry both filters.
+        census_calls = [c for c in runner.calls if "--limit" in c and c[c.index("--limit") + 1] == "1"]
+        self.assertEqual(len(census_calls), 2)
+        for argv in census_calls:
+            self.assertIn("--project", argv)
+            self.assertIn("tool-benchmarks", argv)
+            self.assertIn("--date-from", argv)
+            self.assertIn("2026-07-01", argv)
+
+    def test_scoped_agent_run_reconciles_to_zero(self) -> None:
+        # Under `--agent codex` the run's population IS codex. An UNSCOPED archive total
+        # would compute a residual of every other agent's sessions and scream about
+        # thousands of "unenumerated" sessions that were never in scope.
+        probe = _page({"id": "s1", "agent": "codex", "project": "p"})
+        runner = FakeRunner([
+            completed(stdout=probe),
+            completed(stdout=_total_page(183)),  # census: --agent codex
+            completed(stdout=_total_page(183)),  # archive total, ALSO scoped to codex
+            completed(stdout=probe),
+        ])
+        census, refs = discover_agentsview(runner, agent="codex", project=None, since=None, limit=500)
+        list(refs)
+
+        self.assertEqual(census.residual, 0)
+        self.assertEqual(census.archive_total, 183)
+
+    def test_census_failure_is_disclosed_not_dropped(self) -> None:
+        # A census we cannot take is rendered as "unknown" WITH a reason. Discovery is
+        # unaffected: the refs are already ours.
+        probe = _page({"id": "s1", "agent": "claude", "project": "p"})
+        runner = FakeRunner([
+            completed(stdout=probe),
+            completed(stdout="", stderr="daemon down", returncode=1),  # census blows up
+            completed(stdout=probe),
+        ])
+        census, refs = discover_agentsview(runner, agent="all", project=None, since=None, limit=500)
+
+        self.assertIsNotNone(census.unavailable_reason)
+        assert census.unavailable_reason is not None
+        self.assertIn("daemon down", census.unavailable_reason)
+        self.assertEqual(census.totals, {})
+        self.assertEqual([r.session_id for r in refs], ["s1"])
+
+    def test_iter_agentsview_sessions_takes_no_census(self) -> None:
+        # The back-compat wrapper stays census-free: callers that only want refs must
+        # not pay for denominators they will not render.
+        probe = _page({"id": "s1", "agent": "claude", "project": "p"})
+        runner = FakeRunner([completed(stdout=probe), completed(stdout=probe)])
+
+        refs = list(iter_agentsview_sessions(runner=runner))
+
+        self.assertEqual([r.session_id for r in refs], ["s1"])
+        self.assertEqual(len(runner.calls), 2)  # probe + full listing, nothing else
 
 
 class IterSessionFilesTests(unittest.TestCase):

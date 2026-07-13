@@ -101,6 +101,45 @@ class SkipRecord:
     detail: str
 
 
+@dataclass(frozen=True)
+class AgentCensus:
+    """Per-agent archive population, measured at discovery (TB-33).
+
+    Discovery-grain: the reducer counts CALLS, and a denominator is not a call, so this
+    never enters `reducer.py`.
+
+    `totals` and `archive_total` are gathered under THIS RUN'S filters. A denominator
+    gathered under different filters describes a different population than the numerator,
+    and the fraction becomes a lie with a decimal point on it -- the same invariant the
+    TB-31 parent probe carries, which is why every census call is built by `_list_argv`
+    rather than hand-assembled.
+
+    `unavailable_reason` types the ABSENCE of a denominator (a failed census call, or a
+    frozen-corpus replay that recorded none) rather than signalling it with an empty dict.
+    The report can then say WHY it cannot disclose a fraction instead of quietly dropping
+    the column -- which is the exact sin this ticket exists to close. Same habit as
+    `SkipReason` and `UsageProvenance`: type the absence, never imply it.
+    """
+
+    totals: dict[str, int]
+    archive_total: int
+    unavailable_reason: str | None = None
+
+    @property
+    def residual(self) -> int:
+        """Archive sessions belonging to no agent we enumerated.
+
+        The probe listing excludes children, so the agent universe it yields is "agents
+        with >= 1 non-child session"; an agent whose sessions are ALL children is
+        invisible to it. Hardcoding a known-agent list to close that hole would rebuild
+        the TB-30 failure mode one layer up -- a NEW agent would then silently vanish. So
+        we reconcile and name what is left over instead (TB-21/TB-28: report the gap,
+        never a silent zero). Zero on the live archive today; the net exists for the day
+        it is not.
+        """
+        return self.archive_total - sum(self.totals.values())
+
+
 def _looks_binary(sample: str) -> bool:
     return "\x00" in sample
 
@@ -169,6 +208,33 @@ def iter_session_files(
         yield path
 
 
+def _list_argv(
+    *,
+    agent: str,
+    project: str | None,
+    since: str | None,
+    limit: int,
+    includes: tuple[str, ...],
+    cursor: str | None = None,
+) -> list[str]:
+    """The one place a `session list` argv is built.
+
+    Sole builder BY DESIGN (TB-33): the census denominators and the discovery numerators
+    must carry identical filters or they describe different populations. Routing both
+    through here makes that invariant structural instead of a comment two functions apart.
+    """
+    argv = ["agentsview", "session", "list", "--json", "--limit", str(limit), *includes]
+    if agent != "all":
+        argv += ["--agent", agent]
+    if project is not None:
+        argv += ["--project", project]
+    if since is not None:
+        argv += ["--date-from", since]
+    if cursor:
+        argv += ["--cursor", cursor]
+    return argv
+
+
 def _agentsview_pages(
     runner: Runner,
     *,
@@ -181,16 +247,16 @@ def _agentsview_pages(
     """Yield `(payload, stderr)` for each cursor page of one `session list` pass."""
     cursor: str | None = None
     while True:
-        argv = ["agentsview", "session", "list", "--json", "--limit", str(limit), *includes]
-        if agent != "all":
-            argv += ["--agent", agent]
-        if project is not None:
-            argv += ["--project", project]
-        if since is not None:
-            argv += ["--date-from", since]
-        if cursor:
-            argv += ["--cursor", cursor]
-        result = runner(argv)
+        result = runner(
+            _list_argv(
+                agent=agent,
+                project=project,
+                since=since,
+                limit=limit,
+                includes=includes,
+                cursor=cursor,
+            )
+        )
         if result.returncode != 0:
             raise RuntimeError(
                 f"agentsview session list failed ({result.returncode}): {result.stderr.strip()}"
@@ -202,47 +268,80 @@ def _agentsview_pages(
             break
 
 
-def iter_agentsview_sessions(
-    agent: str = "all",
-    project: str | None = None,
-    since: str | None = None,
-    limit: int = 500,
-    runner: Runner = _run_agentsview,
-) -> Iterator[SessionRef]:
-    """Page `agentsview session list --json` with cursor pagination (S8).
+def _probe_pass(
+    runner: Runner,
+    *,
+    agent: str,
+    project: str | None,
+    since: str | None,
+    limit: int,
+) -> tuple[set[str], set[str]]:
+    """One drain of the child-excluded listing -> `(parent_ids, agents_seen)`.
 
-    Runs the listing TWICE, because AgentsView is the only thing that can answer
-    either of the questions this function has to answer.
-
-    WHAT WE ARE ALLOWED TO SEE (TB-30). AgentsView excludes one-shot, automated, and
-    child sessions BY DEFAULT. Omitting the three `--include-*` flags cost 70% of the
-    live archive (3,536 of 11,955 sessions discovered) -- and, fatally for a benchmark
-    whose whole purpose is comparing agents, it cost each agent a DIFFERENT fraction:
-    hermes was sampled at 10% of its sessions (it runs mostly one-shot cron work) and
-    cursor at 75%. Every cross-agent number was computed over incomparable populations,
-    and nothing said so. The loss was upstream of discovery, so the report's
-    discovered/scanned/skipped tally balanced perfectly while it happened.
-
-    WHICH OF THEM ARE SUBAGENTS (TB-31). The session-list row exposes no parent/child
-    field, and every field-derived predicate is wrong: `source_session_id != id` also
-    fires on resumed and compacted sessions (1,631 false positives on the live archive),
-    and the `agent-` id token misses codex subagents, which carry neither marker. So we
-    do not guess. The parent probe repeats the listing with `--include-children`
-    withheld; anything in the full listing but not in the probe is a child BY
-    AGENTSVIEW'S OWN DEFINITION. Exact, and it survives a change to the id scheme.
-
-    Cost: one extra metadata-only pass, ~5s for the entire 11.9k-session archive and
-    proportionally less for any `--agent`/`--project`/`--since`-scoped run, since the
-    probe inherits the same filters. Both passes MUST carry identical filters or the
-    difference is taken across two populations and mislabels every ref.
+    This pass ALREADY ran -- TB-31 needs `parent_ids` to classify children -- and it threw
+    the agent names on the floor. Returning them is what makes the TB-33 census cost zero
+    extra pagination.
     """
     parent_ids: set[str] = set()
+    agents_seen: set[str] = set()
     for payload, _ in _agentsview_pages(
         runner, agent=agent, project=project, since=since, limit=limit, includes=_PROBE_INCLUDES
     ):
         for entry in payload.get("sessions", []):
             parent_ids.add(entry["id"])
+            agents_seen.add(entry["agent"])
+    return parent_ids, agents_seen
 
+
+def _list_total(
+    runner: Runner, *, agent: str, project: str | None, since: str | None
+) -> int:
+    """The `total` for one scoped listing. `--limit 1` because we want the COUNT, not rows."""
+    result = runner(
+        _list_argv(agent=agent, project=project, since=since, limit=1, includes=_ALL_INCLUDES)
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"agentsview session list failed ({result.returncode}): {result.stderr.strip()}"
+        )
+    total = json.loads(result.stdout).get("total")
+    if not isinstance(total, int):
+        raise RuntimeError(f"agentsview session list returned no usable `total`: {total!r}")
+    return total
+
+
+def _agent_census(
+    runner: Runner,
+    agents_seen: set[str],
+    *,
+    agent: str,
+    project: str | None,
+    since: str | None,
+) -> AgentCensus:
+    """One scoped `--limit 1` per agent, plus the run-scoped archive total (TB-33).
+
+    `archive_total` inherits the run's `--agent`, and that is load-bearing: under
+    `--agent codex` the run's population IS codex, so an UNSCOPED archive total would
+    compute a residual of every other agent's sessions and scream about thousands of
+    "unenumerated" sessions that were never in scope.
+    """
+    totals = {
+        a: _list_total(runner, agent=a, project=project, since=since) for a in sorted(agents_seen)
+    }
+    archive_total = _list_total(runner, agent=agent, project=project, since=since)
+    return AgentCensus(totals=totals, archive_total=archive_total)
+
+
+def _yield_refs(
+    runner: Runner,
+    parent_ids: set[str],
+    *,
+    agent: str,
+    project: str | None,
+    since: str | None,
+    limit: int,
+) -> Iterator[SessionRef]:
+    """The full listing, stamped with TB-31's child classification."""
     warned = False
     for payload, stderr in _agentsview_pages(
         runner, agent=agent, project=project, since=since, limit=limit, includes=_ALL_INCLUDES
@@ -250,8 +349,8 @@ def iter_agentsview_sessions(
         if not warned and (excluded := _EXCLUSION_BANNER.search(stderr)):
             # We opted into every exclusion AgentsView documents, so a banner here means
             # it dropped sessions we did not ask it to drop -- a new default, silently
-            # shrinking the corpus. Discarding this banner is precisely how TB-30 hid
-            # for as long as it did, so it never goes unsaid again.
+            # shrinking the corpus. Discarding this banner is precisely how TB-30 hid for
+            # as long as it did, so it never goes unsaid again.
             warned = True
             warnings.warn(
                 f"agentsview excluded {excluded.group(1)} sessions from the corpus despite "
@@ -269,6 +368,84 @@ def iter_agentsview_sessions(
                 path=None,
                 is_subagent=entry["id"] not in parent_ids,
             )
+
+
+def discover_agentsview(
+    runner: Runner,
+    *,
+    agent: str = "all",
+    project: str | None = None,
+    since: str | None = None,
+    limit: int = 500,
+) -> tuple[AgentCensus, Iterator[SessionRef]]:
+    """Census + refs (TB-30, TB-31, TB-33).
+
+    Three questions, and AgentsView is the only thing that can answer any of them.
+
+    WHAT WE ARE ALLOWED TO SEE (TB-30). AgentsView excludes one-shot, automated, and child
+    sessions BY DEFAULT. Omitting the three `--include-*` flags cost 70% of the live
+    archive, and -- fatally for a benchmark whose whole purpose is comparing agents -- it
+    cost each agent a DIFFERENT fraction. Every cross-agent number was computed over
+    incomparable populations, and nothing said so.
+
+    WHICH OF THEM ARE SUBAGENTS (TB-31). The session-list row exposes no parent/child
+    field, and every field-derived predicate is wrong. So we do not guess: the parent probe
+    repeats the listing with `--include-children` withheld, and anything in the full listing
+    but not in the probe is a child BY AGENTSVIEW'S OWN DEFINITION.
+
+    HOW MUCH OF EACH AGENT WE ACTUALLY LOOKED AT (TB-33). `--limit` truncates the full
+    listing in RECENCY order across the whole archive, so each agent lands at a wildly
+    different fraction of its own history -- and an agent whose work is all older than the
+    window disappears from the report with no note at all. The census is the denominator
+    that makes the rendered rows comparable, and the roll-call that makes absence sayable.
+
+    The census is computed EAGERLY, before the caller consumes a single ref: the caller
+    breaks out of the ref loop early precisely when `--limit` is set, so a census gathered
+    lazily during iteration would be missing exactly when it is needed most. A generator
+    cannot both `return` a value and `yield`, which is why this is not one.
+    """
+    parent_ids, agents_seen = _probe_pass(
+        runner, agent=agent, project=project, since=since, limit=limit
+    )
+    try:
+        census = _agent_census(
+            runner, agents_seen, agent=agent, project=project, since=since
+        )
+    except (RuntimeError, ValueError) as exc:
+        # A census we cannot take is disclosed as UNKNOWN, never dropped -- a quietly
+        # missing column is the sin this ticket exists to close. Discovery itself is
+        # unaffected: the refs are already ours. (json.JSONDecodeError subclasses
+        # ValueError, so a garbled payload lands here too.)
+        census = AgentCensus(totals={}, archive_total=0, unavailable_reason=str(exc))
+    refs = _yield_refs(
+        runner, parent_ids, agent=agent, project=project, since=since, limit=limit
+    )
+    return census, refs
+
+
+def iter_agentsview_sessions(
+    agent: str = "all",
+    project: str | None = None,
+    since: str | None = None,
+    limit: int = 500,
+    runner: Runner = _run_agentsview,
+) -> Iterator[SessionRef]:
+    """Refs only, no census (S8). Retained for callers that render no denominators, so
+    they do not pay for the scoped `total` calls they would never use.
+
+    Written with `yield from` rather than `return _yield_refs(...)` so the function body
+    -- including the `_probe_pass` call -- does not run until the caller starts
+    iterating. `iter_sessions(index_source="agentsview", ...)` depends on that laziness:
+    it hands back this iterator unconsumed, and a caller that never iterates it (or that
+    wraps the call in `assertRaises` around the `list(...)`, not around the call itself)
+    must not eagerly hit the runner.
+    """
+    parent_ids, _agents_seen = _probe_pass(
+        runner, agent=agent, project=project, since=since, limit=limit
+    )
+    yield from _yield_refs(
+        runner, parent_ids, agent=agent, project=project, since=since, limit=limit
+    )
 
 
 def open_session_jsonl(
