@@ -12,15 +12,17 @@ from toolbench.sources import AgentCensus, SkipReason, SkipRecord
 
 # Ratio of the largest per-agent sampling fraction to the smallest, above which
 # cross-agent numbers stop being comparable and the report says so. Arbitrary but
-# STATED -- and it can only fire when a `--limit` actually truncated the corpus, so it
-# never nags a full run. True because the census now inherits the SAME --include-*
-# population filters the numerator does (TB-33 Finding 1): under `--exclude-subagents`,
-# `_agent_census` is called with `_PROBE_INCLUDES`, exactly matching what
-# `filter_subagents` keeps, so `stats.sessions / total` is always scanned-of-the-same-
-# population. Before that fix, an agent's own child/parent ratio alone could move the
-# spread even with no `--limit` at all (a fully-scanned population still divided by an
-# inflated denominator) -- it is the filter-parity fix, not merely "no --limit means a
-# full scan", that makes this comment true again.
+# STATED -- and it does NOT only fire when a `--limit` actually truncated the corpus.
+# There are two independent causes. (1) `--limit` truncation, applied unevenly across
+# agents because it slices the archive in recency order. (2) Per-agent SKIP ATTRITION:
+# `stats.sessions` (the numerator, from `reducer.agents`) counts sessions that were
+# DISCOVERED *and* PARSED, so an agent that lost a disproportionate share to any
+# `SkipReason` bucket (dead index entries, non-transcript/binary exports, unknown
+# schemas) moves its own fraction with no `--limit` in play at all. The census now
+# inheriting the SAME --include-* population filters the numerator does (TB-33
+# Finding 1) rules out ONE historical false-positive source (an agent's own
+# child/parent ratio skewing the denominator) -- it does not make attrition
+# impossible. Both causes are real and the rendered line names both (TB-33 Finding 2).
 SPREAD_THRESHOLD = 4.0
 
 
@@ -93,8 +95,10 @@ def _sampling_notes(reducer: Reducer, census: AgentCensus) -> list[str]:
             f"- **Sampling is uneven ({spread:.1f}x spread).** Each row is a different "
             "fraction of a different-sized population, so any ratio formed ACROSS rows "
             "(calls/session, tokens/call, error rate) mixes sampling depth into the "
-            "comparison and is not comparable. Re-run without --limit for a like-for-like "
-            "table."
+            "comparison and is not comparable. Two causes can produce this: a `--limit` "
+            "that truncated the corpus unevenly, or per-agent skip attrition (sessions "
+            "discovered but never parsed). Check whether `--limit` was passed and the "
+            "Summary's \"Skipped by reason\" tally below to tell which."
         )
 
     if census.residual > 0:

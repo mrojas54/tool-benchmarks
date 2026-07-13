@@ -893,6 +893,45 @@ class SamplingDisclosureTests(unittest.TestCase):
         self.assertIn("5 of 0", out)
         self.assertNotIn("0 of 0", out)
 
+    def test_uneven_sampling_line_fires_on_skip_attrition_with_no_limit(self) -> None:
+        # TB-33 Finding 2: --limit is NOT the only cause. `delta` parsed all 4 of its
+        # discovered sessions; `epsilon` discovered 4 but only PARSED 1 -- 3 were
+        # skipped (non-transcript exports). No --limit was ever passed: a census
+        # whose totals exceed the reducer's `sessions` is exactly what attrition
+        # looks like to the renderer, since `stats.sessions` only counts sessions
+        # that scanned AND parsed.
+        reducer = _reducer_with(delta=4, epsilon=1)
+        census = AgentCensus(totals={"delta": 4, "epsilon": 4}, archive_total=8)
+        skips = [
+            SkipRecord(
+                session_id=f"epsilon-skip-{i}",
+                agent="epsilon",
+                reason=SkipReason.NON_TRANSCRIPT,
+                detail="binary payload",
+            )
+            for i in range(3)
+        ]
+
+        out = render_report(
+            reducer,
+            index_source="agentsview",
+            fallback_reason=None,
+            skips=skips,
+            include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=sum(s.sessions for s in reducer.agents.values()) + len(skips),
+            since_note=None,
+            census=census,
+        )
+
+        self.assertIn("Sampling is uneven", out)
+        self.assertIn("not comparable", out)
+        # The old wording asserted --limit was THE cause and prescribed re-running
+        # without it as THE remedy -- a no-op here, since no --limit was ever passed.
+        # The new line must not repeat that false attribution.
+        self.assertNotIn("Re-run without --limit for a like-for-like table", out)
+        self.assertIn("skip attrition", out.lower())
+
     def test_total_none_for_agent_absent_from_census_names_unknown_denominator(self) -> None:
         # cursor was scanned (its sessions are all children, say), so the
         # child-excluded probe listing never saw it: cursor is absent from

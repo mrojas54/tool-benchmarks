@@ -598,6 +598,40 @@ class RawCensusTests(unittest.TestCase):
         self.assertIsNotNone(census.unavailable_reason)
         self.assertEqual(census.totals, {})
 
+    def test_raw_census_mixed_tree_pins_the_include_subagents_branch(self) -> None:
+        """Direct pin for `_raw_census`'s `include_subagents` branch (TB-33 Finding 1).
+
+        Real subagent nesting is <project>/<session-uuid>/subagents/*.jsonl -- NOT
+        <project>/subagents/*.jsonl (TB-29 was exactly this path-shape mistake, and
+        the existing raw+exclude CLI test builds a tree where EVERY session is a
+        subagent, so it exits at "no sessions matched" and never renders a
+        denominator). Two parent sessions plus three children nested under one
+        parent's subagents/ dir: the denominator must be 5 with subagents included,
+        2 without. Mutating `_raw_census`'s `if include_subagents:` to `if True:`
+        must fail this test.
+        """
+        with TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "proj"
+            proj.mkdir()
+            (proj / "sess-parent-1.jsonl").write_text("{}\n")
+            (proj / "sess-parent-2.jsonl").write_text("{}\n")
+            sub = proj / "sess-parent-1" / "subagents"
+            sub.mkdir(parents=True)
+            for name in ("agent-a", "agent-b", "agent-c"):
+                (sub / f"{name}.jsonl").write_text("{}\n")
+
+            _refs, _reason, included = iter_sessions(
+                index_source="raw", root=tmp, runner=FakeRunner([]), include_subagents=True
+            )
+            self.assertEqual(included.totals, {"claude-code": 5})
+            self.assertEqual(included.archive_total, 5)
+
+            _refs2, _reason2, excluded = iter_sessions(
+                index_source="raw", root=tmp, runner=FakeRunner([]), include_subagents=False
+            )
+            self.assertEqual(excluded.totals, {"claude-code": 2})
+            self.assertEqual(excluded.archive_total, 2)
+
 
 class NonUtf8DecodeTests(unittest.TestCase):
     """A stray non-UTF-8 byte must degrade to U+FFFD, never abort the scan (TB-10)."""
