@@ -1,7 +1,12 @@
 {
   "assigned_to": null,
   "branch_links": [
-    "tb-15-probe-tool-arm-sentinel-channel"
+    {
+      "branch": "tb-15-probe-tool-arm-sentinel-channel",
+      "linked_at": "2026-07-09T05:54:13Z",
+      "linked_by": "agent:claude",
+      "repo": null
+    }
   ],
   "comment_count": 0,
   "complexity": "medium",
@@ -17,7 +22,7 @@
   "priority": "high",
   "relationships_out": [],
   "reopened_count": 0,
-  "schema_version": 2,
+  "schema_version": 1,
   "short_id": "TB-15",
   "status": "done",
   "tags": [
