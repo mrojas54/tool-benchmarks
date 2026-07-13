@@ -22,7 +22,13 @@ from toolbench.sources import AgentCensus, SkipReason, SkipRecord
 # inheriting the SAME --include-* population filters the numerator does (TB-33
 # Finding 1) rules out ONE historical false-positive source (an agent's own
 # child/parent ratio skewing the denominator) -- it does not make attrition
-# impossible. Both causes are real and the rendered line names both (TB-33 Finding 2).
+# impossible. Both causes are real, and `_sampling_notes` is handed `skips` so it can
+# say WHICH is in play rather than pointing the reader at a tally the report may not
+# even render: zero skips rules attrition out and names `--limit` outright (with the
+# re-run-without-`--limit` remedy, which is then actually correct); a nonzero skip
+# count names attrition, points at the "Skipped by reason" tally (guaranteed to be
+# rendered in that case), and refuses to promise the `--limit` remedy alone would fix
+# it, since attrition would not budge (TB-33 Finding 3).
 SPREAD_THRESHOLD = 4.0
 
 
@@ -64,11 +70,16 @@ def _sampling_spread(reducer: Reducer, census: AgentCensus) -> float | None:
     return max(fractions) / min(fractions)
 
 
-def _sampling_notes(reducer: Reducer, census: AgentCensus) -> list[str]:
+def _sampling_notes(reducer: Reducer, census: AgentCensus, skips: list[SkipRecord]) -> list[str]:
     """Disclosure that belongs BESIDE the table, not forty lines below it (TB-33).
 
     A reader forming a calls/session ratio across two rows never scrolls to the Summary,
-    so the qualification has to sit where the comparison is made.
+    so the qualification has to sit where the comparison is made. `skips` is threaded in
+    so the uneven-sampling line can STATE which of its two causes is in play instead of
+    telling the reader to go check a "Skipped by reason" tally that only exists when
+    `skips` is non-empty (`render_report` only renders it `if skips:`) -- pointing at it
+    unconditionally left the pure-`--limit` case (zero skips) naming a section the report
+    never rendered.
     """
     if census.unavailable_reason is not None:
         return [
@@ -91,15 +102,36 @@ def _sampling_notes(reducer: Reducer, census: AgentCensus) -> list[str]:
 
     spread = _sampling_spread(reducer, census)
     if spread is not None and spread >= SPREAD_THRESHOLD:
-        notes.append(
+        preamble = (
             f"- **Sampling is uneven ({spread:.1f}x spread).** Each row is a different "
             "fraction of a different-sized population, so any ratio formed ACROSS rows "
             "(calls/session, tokens/call, error rate) mixes sampling depth into the "
-            "comparison and is not comparable. Two causes can produce this: a `--limit` "
-            "that truncated the corpus unevenly, or per-agent skip attrition (sessions "
-            "discovered but never parsed). Check whether `--limit` was passed and the "
-            "Summary's \"Skipped by reason\" tally below to tell which."
+            "comparison and is not comparable."
         )
+        if not skips:
+            # Zero skips rules attrition out -- `stats.sessions` counts sessions that
+            # scanned AND parsed, and nothing was lost to either step this run. The
+            # only remaining cause this line names is `--limit` slicing the archive
+            # unevenly across agents, so the remedy is stated as fact, not a guess.
+            notes.append(
+                preamble + " No sessions were skipped this run, which rules out skip "
+                "attrition: the spread comes from `--limit` truncating the corpus "
+                "unevenly across agents. Re-run without `--limit` for a like-for-like "
+                "table."
+            )
+        else:
+            # Skips are non-zero, so attrition is a live candidate alongside `--limit`
+            # -- and `render_report` only renders the "Skipped by reason" tally `if
+            # skips:`, which is exactly this branch, so the pointer below always
+            # resolves to something on the page.
+            plural = len(skips) != 1
+            notes.append(
+                preamble + f" {len(skips)} session{'s' if plural else ''} "
+                f"{'were' if plural else 'was'} skipped this run, so skip attrition is "
+                "in play: see the Summary's \"Skipped by reason\" tally below. The "
+                "spread may come from `--limit` truncation, from attrition, or from "
+                "both -- re-running without `--limit` is not guaranteed to fix it."
+            )
 
     if census.residual > 0:
         notes.append(
@@ -249,7 +281,7 @@ def render_report(
                 "(S32: session grain only — not attributable to individual tool calls)."
             )
     lines.extend(cache_caveats)
-    lines.extend(_sampling_notes(reducer, census))
+    lines.extend(_sampling_notes(reducer, census, skips))
     lines.append("")
 
     lines.append("## Tool Leaderboard")

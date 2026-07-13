@@ -828,7 +828,11 @@ class SamplingDisclosureTests(unittest.TestCase):
         self.assertIn("not reached", out.lower())
 
     def test_uneven_sampling_line_fires_above_threshold(self) -> None:
-        # codex 40/183 = 21.9%; claude 135/8595 = 1.6%. Spread ~13.9x.
+        # codex 40/183 = 21.9%; claude 135/8595 = 1.6%. Spread ~13.9x. `_render` passes
+        # skips=[], so this is also the pure-`--limit` case (TB-33 Finding 3): zero
+        # skips rules attrition out, and the line must say so decisively instead of
+        # pointing at a "Skipped by reason" tally the report never renders when there
+        # is nothing to tally.
         reducer = _reducer_with(claude=135, codex=40)
         census = AgentCensus(totals={"claude": 8595, "codex": 183}, archive_total=8778)
 
@@ -836,6 +840,13 @@ class SamplingDisclosureTests(unittest.TestCase):
 
         self.assertIn("Sampling is uneven", out)
         self.assertIn("not comparable", out)
+        self.assertIn("rules out skip attrition", out)
+        self.assertIn("Re-run without `--limit` for a like-for-like table", out)
+        # The dangling pointer: nothing in this report renders a "Skipped by reason"
+        # tally when skips is empty, so the line must not send the reader looking for
+        # one -- and the section itself must be verifiably absent, not just unnamed.
+        self.assertNotIn("Skipped by reason", out)
+        self.assertNotIn("Check whether `--limit` was passed", out)
 
     def test_even_sampling_emits_no_warning_line(self) -> None:
         # Both at ~1.6%: the table IS comparable, so say nothing.
@@ -930,7 +941,15 @@ class SamplingDisclosureTests(unittest.TestCase):
         # without it as THE remedy -- a no-op here, since no --limit was ever passed.
         # The new line must not repeat that false attribution.
         self.assertNotIn("Re-run without --limit for a like-for-like table", out)
+        self.assertNotIn("Re-run without `--limit` for a like-for-like table", out)
         self.assertIn("skip attrition", out.lower())
+        # Names the skip count and points at the tally...
+        self.assertIn("3 sessions were skipped this run", out)
+        self.assertIn('"Skipped by reason" tally below', out)
+        # ...and this time the pointer resolves: the tally really is on the page,
+        # because `skips` is non-empty (`render_report` only renders it `if skips:`).
+        self.assertIn("Skipped by reason", out)
+        self.assertIn("non_transcript: 3", out)
 
     def test_total_none_for_agent_absent_from_census_names_unknown_denominator(self) -> None:
         # cursor was scanned (its sessions are all children, say), so the
