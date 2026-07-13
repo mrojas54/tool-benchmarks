@@ -26,7 +26,11 @@ def _sampled_cell(scanned: int, total: int | None, unavailable: bool) -> str:
         # probe never saw. `residual` names it in aggregate; this names it in place.
         return f"{scanned} of unknown"
     if total == 0:
-        return "0 of 0"
+        # `scanned` is NOT dropped here: an agent can be seen in the probe listing and
+        # then report total=0 from the later scoped call (the two are separate,
+        # non-atomic agentsview invocations). Printing "0 of 0" over a nonzero
+        # `scanned` would be the exact silent zero this ticket exists to close.
+        return f"{scanned} of 0"
     return f"{scanned} of {total} ({scanned / total * 100:.1f}%)"
 
 
@@ -315,11 +319,11 @@ def render_report(
     if census.unavailable_reason is None and census.totals:
         lines.append("- Sampling (scanned of each agent's own archive):")
         for agent in sorted(census.totals):
-            total = census.totals[agent]
+            agent_total = census.totals[agent]
             scanned_agent = reducer.agents.get(agent, AgentStats()).sessions
-            pct = f"{scanned_agent / total * 100:.1f}%" if total else "n/a"
+            pct = f"{scanned_agent / agent_total * 100:.1f}%" if agent_total else "n/a"
             tail = " — not reached by this window" if scanned_agent == 0 else ""
-            lines.append(f"  - {agent}: {scanned_agent} of {total} ({pct}){tail}")
+            lines.append(f"  - {agent}: {scanned_agent} of {agent_total} ({pct}){tail}")
     if fingerprint is not None:
         # Identity of the set that produced the numbers above: two reports whose
         # fingerprints match are diffable; a delta between them is code, not the

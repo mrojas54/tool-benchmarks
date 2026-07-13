@@ -877,3 +877,32 @@ class SamplingDisclosureTests(unittest.TestCase):
 
         self.assertIn("claude: 135 of 8595", summary)
         self.assertIn("cursor: 0 of 73", summary)
+
+    def test_total_zero_with_nonzero_scanned_is_not_a_silent_zero(self) -> None:
+        # _agent_census gathers the universe and each agent's total in SEPARATE,
+        # non-atomic agentsview invocations: claude can be seen in the probe listing
+        # with 5 scanned sessions and then report total=0 from the later scoped call.
+        # Printing "0 of 0" over that nonzero `scanned` would tell the reader claude
+        # did nothing, when it actually scanned 5 sessions -- the exact silent zero
+        # this ticket exists to close.
+        reducer = _reducer_with(claude=5)
+        census = AgentCensus(totals={"claude": 0}, archive_total=0)
+
+        out = _render(reducer, census)
+
+        self.assertIn("5 of 0", out)
+        self.assertNotIn("0 of 0", out)
+
+    def test_total_none_for_agent_absent_from_census_names_unknown_denominator(self) -> None:
+        # cursor was scanned (its sessions are all children, say), so the
+        # child-excluded probe listing never saw it: cursor is absent from
+        # census.totals entirely -- which is NOT the same thing as a total of zero,
+        # and must not be rendered as one. The reconciliation `residual` line names
+        # the aggregate discrepancy this causes.
+        reducer = _reducer_with(claude=100, cursor=20)
+        census = AgentCensus(totals={"claude": 8595}, archive_total=8600)
+
+        out = _render(reducer, census)
+
+        self.assertIn("20 of unknown", out)
+        self.assertIn("Reconciliation: 5 archive sessions belong to no agent", out)
