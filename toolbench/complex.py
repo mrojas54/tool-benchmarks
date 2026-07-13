@@ -341,8 +341,43 @@ def find_located(path: str | Path) -> tuple[str, dict[str, object]] | None:
 MAX_LOCATED_SLACK = 30
 
 
+_NAME_PATH_SEP_RE = re.compile(r"[./:#]+")
+
+
+def _name_path_matches(claim: object, truth_symbol: str) -> bool:
+    """True iff one symbol's name-path components are a suffix of the other's.
+
+    Raw string equality is wrong here because there is no one spelling of a
+    symbol: serena's `find_symbol` reports name paths slash-separated
+    (`TaskProgressColumn/render`), the fixtures record them dotted
+    (`TaskProgressColumn.render`), and an agent may name only the leaf (`render`).
+    Splitting both on `.`, `/`, `::`, `#` and matching by suffix (in either
+    direction) makes those all agree while still rejecting a same-leaf, wrong-owner
+    claim: `["SpinnerColumn","render"]` is not a suffix of
+    `["TaskProgressColumn","render"]`. The file + line-range checks below are what
+    disambiguate among same-named symbols; this only frees the symbol string from a
+    spelling convention that was never actually specified.
+    """
+    if not isinstance(claim, str):
+        return False
+    claim_parts = [p for p in _NAME_PATH_SEP_RE.split(claim) if p]
+    truth_parts = [p for p in _NAME_PATH_SEP_RE.split(truth_symbol) if p]
+    if not claim_parts or not truth_parts:
+        return False
+    shorter, longer = sorted((claim_parts, truth_parts), key=len)
+    return longer[len(longer) - len(shorter) :] == shorter
+
+
+# KNOWN LIMITATION -- maltese-D4. Its truth symbol `detective` is an *imported
+# binding* (`cli.ts:3`), not a definition, so an agent may never name it as a
+# symbol at all and locate=0 across all four arms is a plausible, honest outcome.
+# The fixture is deliberately left alone: tuning it to guarantee a locate would be
+# confirmation, not verification -- exactly the trap the pilot exists to surface.
+# If D4 locates nowhere, that is a recorded fixture limitation, not a bug here.
+
+
 def located_correct(obj: dict[str, object], truth: Truth) -> bool:
-    """File and symbol must match exactly; lines must overlap AND stay tight.
+    """File and normalized symbol must match; lines must overlap AND stay tight.
 
     Exact line equality would be brittle: an agent that reports a whole function
     body while the patch touched one line inside it has still localized
@@ -351,8 +386,12 @@ def located_correct(obj: dict[str, object], truth: Truth) -> bool:
     a correct find, silently inflating solve rate, the one number this benchmark
     exists to produce. MAX_LOCATED_SLACK bounds how much wider than the truth's
     own span a claim may be while still counting as a real localization.
+
+    The symbol is matched by name-path suffix, not raw equality -- see
+    `_name_path_matches`. The file and line-range checks are untouched: they are
+    what disambiguate among the same-named symbols a suffix match admits.
     """
-    if obj.get("file") != truth.file or obj.get("symbol") != truth.symbol:
+    if obj.get("file") != truth.file or not _name_path_matches(obj.get("symbol"), truth.symbol):
         return False
     lines = obj.get("lines")
     if not isinstance(lines, list) or len(lines) != 2:

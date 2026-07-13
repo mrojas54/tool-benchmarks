@@ -533,6 +533,41 @@ class LocatedTests(unittest.TestCase):
         obj: dict[str, object] = {"file": truth.file, "symbol": truth.symbol, "lines": [10, 22]}
         self.assertTrue(located_correct(obj, truth))
 
+    def test_serena_slash_separated_name_path_matches_a_dotted_truth(self) -> None:
+        # THE cell serena is pre-registered to win. serena's find_symbol reports
+        # name paths slash-separated (`TaskProgressColumn/render`); rich-D1's truth
+        # symbol is dotted (`TaskProgressColumn.render`). Raw string equality scores
+        # a correct localization as wrong. Compare normalized name-paths instead.
+        truth = Truth("rich/progress.py", "TaskProgressColumn.render", (756, 771))
+        for claim in (
+            "TaskProgressColumn.render",
+            "TaskProgressColumn/render",
+            "TaskProgressColumn::render",
+            "render",  # bare leaf name is a suffix of the truth path
+        ):
+            obj: dict[str, object] = {
+                "file": truth.file, "symbol": claim, "lines": [756, 771]
+            }
+            self.assertTrue(located_correct(obj, truth), claim)
+
+    def test_a_dotted_claim_matches_a_bare_truth_in_the_other_direction(self) -> None:
+        # Suffix match is symmetric in which side is longer: `hint.fetchHint`
+        # matches truth `fetchHint`.
+        truth = Truth("web/lib/paperpal/hint.ts", "fetchHint", (32, 32))
+        obj: dict[str, object] = {
+            "file": truth.file, "symbol": "hint.fetchHint", "lines": [32, 32]
+        }
+        self.assertTrue(located_correct(obj, truth))
+
+    def test_a_same_leaf_wrong_owner_symbol_does_not_match(self) -> None:
+        # Suffix, not shared-leaf: ["SpinnerColumn","render"] is not a suffix of
+        # ["TaskProgressColumn","render"], so a wrong-class render is still wrong.
+        truth = Truth("rich/progress.py", "TaskProgressColumn.render", (756, 771))
+        obj: dict[str, object] = {
+            "file": truth.file, "symbol": "SpinnerColumn.render", "lines": [756, 771]
+        }
+        self.assertFalse(located_correct(obj, truth))
+
     def test_the_widest_real_symbols_own_span_still_passes(self) -> None:
         # maltese-D5's commitOneHandle is 24 lines -- the widest real symbol
         # shipped in probes/complex/*/truth.json. Naming that symbol's own,
