@@ -649,10 +649,13 @@ def test_discover_refs_records_a_missing_root_as_a_typed_skip() -> None:
     # FileNotFoundError becomes a typed SkipRecord rather than a bare string.
     args = parse_args(["--index-source", "auto"])
     runner = FakeRunner([FileNotFoundError("no agentsview")])
-    _refs, _fallback, skips = _discover_refs(args, "/definitely/not/a/real/root", runner)
+    _refs, _fallback, skips, census = _discover_refs(args, "/definitely/not/a/real/root", runner)
     assert skips, "a missing raw root must be recorded as a skip"
     assert all(isinstance(s, SkipRecord) for s in skips)
     assert skips[0].reason is SkipReason.MISSING_SOURCE
+    assert census.unavailable_reason is not None, (
+        "a discovery that never completed must not report a measured zero census"
+    )
 
 class DiscoveryReconciliationMainTests(unittest.TestCase):
     """TB-21 end-to-end: a scanned session, a dead index entry, and an unparseable
@@ -923,6 +926,28 @@ class CorpusFreezeMainTests(unittest.TestCase):
                 outs.append(out.getvalue())
             self.assertEqual(outs[0], outs[1])
 
+
+class FreezeReplayCensusTests(unittest.TestCase):
+    """A frozen corpus bypasses discovery, so it has no denominator -- say so (TB-33)."""
+
+    def test_replay_discloses_that_sampling_is_unknown(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "projects" / "proj"
+            root.mkdir(parents=True)
+            shutil.copy(FIXTURES / "sample.jsonl", root / "s1.jsonl")
+            manifest = str(Path(tmp) / "freeze.json")
+
+            argv = ["--index-source", "raw", "--all", "--freeze", manifest]
+            # First run discovers and writes the manifest.
+            main(argv, root=str(Path(tmp) / "projects"))
+            # Second run replays it -- discovery, and therefore the census, is bypassed.
+            out = io.StringIO()
+            with redirect_stdout(out):
+                main(argv, root=str(Path(tmp) / "projects"))
+
+            report = out.getvalue()
+            self.assertIn("Sampling fractions unavailable", report)
+            self.assertIn("frozen corpus", report)
 
 
 class SubagentExclusionAcrossIndexSourcesTests(unittest.TestCase):
