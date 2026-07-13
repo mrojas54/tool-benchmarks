@@ -371,10 +371,15 @@ def located_correct(obj: dict[str, object], truth: Truth) -> bool:
 class TrialResult:
     """One (defect, arm, trial) cell.
 
-    `n1` is navigation cost, `n2` edit cost. Either may be None: an arm that never
-    localized has no navigation number, one that never fixed has no edit number.
-    They are never back-filled -- an arm that fails is cheap, and its cheapness
-    means nothing.
+    N1 and N2 are the two halves of ONE trial, split at the `LOCATED:` line: N1 is
+    everything before it (navigation), N2 everything from it onward (edit). The
+    split only exists if the line does. So both are None when the trial did not
+    locate -- including when it went on to fix the bug anyway. Booking that trial's
+    whole cost as N2 would file its NAVIGATION spend under the edit label, and
+    `median_n2` would then be the median of two different quantities.
+
+    `total` is every call's tokens and is always defined, so a fixed-but-unlocated
+    trial keeps a real cost number. It is simply not called N2.
     """
 
     defect_id: str
@@ -385,6 +390,7 @@ class TrialResult:
     fixed: bool
     n1: int | None
     n2: int | None
+    total: int
     steps: int
     violations: tuple[str, ...]
 
@@ -436,9 +442,9 @@ def score_trial(
         # ISO-8601 Z timestamps sort lexicographically.
         n1 = sum(call.tokens for call in calls if call.ts < located_ts)
         n2 = sum(call.tokens for call in calls if call.ts >= located_ts)
-    elif fixed:
-        # Solved without ever claiming a localization. Real outcome, no N1.
-        n2 = sum(call.tokens for call in calls)
+    # No `elif fixed:` arm. A trial that fixed without locating is a solved fix
+    # with no navigation measurement, recorded as such and never back-filled --
+    # its cost lands in `total`, which is what it is.
 
     return TrialResult(
         defect_id=defect.id,
@@ -449,6 +455,7 @@ def score_trial(
         fixed=fixed,
         n1=n1,
         n2=n2,
+        total=sum(call.tokens for call in calls),
         steps=len(calls),
         violations=arm_violations(calls, arm),
     )
@@ -484,6 +491,10 @@ class ProfileRow:
     median_n1: int | None
     median_n2: int | None
     unsolved: int
+    # Trials that reached green without a correct LOCATED: line. Their fix cost is
+    # in `total`, not in N2, so they are invisible to `median_n2` -- counted here
+    # so the table names them instead of dropping them.
+    fixed_unlocated: int
     violations: tuple[str, ...]
 
 
@@ -506,6 +517,11 @@ def build_profile(results: list[TrialResult]) -> list[ProfileRow]:
     for (repo, defect_id, arm), trials in sorted(grouped.items()):
         located = [t for t in trials if t.located]
         fixed = [t for t in trials if t.fixed]
+        # N2 is edit cost, which only exists once the trial has located: median it
+        # over trials that BOTH located and fixed, never over `fixed` alone. A fix
+        # that never located has n2 is None, so folding it in would median it away
+        # -- but it would still corrupt the count it was drawn from.
+        located_and_fixed = [t for t in trials if t.located and t.fixed]
         rows.append(
             ProfileRow(
                 repo=repo,
@@ -515,8 +531,11 @@ def build_profile(results: list[TrialResult]) -> list[ProfileRow]:
                 locate_rate=len(located) / len(trials),
                 fix_rate=len(fixed) / len(trials),
                 median_n1=_median_or_none([t.n1 for t in located if t.n1 is not None]),
-                median_n2=_median_or_none([t.n2 for t in fixed if t.n2 is not None]),
+                median_n2=_median_or_none(
+                    [t.n2 for t in located_and_fixed if t.n2 is not None]
+                ),
                 unsolved=len(trials) - len(fixed),
+                fixed_unlocated=sum(1 for t in fixed if not t.located),
                 violations=tuple(sorted({v for t in trials for v in t.violations})),
             )
         )
@@ -535,18 +554,25 @@ def render_profile(rows: list[ProfileRow]) -> str:
         "Cost is **context tokens**. Usage/output tokens are not comparable "
         "between arms (TB-17).",
         "",
-        "| repo | defect | arm | trials | locate | fix | median N1 | median N2 | unsolved |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| repo | defect | arm | trials | locate | fix | median N1 | median N2 "
+        "| fixed, unlocated | unsolved |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for row in rows:
         n1 = str(row.median_n1) if row.median_n1 is not None else "—"
         n2 = str(row.median_n2) if row.median_n2 is not None else "—"
         lines.append(
             f"| {row.repo} | {row.defect_id} | {row.arm} | {row.trials} "
-            f"| {row.locate_rate:.0%} | {row.fix_rate:.0%} | {n1} | {n2} | {row.unsolved} |"
+            f"| {row.locate_rate:.0%} | {row.fix_rate:.0%} | {n1} | {n2} "
+            f"| {row.fixed_unlocated} | {row.unsolved} |"
         )
     lines.append("")
     lines.append("`—` = no solved trial in that cell; cost is undefined, not zero.")
+    lines.append(
+        "`fixed, unlocated` = reached green with no correct `LOCATED:` line, so "
+        "the fix has no N2. The cost is real but is not edit cost; it is not "
+        "back-filled into median N2."
+    )
 
     offenders = [row for row in rows if row.violations]
     if offenders:

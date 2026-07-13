@@ -565,6 +565,32 @@ class TrialScoringTests(unittest.TestCase):
         self.assertIsNone(result.n1)
         self.assertTrue(result.fixed)
 
+    def test_a_fixed_but_unlocated_trial_has_no_n2_at_all(self) -> None:
+        # N2 is EDIT cost: tokens from the LOCATED: line onward. A trial that
+        # never located has no such boundary, so it has no N2 -- back-filling it
+        # with the whole trial silently books that arm's entire NAVIGATION cost as
+        # its edit cost, and `median_n2` then medians two different quantities
+        # under one label. The design's rule: "a solved fix with no navigation
+        # measurement -- recorded as such, not back-filled."
+        wrong = replace(D_FIX, truth=Truth("nope.ts", "nope", (1, 2)))
+        result = score_trial(FIXTURE, wrong, _arm("native"), trial=1, fixed=True)
+        self.assertFalse(result.located)
+        self.assertTrue(result.fixed)
+        self.assertIsNone(result.n2)
+
+    def test_total_is_always_defined_so_an_unlocated_fix_keeps_a_real_cost(self) -> None:
+        # Dropping the back-fill must not lose the number. `total` is every call's
+        # tokens, defined for every trial -- it is simply not called N2.
+        wrong = replace(D_FIX, truth=Truth("nope.ts", "nope", (1, 2)))
+        result = score_trial(FIXTURE, wrong, _arm("native"), trial=1, fixed=True)
+        # Grep's result is 37 chars (37 // 4 == 9), Edit's is 2 chars (2 // 4 == 0).
+        self.assertEqual(result.total, 9)
+
+    def test_total_equals_n1_plus_n2_when_the_trial_located(self) -> None:
+        result = score_trial(FIXTURE, D_FIX, _arm("native"), trial=1, fixed=True)
+        assert result.n1 is not None and result.n2 is not None
+        self.assertEqual(result.total, result.n1 + result.n2)
+
     def test_a_call_outside_the_arm_is_a_violation(self) -> None:
         calls = load_calls(FIXTURE)  # fixture uses Grep + Edit
         self.assertEqual(arm_violations(calls, _arm("serena")), ("Edit", "Grep"))
@@ -582,8 +608,9 @@ def _trial(
     n1: int | None,
     n2: int | None,
     violations: tuple[str, ...] = (),
+    total: int = 0,
 ) -> TrialResult:
-    return TrialResult("D1", "wids", arm, 1, located, fixed, n1, n2, 3, violations)
+    return TrialResult("D1", "wids", arm, 1, located, fixed, n1, n2, total, 3, violations)
 
 
 class ProfileTests(unittest.TestCase):
@@ -596,6 +623,36 @@ class ProfileTests(unittest.TestCase):
         row = next(r for r in rows if r.arm == "serena")
         self.assertEqual(row.median_n1, 200)
         self.assertAlmostEqual(row.locate_rate, 2 / 3)
+
+    def test_median_n2_medians_only_trials_that_both_located_and_fixed(self) -> None:
+        # N1 and N2 partition ONE trial's cost at the LOCATED: line. A trial that
+        # fixed without locating has no such line, so it contributes no N2 -- and
+        # if it were allowed to, `median_n2` would be the median of a mixture of
+        # edit costs and whole-trial costs, reported under the edit-cost label.
+        rows = build_profile([
+            _trial("serena", True, True, 100, 10),
+            _trial("serena", True, True, 100, 20),
+            _trial("serena", False, True, None, None, total=9999),
+        ])
+        row = next(r for r in rows if r.arm == "serena")
+        self.assertEqual(row.median_n2, 15)
+
+    def test_fixed_but_unlocated_trials_are_counted_in_the_row(self) -> None:
+        # Dropping N2 must not drop the TRIAL. Visibly incomplete, never quietly
+        # wrong: the row has to say how many of its fixes carry no N1/N2 at all.
+        rows = build_profile([
+            _trial("serena", True, True, 100, 10),
+            _trial("serena", False, True, None, None, total=9999),
+        ])
+        row = next(r for r in rows if r.arm == "serena")
+        self.assertEqual(row.fixed_unlocated, 1)
+        self.assertEqual(row.unsolved, 0)
+
+    def test_fixed_but_unlocated_trials_are_rendered_not_silently_dropped(self) -> None:
+        text = render_profile(build_profile([
+            _trial("serena", False, True, None, None, total=9999),
+        ]))
+        self.assertIn("fixed, unlocated", text)
 
     def test_an_arm_that_never_solves_reports_no_cost_at_all(self) -> None:
         # Its cheapness is meaningless; a number here would be a lie.

@@ -39,3 +39,5 @@ reports/
 
 # Complex-probe corpora: reproduce with corpus/vendor.sh (pinned SHAs in manifest.json)
 corpus/*/
+# roborev snapshots
+/.roborev/
