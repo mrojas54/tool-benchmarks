@@ -18,10 +18,16 @@
   "rich": {
     "origin": "https://github.com/Textualize/rich",
     "sha": "9d8f9a3",
-    "test_gate": "Bash(python -m pytest:*)",
-    "test_cmd": ["python", "-m", "pytest", "tests/test_progress.py", "-q"],
+    "test_gate": "Bash(.venv/bin/pytest:*)",
+    "test_cmd": [".venv/bin/pytest", "tests/test_progress.py", "-q"],
     "test_cwd": ".",
     "serena_languages": ["python"],
+    "provision": [
+      ["python3", "-m", "venv", ".venv"],
+      [".venv/bin/pip", "install", "--quiet", "--upgrade", "pip"],
+      [".venv/bin/pip", "install", "--quiet", "-e", ".", "pytest"]
+    ],
+    "provision_check": [".venv/bin/pytest", "--version"],
     "hosts_only": ["D1"],
     "why": "Neither wids nor maltese contains a real name collision, which is the one condition serena's symbolic reference-resolution needs in order to beat grep. Measured: rich has 43 distinct classes defining __rich_console__ and 20 defining render, against 336 raw rg hits for 'render' -- a 16x wall. 12 of the 20 render implementations are ProgressColumn subclasses with byte-identical signatures in one file, so neither grep nor signature matching can rank them. This repo exists ONLY to host D1; it is the one cell where repo is confounded with defect class, and the report must say so."
   }

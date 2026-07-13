@@ -55,7 +55,22 @@ class ArmSpec:
 
 @dataclass(frozen=True)
 class Truth:
-    """Ground truth for one defect. Derived from its injection patch, never by hand."""
+    """Ground truth for one defect. Derived from its injection patch, never by hand.
+
+    COORDINATE CONVENTION -- `lines` are POST-PATCH line numbers.
+
+    They index the file *as the agent under test sees it*: the defect patch is
+    already applied in its worktree, so the only coordinates it can possibly
+    report in its `LOCATED:` line are post-patch ones. A patch that changes the
+    line count (rich-D1 adds two) makes pre- and post-patch coordinates differ,
+    and a truth recorded in pre-patch space would silently be off by that delta.
+
+    `located_correct` matches by range OVERLAP rather than equality, so a small
+    drift usually still scores -- which is exactly why the convention is written
+    down instead of left to be inferred from whichever fixture is read first.
+    `tests/test_complex.py::PatchTruthTests` enforces it: every line the patch
+    actually changes, numbered in the post-image, must fall inside `lines`.
+    """
 
     file: str
     symbol: str
@@ -63,6 +78,20 @@ class Truth:
 
 
 _KNOWN_WINNERS = ("serena", "native", "bash", "neutral")
+
+# The repo root, so `import toolbench.complex` works from any cwd. The fixtures
+# live at a fixed path relative to this module, never relative to the process's
+# working directory: a relative default made the import itself raise
+# FileNotFoundError anywhere but the repo root.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_FIXTURE_ROOT = _REPO_ROOT / "probes" / "complex"
+MANIFEST_PATH = _REPO_ROOT / "corpus" / "manifest.json"
+
+# A gate is the leading run of bare-word tokens in the oracle's own argv:
+# ["npx","vitest","run","tests/x.ts"] -> `Bash(npx vitest run:*)`. A token with a
+# slash, a dot or a leading dash ends the prefix -- it is an argument, not part of
+# the command's identity.
+_BARE_WORD_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 
 # <repo>-<id>-<slug>, e.g. "wids-D3-call-chain-lambda" -> ("wids", "D3", "call-chain-lambda").
 # Ids repeat across repos (both wids and maltese have a D3): the (repo, id) pair
@@ -96,6 +125,44 @@ class DefectSpec:
     # scoped `-p falcon-mcp --lib sandbox` (3.1s) would multiply out badly.
     oracle_cmd: tuple[str, ...]
     oracle_cwd: str
+    # The Bash rule granted to the serena/native/control arms, DERIVED from this
+    # defect's own oracle_cmd -- never from its repo. The gate was per-repo once,
+    # and the prompt then told the agent to "make the test suite pass" while the
+    # arm was denied the only command that proves it: maltese's repo gate was
+    # `Bash(cargo test:*)` while three of its four defects are vitest, and rich's
+    # was `Bash(python -m pytest:*)` while its oracle runs the venv's pytest.
+    # Four of eight cells were unprovable. Derivation makes that class of drift
+    # impossible: the gate is a function of the oracle, so it cannot disagree.
+    test_gate: str
+
+
+def derive_test_gate(cmd: tuple[str, ...]) -> str:
+    """`Bash(<command prefix>:*)` for an oracle argv -- the arm's fix checkpoint.
+
+    Scoped to the command, never to a bare interpreter: the prefix stops at the
+    first argument-shaped token, so `.venv/bin/pytest tests/test_progress.py -q`
+    grants `Bash(.venv/bin/pytest:*)` and nothing wider. (This is also why rich's
+    oracle invokes `pytest` directly rather than `python -m pytest` -- granting a
+    Python interpreter to the serena arm would hand it arbitrary code execution,
+    i.e. a shell, i.e. the very thing the arm exists to withhold.)
+    """
+    if not cmd:
+        raise ValueError("cannot derive a test gate from an empty oracle command")
+    prefix = [cmd[0]]
+    for token in cmd[1:]:
+        if not _BARE_WORD_RE.match(token):
+            break
+        prefix.append(token)
+    return f"Bash({' '.join(prefix)}:*)"
+
+
+def _known_repos() -> frozenset[str]:
+    """Repo names the corpus manifest declares. A fixture dir naming any other
+    repo is a typo, not a corpus: `wid-D2-...` would otherwise parse cleanly as
+    repo "wid" and load as a real defect pointing at a repo that does not exist.
+    """
+    data = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    return frozenset(data)
 
 
 def _parse_fixture_dirname(name: str) -> tuple[str, str]:
@@ -156,7 +223,7 @@ def _read_oracle(path: Path, fixture: str) -> tuple[tuple[str, ...], str, str]:
     return cmd, cwd, language
 
 
-def load_defects(root: str | Path = "probes/complex") -> tuple[DefectSpec, ...]:
+def load_defects(root: str | Path = DEFAULT_FIXTURE_ROOT) -> tuple[DefectSpec, ...]:
     """Load DefectSpec objects from the committed fixtures under `root`.
 
     A hand-maintained DEFECTS tuple can silently drift from the patches it
@@ -166,11 +233,26 @@ def load_defects(root: str | Path = "probes/complex") -> tuple[DefectSpec, ...]:
     construction rather than by discipline.
     """
     root_path = Path(root)
+    known = _known_repos()
+    seen: dict[tuple[str, str], str] = {}
     defects = []
     for entry in sorted(root_path.iterdir()):
         if not entry.is_dir():
             continue
         repo, defect_id = _parse_fixture_dirname(entry.name)
+        if repo not in known:
+            raise ValueError(
+                f"fixture dir {entry.name!r} names repo {repo!r}, which is not in "
+                f"corpus/manifest.json ({sorted(known)}). A typo'd prefix would "
+                f"otherwise load as a real defect against a corpus that does not exist."
+            )
+        if (repo, defect_id) in seen:
+            raise ValueError(
+                f"fixture dir {entry.name!r} duplicates ({repo}, {defect_id}), already "
+                f"claimed by {seen[(repo, defect_id)]!r}. (repo, id) is the fixture's "
+                f"key -- two fixtures sharing it silently collide in every lookup."
+            )
+        seen[(repo, defect_id)] = entry.name
         truth = _read_truth(entry / "truth.json", entry.name)
         predicted_winner, rationale = _read_prediction(entry / "prediction.md", entry.name)
         oracle_cmd, oracle_cwd, language = _read_oracle(entry / "oracle.json", entry.name)
@@ -184,6 +266,7 @@ def load_defects(root: str | Path = "probes/complex") -> tuple[DefectSpec, ...]:
                 rationale=rationale,
                 oracle_cmd=oracle_cmd,
                 oracle_cwd=oracle_cwd,
+                test_gate=derive_test_gate(oracle_cmd),
             )
         )
     # Sorted by id (with repo as a tiebreaker for determinism): ids repeat

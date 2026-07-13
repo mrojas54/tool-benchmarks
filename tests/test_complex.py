@@ -1,10 +1,39 @@
+import json
+import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
 
-from toolbench.complex import BANNED_TOOLS, DEFECTS, build_arms, load_defects
+from toolbench.complex import (
+    BANNED_TOOLS,
+    DEFAULT_FIXTURE_ROOT,
+    DEFECTS,
+    build_arms,
+    derive_test_gate,
+    load_defects,
+)
 
-FIXTURE_ROOT = Path("probes/complex")
+
+def _write_fixture(
+    root: Path,
+    name: str,
+    *,
+    lines: str = "[1, 2]",
+    cmd: str = '["echo", "ok"]',
+) -> None:
+    """A minimal well-formed fixture dir, for the load_defects validation tests."""
+    fixture = root / name
+    fixture.mkdir()
+    (fixture / "truth.json").write_text(
+        f'{{"file": "a.ts", "symbol": "a", "lines": {lines}}}', encoding="utf-8"
+    )
+    (fixture / "oracle.json").write_text(
+        f'{{"cmd": {cmd}, "cwd": ".", "language": "typescript"}}', encoding="utf-8"
+    )
+    (fixture / "prediction.md").write_text(
+        "Predicted winner: neutral\n\nRationale: filler.\n", encoding="utf-8"
+    )
 
 
 class ArmSpecTests(unittest.TestCase):
@@ -44,17 +73,24 @@ class LoadDefectsTests(unittest.TestCase):
     def test_module_level_defects_matches_a_fresh_load(self) -> None:
         self.assertEqual(DEFECTS, load_defects())
 
-    def test_repo_id_pairs_are_unique_but_ids_alone_are_not(self) -> None:
-        # This is the real trap: both wids and maltese have a D3. Anything that
-        # keys on id alone (a dict, a lookup) would silently collide them.
+    def test_repo_id_pairs_are_unique(self) -> None:
         pairs = [(d.repo, d.id) for d in DEFECTS]
         self.assertEqual(len(pairs), len(set(pairs)), "duplicate (repo, id) pair")
 
-        ids = [d.id for d in DEFECTS]
-        self.assertNotEqual(len(ids), len(set(ids)), "expected id collisions across repos")
-
-        self.assertIn(("wids", "D3"), pairs)
-        self.assertIn(("maltese", "D3"), pairs)
+    def test_load_defects_keys_on_repo_and_id_not_id_alone(self) -> None:
+        # The real trap: an id is NOT unique -- wids and maltese both ship a D3.
+        # Anything keying on id alone (a dict, a lookup, a dedupe) silently drops
+        # one of them. Asserted directly on the loader with two same-id fixtures
+        # in different repos, rather than by asserting the shipped fixtures happen
+        # to collide -- renaming a fixture must not be able to fail this test.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_fixture(root, "wids-D9-same-id")
+            _write_fixture(root, "maltese-D9-same-id")
+            loaded = load_defects(root)
+            self.assertEqual(len(loaded), 2)
+            self.assertEqual({d.id for d in loaded}, {"D9"})
+            self.assertEqual({d.repo for d in loaded}, {"wids", "maltese"})
 
     def test_every_predicted_winner_is_a_known_arm_or_neutral(self) -> None:
         allowed = {"serena", "native", "bash", "neutral"}
@@ -88,7 +124,7 @@ class LoadDefectsTests(unittest.TestCase):
     def test_missing_truth_json_raises_a_clear_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            fixture = root / "acme-D9-missing-truth"
+            fixture = root / "wids-D9-missing-truth"
             fixture.mkdir()
             (fixture / "oracle.json").write_text(
                 '{"cmd": ["echo", "ok"], "cwd": ".", "language": "python"}',
@@ -97,8 +133,212 @@ class LoadDefectsTests(unittest.TestCase):
             (fixture / "prediction.md").write_text(
                 "Predicted winner: neutral\n\nRationale: filler.\n", encoding="utf-8"
             )
-            with self.assertRaises(Exception) as ctx:
+            with self.assertRaises(FileNotFoundError) as ctx:
                 load_defects(root)
             message = str(ctx.exception)
             self.assertIn("truth.json", message)
-            self.assertIn("acme-D9-missing-truth", message)
+            self.assertIn("wids-D9-missing-truth", message)
+
+    def test_a_repo_name_the_manifest_does_not_declare_is_rejected(self) -> None:
+        # `wid-D2-...` (a typo) parses cleanly as repo "wid" and would otherwise
+        # load as a real defect pointing at a corpus that does not exist.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_fixture(root, "wid-D2-typo")
+            with self.assertRaises(ValueError) as ctx:
+                load_defects(root)
+            self.assertIn("wid", str(ctx.exception))
+            self.assertIn("manifest", str(ctx.exception))
+
+    def test_a_duplicate_repo_id_pair_is_rejected(self) -> None:
+        # Two fixtures claiming the same (repo, id) collide in every lookup keyed
+        # on the pair. Loud at load, or silent forever.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_fixture(root, "wids-D9-first")
+            _write_fixture(root, "wids-D9-second")
+            with self.assertRaises(ValueError) as ctx:
+                load_defects(root)
+            self.assertIn("duplicate", str(ctx.exception).lower())
+
+    def test_defects_load_from_any_cwd_not_just_the_repo_root(self) -> None:
+        # The fixture root is anchored to the module, not to the process cwd: a
+        # relative default made `import toolbench.complex` raise FileNotFoundError
+        # from anywhere else.
+        self.assertTrue(DEFAULT_FIXTURE_ROOT.is_absolute())
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path.cwd()
+            try:
+                os.chdir(tmp)
+                self.assertEqual(load_defects(), DEFECTS)
+            finally:
+                os.chdir(cwd)
+
+
+class TestGateTests(unittest.TestCase):
+    """The gate must be derived from the defect's OWN oracle, never from its repo.
+
+    The gate was per-repo once. maltese's repo gate is `Bash(cargo test:*)` while
+    three of its four defects are verified by vitest, and rich's was
+    `Bash(python -m pytest:*)` while its oracle runs the venv's pytest. Half the
+    cells told the agent to "make the test suite pass" while denying it the only
+    command that proves it.
+    """
+
+    def test_every_defects_gate_matches_its_own_oracles_program(self) -> None:
+        for d in DEFECTS:
+            program = d.oracle_cmd[0]
+            self.assertTrue(
+                d.test_gate.startswith(f"Bash({program}"),
+                f"{d.repo}/{d.id}: gate {d.test_gate!r} does not gate {program!r}",
+            )
+            self.assertTrue(d.test_gate.endswith(":*)"), d.id)
+
+    def test_the_gate_is_exactly_the_derivation_of_its_oracle_cmd(self) -> None:
+        for d in DEFECTS:
+            self.assertEqual(d.test_gate, derive_test_gate(d.oracle_cmd), f"{d.repo}/{d.id}")
+
+    def test_the_prefix_stops_at_the_first_argument_shaped_token(self) -> None:
+        self.assertEqual(
+            derive_test_gate(("npx", "vitest", "run", "tests/x.test.ts")),
+            "Bash(npx vitest run:*)",
+        )
+        self.assertEqual(
+            derive_test_gate(("cargo", "test", "-p", "falcon-mcp", "--lib", "sandbox")),
+            "Bash(cargo test:*)",
+        )
+        self.assertEqual(
+            derive_test_gate((".venv/bin/pytest", "tests/test_progress.py", "-q")),
+            "Bash(.venv/bin/pytest:*)",
+        )
+
+    def test_no_defects_gate_hands_a_restricted_arm_a_bare_interpreter(self) -> None:
+        # `Bash(python:*)` would let the serena arm run `python -c ...` -- arbitrary
+        # code execution, i.e. a shell, i.e. the exact capability the arm withholds.
+        for d in DEFECTS:
+            gate = d.test_gate
+            self.assertNotIn("(python:", gate, d.id)
+            self.assertNotIn("(python3:", gate, d.id)
+            self.assertNotIn("(node:", gate, d.id)
+            self.assertNotIn("(sh:", gate, d.id)
+            self.assertNotIn("(bash:", gate, d.id)
+
+    def test_the_gate_reaches_the_restricted_arms(self) -> None:
+        for d in DEFECTS:
+            for arm in build_arms(d.test_gate):
+                if arm.name == "bash":
+                    continue  # a full shell subsumes the gate
+                self.assertIn(d.test_gate, arm.allowed_tools, f"{d.repo}/{d.id}/{arm.name}")
+
+
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,\d+)? @@")
+_TARGET_RE = re.compile(r"^\+\+\+ b/(?P<path>.+)$")
+
+
+def _patch_facts(patch_text: str) -> tuple[str, set[int]]:
+    """(target path, post-image line numbers of every line the patch adds).
+
+    Line numbers are POST-PATCH, matching Truth's documented convention: the
+    counter advances on context and added lines and holds on removed ones, which
+    is exactly the numbering the agent sees in its worktree.
+    """
+    target = ""
+    added: set[int] = set()
+    new_no = 0
+    in_hunk = False
+    for line in patch_text.splitlines():
+        found = _TARGET_RE.match(line)
+        if found:
+            target = found.group("path")
+            in_hunk = False
+            continue
+        hunk = _HUNK_RE.match(line)
+        if hunk:
+            new_no = int(hunk.group("start"))
+            in_hunk = True
+            continue
+        if not in_hunk:
+            continue
+        if line.startswith("+"):
+            added.add(new_no)
+            new_no += 1
+        elif line.startswith("-"):
+            continue
+        else:
+            new_no += 1
+    return target, added
+
+
+class PatchTruthTests(unittest.TestCase):
+    """Every truth.json must agree with the patch it claims to describe.
+
+    Loading DEFECTS from the fixtures killed DEFECTS<->truth drift but not
+    truth<->patch drift: a truth.json still asserted line numbers that nothing
+    checked against the patch that produced them. Ground truth nobody can
+    contradict is ground truth nobody can trust. Hermetic: reads only the
+    committed patches, never corpus/.
+    """
+
+    def test_the_parser_agrees_with_a_known_patch(self) -> None:
+        # Guard the guard: a hunk parser that silently returns nothing would make
+        # every assertion below vacuous.
+        text = (
+            "--- a/x.ts\n"
+            "+++ b/x.ts\n"
+            "@@ -10,4 +10,5 @@\n"
+            " ctx\n"
+            "-old\n"
+            "+new\n"
+            "+extra\n"
+            " ctx\n"
+        )
+        target, added = _patch_facts(text)
+        self.assertEqual(target, "x.ts")
+        self.assertEqual(added, {11, 12})
+
+    def test_every_patch_changes_a_line_inside_its_own_truth_range(self) -> None:
+        for defect in DEFECTS:
+            fixture = next(
+                d
+                for d in DEFAULT_FIXTURE_ROOT.iterdir()
+                if d.is_dir() and d.name.startswith(f"{defect.repo}-{defect.id}-")
+            )
+            target, added = _patch_facts(
+                (fixture / "defect.patch").read_text(encoding="utf-8")
+            )
+            label = f"{defect.repo}/{defect.id}"
+
+            self.assertEqual(target, defect.truth.file, f"{label}: patch target != truth.file")
+            self.assertTrue(added, f"{label}: defect.patch adds no line -- it seeds nothing")
+
+            start, end = defect.truth.lines
+            for lineno in sorted(added):
+                self.assertTrue(
+                    start <= lineno <= end,
+                    f"{label}: defect.patch changes post-patch line {lineno}, outside "
+                    f"truth.lines {defect.truth.lines} -- the ground truth does not "
+                    f"describe the defect it ships.",
+                )
+
+    def test_every_fixture_ships_a_prompt(self) -> None:
+        for fixture in sorted(DEFAULT_FIXTURE_ROOT.iterdir()):
+            if fixture.is_dir():
+                prompt = fixture / "prompt.md"
+                self.assertTrue(prompt.exists(), fixture.name)
+                text = prompt.read_text(encoding="utf-8")
+                # The LOCATED: contract is what makes N1 measurable at all.
+                self.assertIn("LOCATED:", text, fixture.name)
+                self.assertIn("make the test suite pass", text, fixture.name)
+
+    def test_rich_truth_is_recorded_in_post_patch_coordinates(self) -> None:
+        # rich-D1 is the only patch that changes the line count (+2). Its truth was
+        # recorded pre-patch, so its end line was short by exactly that delta --
+        # the convention, once undefined, decided itself by accident.
+        rich = next(d for d in DEFECTS if d.repo == "rich")
+        self.assertEqual(rich.truth.lines, (756, 771))
+        raw = json.loads(
+            (DEFAULT_FIXTURE_ROOT / "rich-D1-render-collision" / "truth.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertIn("POST-PATCH", raw["_convention"])

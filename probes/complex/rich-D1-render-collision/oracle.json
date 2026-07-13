@@ -1,5 +1,5 @@
 {
-  "cmd": [".venv/bin/python", "-m", "pytest", "tests/test_progress.py", "-q"],
+  "cmd": [".venv/bin/pytest", "tests/test_progress.py", "-q"],
   "cwd": ".",
   "language": "python"
 }

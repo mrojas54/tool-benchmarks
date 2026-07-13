@@ -1,22 +1,26 @@
 # Bug report
 
-We use progress bars for long-running jobs, some of which have a known total step
-count and some of which don't (we just don't know how many items we'll process
-up front).
+Our batch jobs draw a progress bar on the console while they run (and the same
+output ends up in our nightly log files). Some of those jobs know up front how
+many items they are going to work through; others are streaming and genuinely do
+not know until they are done.
 
-Since the last update, the ones where we *don't* know the total are showing a
-blank/garbled percentage-style readout instead of the "unknown length" display
-we used to get, and the ones where we *do* know the total have started showing
-the wrong kind of readout too — it's like the two display modes swapped.
+Since we picked up the latest version, the little piece of status text that sits
+beside the bar is showing the wrong one of its two forms. The two cases look like
+they have traded places:
 
-Nothing crashes, there's no traceback, and the bar itself still animates fine.
-It's purely the little status readout next to the bar that's showing the wrong
-thing depending on whether the job has a known total or not. A few of our
-long-running scripts print this to a log file, and the log now shows the swapped
-readout in exactly the cases where it worked before.
+- Jobs that DO know how many items are coming used to show a live figure beside
+  the bar that climbed as the job went along. That slot is now simply empty.
+- Jobs that DON'T know used to leave that slot empty. They now show a figure that
+  is pinned at zero for the whole run and never budges — which reads to our
+  on-call as a hung job.
 
-Can you find what's causing this and fix it? I don't know exactly where in the
-codebase this lives — I just noticed the visible symptom.
+Nothing raises, there is no traceback, and the bar itself still animates normally.
+Everything else drawn beside the bar looks right. It is only that one piece of
+status text, and only *which* of its two forms it picks.
+
+Can you find what is causing this and fix it? I do not know where in the codebase
+this lives — I only see the symptom.
 
 When you believe you have found the cause, emit exactly one line:
 LOCATED: {"file": "...", "symbol": "...", "lines": [start, end]}
