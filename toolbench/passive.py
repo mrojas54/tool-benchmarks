@@ -232,22 +232,35 @@ def parse_args(argv: list[str] | None) -> CliArgs:
 def _discover_refs(
     args: CliArgs, root: str, runner: Runner | None
 ) -> tuple[list[SessionRef], str | None, list[SkipRecord]]:
-    """Resolve the index-source policy into a bounded list of refs (S10, S23)."""
+    """Resolve the index-source policy into a bounded list of refs (S10, S23).
+
+    The `iter_sessions(...)` CALL itself now belongs inside the try block, not just
+    the ref-iteration loop that follows it. `discover_agentsview` (TB-33) runs its
+    parent-probe pass and per-agent census EAGERLY -- before it hands back a single
+    ref -- because the caller can break out of the ref loop early on `--limit`, and a
+    lazily-gathered census would then be missing exactly when it is needed. That
+    eagerness means a `FileNotFoundError` from a mid-run agentsview disappearance can
+    now surface from the `iter_sessions(...)` call itself, not only from iterating its
+    result. If that call sat outside this guard, `auto` mode would lose its graceful
+    degrade to a `MISSING_SOURCE` skip and `main` would treat a transient agentsview
+    vanish as a fatal source error instead of exit 0.
+    """
     project = None if args.all_projects else args.project
     page_limit = args.limit if args.limit is not None else 500
-    refs_iter, fallback_reason, _census = iter_sessions(
-        index_source=args.index_source,
-        agent=args.agent,
-        project=project,
-        since=args.since,
-        limit=page_limit,
-        root=root,
-        runner=runner,
-    )
 
     refs: list[SessionRef] = []
     skips: list[SkipRecord] = []
+    fallback_reason: str | None = None
     try:
+        refs_iter, fallback_reason, _census = iter_sessions(
+            index_source=args.index_source,
+            agent=args.agent,
+            project=project,
+            since=args.since,
+            limit=page_limit,
+            root=root,
+            runner=runner,
+        )
         for ref in refs_iter:
             refs.append(ref)
             if args.limit is not None and len(refs) >= args.limit:
@@ -255,7 +268,12 @@ def _discover_refs(
     except FileNotFoundError as exc:
         if args.index_source == "auto":
             # A root-level failure has no per-session ref; the absent raw fallback
-            # root is itself a missing source (TB-23).
+            # root -- or, eagerly (TB-33), an agentsview that answered the initial
+            # availability probe but vanished during the parent-probe/census calls
+            # that now run inside `iter_sessions(...)` -- is itself a missing source
+            # (TB-23). Discovery never completed, so there is no census to discard
+            # here (unlike the success path's `_census`); nothing was measured, so
+            # nothing is fabricated in its place.
             skips.append(
                 SkipRecord(
                     session_id="",

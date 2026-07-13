@@ -282,6 +282,27 @@ class MainExitContractTests(unittest.TestCase):
         self.assertIn("no sessions matched", message)
         self.assertIn("skipped 1: missing_source=1", message)
 
+    def test_auto_continues_and_reports_skipped_source_when_agentsview_vanishes_mid_discovery(
+        self,
+    ) -> None:
+        # Regression: `discover_agentsview` (TB-33) runs its parent-probe pass and
+        # per-agent census EAGERLY, inside the `iter_sessions(...)` CALL rather than
+        # lazily during ref iteration. Call [0] is the `_probe_agentsview` availability
+        # probe -- it succeeds, so agentsview looks alive. Call [1] is the eager
+        # parent-probe pass inside `discover_agentsview`, and it raises
+        # `FileNotFoundError` -- agentsview vanished moments after the probe. If
+        # `_discover_refs` did not wrap the `iter_sessions(...)` call itself in its
+        # try/except, this would surface as `main`'s fatal source error (exit 1)
+        # instead of degrading gracefully to a `MISSING_SOURCE` skip (exit 0).
+        runner = FakeRunner([completed(returncode=0), FileNotFoundError("agentsview vanished")])
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = main(["--index-source", "auto"], runner=runner, root="/definitely/not/a/real/root")
+        self.assertEqual(code, 0)
+        message = out.getvalue()
+        self.assertIn("no sessions matched", message)
+        self.assertIn("skipped 1: missing_source=1", message)
+
     def test_end_to_end_raw_report(self) -> None:
         with TemporaryDirectory() as tmp:
             proj = Path(tmp) / "-Users-me-tool-benchmarks"
