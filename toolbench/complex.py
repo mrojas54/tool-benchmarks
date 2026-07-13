@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 import re
+import statistics
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -437,3 +439,101 @@ def build_arms(test_gate: str) -> tuple[ArmSpec, ...]:
         ArmSpec("bash", BASELINE_TOOLS + ("Bash",)),
         ArmSpec("control", base + SERENA_TOOLS + NATIVE_TOOLS + ("Bash",)),
     )
+
+
+@dataclass(frozen=True)
+class ProfileRow:
+    """One (repo, defect, arm) cell of the routing profile."""
+
+    repo: str
+    defect_id: str
+    arm: str
+    trials: int
+    locate_rate: float
+    fix_rate: float
+    median_n1: int | None
+    median_n2: int | None
+    unsolved: int
+    violations: tuple[str, ...]
+
+
+def _median_or_none(values: list[int]) -> int | None:
+    return int(statistics.median(values)) if values else None
+
+
+def build_profile(results: list[TrialResult]) -> list[ProfileRow]:
+    """Aggregate trials into one row per (repo, defect, arm).
+
+    Solve rate and cost are kept SEPARATE and never blended: an arm that never
+    finds the bug is cheap, and cost is uninterpretable without conditioning on
+    success.
+    """
+    grouped: dict[tuple[str, str, str], list[TrialResult]] = defaultdict(list)
+    for result in results:
+        grouped[(result.repo, result.defect_id, result.arm)].append(result)
+
+    rows: list[ProfileRow] = []
+    for (repo, defect_id, arm), trials in sorted(grouped.items()):
+        located = [t for t in trials if t.located]
+        fixed = [t for t in trials if t.fixed]
+        rows.append(
+            ProfileRow(
+                repo=repo,
+                defect_id=defect_id,
+                arm=arm,
+                trials=len(trials),
+                locate_rate=len(located) / len(trials),
+                fix_rate=len(fixed) / len(trials),
+                median_n1=_median_or_none([t.n1 for t in located if t.n1 is not None]),
+                median_n2=_median_or_none([t.n2 for t in fixed if t.n2 is not None]),
+                unsolved=len(trials) - len(fixed),
+                violations=tuple(sorted({v for t in trials for v in t.violations})),
+            )
+        )
+    return rows
+
+
+def render_profile(rows: list[ProfileRow]) -> str:
+    """Markdown routing profile. Unsolved trials and arm violations are named.
+
+    A benchmark that hides its failures is the same defect class as a fully-seeded
+    table: visibly incomplete beats quietly wrong.
+    """
+    lines = [
+        "# Complex debug probe — routing profile",
+        "",
+        "Cost is **context tokens**. Usage/output tokens are not comparable "
+        "between arms (TB-17).",
+        "",
+        "| repo | defect | arm | trials | locate | fix | median N1 | median N2 | unsolved |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    for row in rows:
+        n1 = str(row.median_n1) if row.median_n1 is not None else "—"
+        n2 = str(row.median_n2) if row.median_n2 is not None else "—"
+        lines.append(
+            f"| {row.repo} | {row.defect_id} | {row.arm} | {row.trials} "
+            f"| {row.locate_rate:.0%} | {row.fix_rate:.0%} | {n1} | {n2} | {row.unsolved} |"
+        )
+    lines.append("")
+    lines.append("`—` = no solved trial in that cell; cost is undefined, not zero.")
+
+    offenders = [row for row in rows if row.violations]
+    if offenders:
+        lines.append("")
+        lines.append("## VIOLATION — arm restriction was not enforced")
+        lines.append("")
+        lines.append(
+            "These cells used tools their arm was not granted. Their numbers are "
+            "**void**: the arm did not measure the toolset it claims to."
+        )
+        for row in offenders:
+            lines.append(
+                f"- {row.repo}/{row.defect_id}/{row.arm}: {', '.join(row.violations)}"
+            )
+
+    lines.append("")
+    lines.append(
+        f"Unsolved trials: {sum(r.unsolved for r in rows)} of {sum(r.trials for r in rows)}."
+    )
+    return "\n".join(lines)

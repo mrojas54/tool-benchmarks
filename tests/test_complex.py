@@ -12,14 +12,18 @@ from toolbench.complex import (
     DEFECTS,
     ArmSpec,
     DefectSpec,
+    ProfileRow,
+    TrialResult,
     Truth,
     arm_violations,
     build_arms,
+    build_profile,
     derive_test_gate,
     find_located,
     load_calls,
     load_defects,
     located_correct,
+    render_profile,
     score_trial,
 )
 
@@ -532,3 +536,39 @@ class TrialScoringTests(unittest.TestCase):
         # The ban is verified from the transcript, never trusted from the flag.
         calls = load_calls("tests/fixtures/complex_session_agent_escape.jsonl")
         self.assertIn("Task", arm_violations(calls, _arm("control")))
+
+
+def _trial(
+    arm: str,
+    located: bool,
+    fixed: bool,
+    n1: int | None,
+    n2: int | None,
+    violations: tuple[str, ...] = (),
+) -> TrialResult:
+    return TrialResult("D1", "wids", arm, 1, located, fixed, n1, n2, 3, violations)
+
+
+class ProfileTests(unittest.TestCase):
+    def test_median_cost_counts_only_solved_trials(self) -> None:
+        rows: list[ProfileRow] = build_profile([
+            _trial("serena", True, True, 100, 10),
+            _trial("serena", True, True, 300, 10),
+            _trial("serena", False, False, None, None),  # must not drag the median
+        ])
+        row = next(r for r in rows if r.arm == "serena")
+        self.assertEqual(row.median_n1, 200)
+        self.assertAlmostEqual(row.locate_rate, 2 / 3)
+
+    def test_an_arm_that_never_solves_reports_no_cost_at_all(self) -> None:
+        # Its cheapness is meaningless; a number here would be a lie.
+        rows = build_profile([_trial("bash", False, False, None, None)])
+        self.assertIsNone(rows[0].median_n1)
+
+    def test_unsolved_trials_are_named_in_the_report_not_dropped(self) -> None:
+        text = render_profile(build_profile([_trial("bash", False, False, None, None)]))
+        self.assertIn("Unsolved trials: 1", text)
+
+    def test_a_violation_is_shouted_because_it_voids_the_arm(self) -> None:
+        text = render_profile(build_profile([_trial("serena", True, True, 5, 5, ("Task",))]))
+        self.assertIn("VIOLATION", text)
