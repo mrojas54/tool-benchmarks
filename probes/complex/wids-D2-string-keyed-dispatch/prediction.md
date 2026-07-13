@@ -1,0 +1,5 @@
+Predicted winner: native
+
+Rationale: The defect is a plain string mismatch between a hardcoded request path and the directory name of the thing it addresses — there is no symbol reference connecting the two, so an LSP-based tool gets zero reference edges here and can't "jump to" the target at all; it would have to fall back to a text search anyway. A native Grep+Edit workflow can find every call site in one pass by grepping the literal path fragment ("analyze-hint") across the repo, immediately spot the one occurrence that doesn't match the rest, and edit it directly — cheaply, in a couple of tool calls. Bash rg would do essentially the same grep but pays extra overhead shelling out and parsing raw output versus a native grep tool's structured results, so it should land close behind but not ahead.
+
+Falsified if: native's context spend to locate and fix the bug is not the lowest of the three toolsets, or if native needs more than a small handful of tool calls (e.g. it goes hunting through unrelated files/tools before grepping the literal path).

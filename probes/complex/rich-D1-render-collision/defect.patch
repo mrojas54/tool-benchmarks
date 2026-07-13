@@ -1,0 +1,15 @@
+diff --git a/rich/progress.py b/rich/progress.py
+index c2de125a..141934d2 100644
+--- a/rich/progress.py
++++ b/rich/progress.py
+@@ -757,7 +757,9 @@ class TaskProgressColumn(TextColumn):
+         if task.total is None and self.show_speed:
+             return self.render_speed(task.finished_speed or task.speed)
+         text_format = (
+-            self.text_format_no_percentage if task.total is None else self.text_format
++            self.text_format_no_percentage
++            if task.total is not None
++            else self.text_format
+         )
+         _text = text_format.format(task=task)
+         if self.markup:

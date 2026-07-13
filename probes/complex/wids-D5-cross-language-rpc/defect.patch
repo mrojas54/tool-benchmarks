@@ -1,0 +1,13 @@
+diff --git a/web/lib/queries.ts b/web/lib/queries.ts
+index 247531f..d781d9d 100644
+--- a/web/lib/queries.ts
++++ b/web/lib/queries.ts
+@@ -155,7 +155,7 @@ export async function canSynthesizePaperPal(
+   sb: SupabaseClient,
+   paperId: number,
+ ): Promise<SynthesisGate> {
+-  const { data, error } = await sb.rpc("can_synthesize_paper_pal", {
++  const { data, error } = await sb.rpc("can_synthesize_paperpal", {
+     p_paper_id: paperId,
+   });
+   if (error || !data) return { canSynthesize: false, reason: "none" };

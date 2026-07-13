@@ -1,0 +1,13 @@
+diff --git a/falcon-detective/src/handlers/proposeFix.ts b/falcon-detective/src/handlers/proposeFix.ts
+index 3769b1d..822e556 100644
+--- a/falcon-detective/src/handlers/proposeFix.ts
++++ b/falcon-detective/src/handlers/proposeFix.ts
+@@ -107,7 +107,7 @@ const STRATEGIES: { [K in IssueKind]: Strategy<InputFor<K>> } = {
+ const HANDLER_IDS: Record<IssueKind, string> = {
+   bug: "proposeBugFix",
+   lint: "proposeLintFix",
+-  poison: "proposePoisonFix",
++  poison: "proposePoisonFixV2",
+ };
+
+ /**

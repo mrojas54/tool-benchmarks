@@ -1,0 +1,2 @@
+{"type":"assistant","timestamp":"2026-07-12T10:00:00Z","requestId":"req_1","sessionId":"sess-agent-escape","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Task","input":{"prompt":"grep for formatSlot"}}]}}
+{"type":"user","timestamp":"2026-07-12T10:00:01Z","sessionId":"sess-agent-escape","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"found it"}]}}

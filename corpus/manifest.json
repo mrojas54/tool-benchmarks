@@ -1,0 +1,30 @@
+{
+  "wids": {
+    "origin": "https://github.com/mrojas54/wids-nyc-reading-group-assistant",
+    "sha": "a39cdd0",
+    "serena_languages": ["typescript", "vue", "python"],
+    "deps": [{"path": "web/node_modules", "npm_ci": "web"}]
+  },
+  "maltese": {
+    "origin": "https://github.com/mrojas54/maltese-agent",
+    "sha": "7b8fa95",
+    "serena_languages": ["rust", "typescript"],
+    "deps": [{"path": "falcon-detective/node_modules", "npm_ci": "falcon-detective"}],
+    "warmup": [["cargo", "fetch"]],
+    "warmup_check": ["cargo", "--version"]
+  },
+  "rich": {
+    "origin": "https://github.com/Textualize/rich",
+    "sha": "9d8f9a3",
+    "serena_languages": ["python"],
+    "provision": [
+      ["python3", "-m", "venv", ".venv"],
+      [".venv/bin/pip", "install", "--quiet", "--upgrade", "pip"],
+      [".venv/bin/pip", "install", "--quiet", "-e", ".", "pytest"]
+    ],
+    "provision_check": [".venv/bin/pytest", "--version"],
+    "deps": [{"path": ".venv", "venv": ["pytest", "pygments", "markdown-it-py"]}],
+    "hosts_only": ["D1"],
+    "why": "Neither wids nor maltese contains a real name collision, which is the one condition serena's symbolic reference-resolution needs in order to beat grep. Measured: rich has 43 distinct classes defining __rich_console__ and 20 defining render, against 336 raw rg hits for 'render' -- a 16x wall. 12 of the 20 render implementations are ProgressColumn subclasses with byte-identical signatures in one file, so neither grep nor signature matching can rank them. This repo exists ONLY to host D1; it is the one cell where repo is confounded with defect class, and the report must say so."
+  }
+}

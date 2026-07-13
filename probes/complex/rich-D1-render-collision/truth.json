@@ -1,0 +1,6 @@
+{
+  "file": "rich/progress.py",
+  "symbol": "TaskProgressColumn.render",
+  "lines": [756, 771],
+  "_convention": "POST-PATCH coordinates -- the file as the agent sees it, with defect.patch applied. This patch adds 2 lines (@@ -757,7 +757,9 @@), so pre-patch [756,768] becomes post-patch [756,771]. See toolbench.complex.Truth."
+}
