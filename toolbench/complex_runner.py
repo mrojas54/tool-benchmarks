@@ -124,37 +124,97 @@ def provision_worktree(
     corpus_root: Path,
     dest: Path,
     fixture_root: Path = DEFAULT_FIXTURE_ROOT,
+    apply_defect: bool = True,
 ) -> Path:
-    """Fresh worktree of `defect`'s corpus repo, patched and prompted for one trial.
+    """A hermetic standalone trial repo of `defect`'s corpus repo at its pinned SHA,
+    defect applied and committed, prompted for one trial.
+
+    DEVIATION FROM SPEC §5 ("a fresh git worktree per trial"), and why. A worktree
+    shares the corpus clone's object store, so the pre-defect blobs stay reachable
+    -- `git diff <sha> HEAD`, `git log --all`, or a bare `git diff` against the
+    unstaged patch all hand the bash/control arms the exact file, symbol and line
+    of the defect for free, voiding the arm while still producing a plausible
+    number (C1). §5 itself calls the branch name "a bonus, not the mechanism" and
+    the *isolation* the mechanism: a standalone repo delivers that isolation and
+    the branch name both. So the tree is built by exporting the pinned SHA's tree
+    (`git archive | tar -x`), applying the defect, then `git init` + one commit
+    naming only the repo and SHA. Net effect: `git status` is clean, `git log` has
+    exactly one commit, there is no parent to diff, and the defect is
+    indistinguishable inside a whole-tree initial add.
 
     Pinned to the SHA in `corpus_root/manifest.json`, never to the corpus repo's
     current HEAD -- the corpus repo is a shared clone that other trials (and a
-    future `vendor.sh` re-run) may advance, and a worktree that silently followed
-    HEAD would make every trial after the first one measure a different repo state
-    than its pre-registered defect. `corpus_root` is a parameter rather than the
-    real `corpus/` so this is testable against a throwaway repo: the fast suite
-    must not depend on the vendored corpus existing.
+    future `vendor.sh` re-run) may advance, and a tree that silently followed HEAD
+    would make every trial after the first measure a different repo state than its
+    pre-registered defect. `corpus_root` is a parameter rather than the real
+    `corpus/` so this is testable against a throwaway repo: the fast suite must not
+    depend on the vendored corpus existing.
+
+    `apply_defect=False` provisions the clean pinned tree (C7 asserts the oracle is
+    GREEN there before proving the defect turns it RED).
     """
     manifest = json.loads((corpus_root / "manifest.json").read_text(encoding="utf-8"))
     sha = manifest[defect.repo]["sha"]
     repo_path = corpus_root / defect.repo
     branch = branch_name(defect, arm, trial)
-    subprocess.run(
-        ["git", "-C", str(repo_path), "worktree", "add", "-b", branch, str(dest), sha],
+
+    dest.mkdir(parents=True, exist_ok=True)
+    # Export the pinned tree into `dest` as plain files: the archive carries no
+    # history and no object store, so nothing pre-defect is reachable afterward.
+    archive = subprocess.run(
+        ["git", "-C", str(repo_path), "archive", sha],
         check=True,
         capture_output=True,
-        text=True,
+    )
+    subprocess.run(
+        ["tar", "-x", "-C", str(dest)],
+        input=archive.stdout,
+        check=True,
+        capture_output=True,
     )
 
     fixture_dir = _find_fixture_dir(fixture_root, defect)
-    patch_path = (fixture_dir / "defect.patch").resolve()
+    if apply_defect:
+        patch_path = (fixture_dir / "defect.patch").resolve()
+        subprocess.run(
+            ["git", "apply", str(patch_path)],
+            cwd=dest,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    prompt_text = (fixture_dir / "prompt.md").read_text(encoding="utf-8")
+    (dest / "PROMPT.md").write_text(prompt_text, encoding="utf-8")
+
+    # A fresh repo whose single commit IS the defect state. Identity is set on the
+    # commit invocation so provisioning needs no global git config. PROMPT.md is
+    # deliberately committed too, so `git status` stays clean rather than showing
+    # an untracked file that would itself invite `git status` (C1 in miniature).
     subprocess.run(
-        ["git", "-C", str(dest), "apply", str(patch_path)],
+        ["git", "init", "-q", "-b", branch, str(dest)],
         check=True,
         capture_output=True,
         text=True,
     )
-
-    prompt_text = (fixture_dir / "prompt.md").read_text(encoding="utf-8")
-    (dest / "PROMPT.md").write_text(prompt_text, encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "-A"], cwd=dest, check=True, capture_output=True, text=True
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=probe@toolbench.local",
+            "-c",
+            "user.name=toolbench-probe",
+            "commit",
+            "-q",
+            "-m",
+            f"{defect.repo} @ {sha}",
+        ],
+        cwd=dest,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     return dest

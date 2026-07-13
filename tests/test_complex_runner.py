@@ -197,6 +197,66 @@ class ProvisionWorktreeTests(unittest.TestCase):
         self.assertEqual(current, "probe/toy/D1/serena/t3")
         self.assertEqual(branch_name(self.defect, arm, 3), "probe/toy/D1/serena/t3")
 
+    def test_the_trial_tree_is_a_standalone_repo_committed_clean(self) -> None:
+        # C1: a `git worktree add` + unstaged `git apply` hands the bash/control
+        # arms the defect for free -- `git diff` prints file, symbol and line. The
+        # tree must instead be a standalone repo with the defect COMMITTED, so
+        # `git status` is clean and there is nothing to diff against.
+        dest = self.root / "wt_hermetic"
+        provision_worktree(
+            self.defect, _arm("bash"), 1, self.corpus_root, dest, fixture_root=self.fixture_root
+        )
+        status = _run(["git", "status", "--porcelain"], dest).stdout
+        self.assertEqual(status, "", "a dirty tree leaks the defect via git diff/status")
+        log = _run(["git", "log", "--oneline"], dest).stdout.strip().splitlines()
+        self.assertEqual(len(log), 1, "the trial tree must have exactly one commit")
+
+    def test_git_diff_reveals_nothing_because_the_defect_is_committed(self) -> None:
+        # The direct C1 reproduction: with the old worktree+apply path this diff
+        # printed the seeded change verbatim.
+        dest = self.root / "wt_nodiff"
+        provision_worktree(
+            self.defect, _arm("bash"), 1, self.corpus_root, dest, fixture_root=self.fixture_root
+        )
+        self.assertEqual(_run(["git", "diff"], dest).stdout, "")
+        self.assertEqual(_run(["git", "diff", "HEAD"], dest).stdout, "")
+        self.assertEqual((dest / "a.txt").read_text(encoding="utf-8"), "modified\n")
+
+    def test_the_corpus_object_store_is_not_shared_so_no_pristine_blob_is_reachable(
+        self,
+    ) -> None:
+        # A worktree shares the corpus clone's object store, so the pre-defect
+        # blobs stay reachable (git log --all, git diff <sha> HEAD). A standalone
+        # repo does not: the pinned sha is not even an object here.
+        dest = self.root / "wt_noshare"
+        provision_worktree(
+            self.defect, _arm("bash"), 1, self.corpus_root, dest, fixture_root=self.fixture_root
+        )
+        proc = subprocess.run(
+            ["git", "cat-file", "-e", self.sha], cwd=dest, capture_output=True
+        )
+        self.assertNotEqual(
+            proc.returncode, 0, "the pinned sha must not resolve in the trial repo"
+        )
+        all_log = _run(["git", "log", "--all", "--oneline"], dest).stdout.strip().splitlines()
+        self.assertEqual(len(all_log), 1)
+
+    def test_apply_defect_false_provisions_a_clean_committed_tree(self) -> None:
+        # C7 needs to provision a clean tree to assert the oracle is GREEN before
+        # the defect is applied.
+        dest = self.root / "wt_clean"
+        provision_worktree(
+            self.defect,
+            _arm("bash"),
+            1,
+            self.corpus_root,
+            dest,
+            fixture_root=self.fixture_root,
+            apply_defect=False,
+        )
+        self.assertEqual((dest / "a.txt").read_text(encoding="utf-8"), "original\n")
+        self.assertEqual(_run(["git", "status", "--porcelain"], dest).stdout, "")
+
     def test_worktree_is_pinned_to_the_manifest_sha_not_whatever_head_is(self) -> None:
         # Advance the source repo past the pinned sha; the worktree must still
         # land on the pinned commit, not on whatever the corpus repo's HEAD is.
