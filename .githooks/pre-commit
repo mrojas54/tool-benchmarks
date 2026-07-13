@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""Reject commits where a Lattice task snapshot has no replayable event log.
+
+A snapshot in `.lattice/tasks/` is a *derived cache*; `.lattice/events/<id>.jsonl`
+is the source of truth. If a snapshot exists whose log is missing, empty, or not
+headed by `task_created`, that task can never be rebuilt from its events --
+`lattice rebuild` errors on it forever and `lattice doctor` does not notice.
+
+This is reachable in practice: an agent that writes a task JSON directly (rather
+than calling `lattice create`) leaves a snapshot with no log. The next ordinary
+`lattice` mutation then appends to the missing file, creating a permanently
+headless log. That happened here on 2026-07-09 (TB-15) and went undetected for
+four days.
+
+The check runs against the git *index* -- the tree about to be committed -- so it
+fires the moment such a snapshot is staged, before it is ever mutated.
+"""
+
+import subprocess
+import sys
+
+TASKS = ".lattice/tasks/"
+EVENTS = ".lattice/events/"
+
+
+def git(*args: str) -> str:
+    return subprocess.run(
+        ["git", *args], capture_output=True, text=True, check=True
+    ).stdout
+
+
+def index_blobs() -> dict[str, str]:
+    """Map path -> blob sha for Lattice snapshots and event logs in the index."""
+    out = git("ls-files", "-s", "--", f"{TASKS}*.json", f"{EVENTS}*.jsonl")
+    blobs = {}
+    for line in out.splitlines():
+        if not line.strip():
+            continue
+        meta, path = line.split("\t", 1)
+        blobs[path] = meta.split()[1]
+    return blobs
+
+
+def first_event_type(sha: str) -> str | None:
+    """Type of the first event in a log blob, or None if empty/unparseable."""
+    import json
+
+    body = git("cat-file", "blob", sha)
+    for line in body.splitlines():
+        if not line.strip():
+            continue
+        try:
+            return json.loads(line).get("type")
+        except json.JSONDecodeError:
+            return None
+    return None  # empty log
+
+
+def main() -> int:
+    # Nothing Lattice-related staged: nothing to say.
+    staged = git("diff", "--cached", "--name-only", "--", ".lattice").splitlines()
+    if not staged:
+        return 0
+
+    blobs = index_blobs()
+    problems = []
+
+    for path, _sha in sorted(blobs.items()):
+        if not (path.startswith(TASKS) and path.endswith(".json")):
+            continue
+        task_id = path[len(TASKS) : -len(".json")]
+        log_path = f"{EVENTS}{task_id}.jsonl"
+
+        if log_path not in blobs:
+            problems.append(
+                (task_id, "has no event log at all", "written outside the CLI?")
+            )
+            continue
+
+        head = first_event_type(blobs[log_path])
+        if head is None:
+            problems.append((task_id, "has an empty or unparseable event log", ""))
+        elif head != "task_created":
+            problems.append(
+                (task_id, f"event log starts with '{head}', not 'task_created'", "")
+            )
+
+    if not problems:
+        return 0
+
+    print("\npre-commit: Lattice event-log integrity check FAILED\n", file=sys.stderr)
+    for task_id, what, hint in problems:
+        print(f"  {task_id}", file=sys.stderr)
+        print(f"      {what}" + (f" ({hint})" if hint else ""), file=sys.stderr)
+    print(
+        "\nA snapshot without a `task_created`-headed log can never be rebuilt from"
+        "\nits events -- the snapshot becomes the only copy of the task, and"
+        "\n`lattice rebuild` will fail on it permanently."
+        "\n\nFix: create tasks with `lattice create`, never by writing"
+        "\n`.lattice/tasks/*.json` directly. To repair an existing one, synthesize a"
+        "\n`task_created` event from the snapshot's own fields, then run"
+        "\n`lattice rebuild <task_id>` and confirm the snapshot round-trips."
+        "\n\nOverride (only if you know why): git commit --no-verify\n",
+        file=sys.stderr,
+    )
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
