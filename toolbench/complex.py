@@ -278,6 +278,59 @@ def load_defects(root: str | Path = DEFAULT_FIXTURE_ROOT) -> tuple[DefectSpec, .
 DEFECTS: tuple[DefectSpec, ...] = load_defects()
 
 
+def find_located(path: str | Path) -> tuple[str, dict[str, object]] | None:
+    """The first assistant text block emitting `LOCATED: {...}`, with its timestamp.
+
+    Returns `None` when the agent never claimed a localization -- a real outcome
+    (it may still have guessed its way to a passing test), recorded as such and
+    never back-filled.
+    """
+    with Path(path).open(encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if entry.get("type") != "assistant":
+                continue
+            message = entry.get("message") or {}
+            for block in message.get("content") or []:
+                if not isinstance(block, dict) or block.get("type") != "text":
+                    continue
+                text = block.get("text") or ""
+                start = text.find(LOCATED_PREFIX)
+                if start == -1:
+                    continue
+                payload = text[start + len(LOCATED_PREFIX) :].strip()
+                end = payload.find("}")
+                if end == -1:
+                    continue
+                try:
+                    obj = json.loads(payload[: end + 1])
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(obj, dict):
+                    return str(entry.get("timestamp") or ""), obj
+    return None
+
+
+def located_correct(obj: dict[str, object], truth: Truth) -> bool:
+    """File and symbol must match exactly; line ranges need only overlap.
+
+    Exact line equality would be brittle: an agent that reports a whole function
+    body while the patch touched one line inside it has still localized correctly.
+    """
+    if obj.get("file") != truth.file or obj.get("symbol") != truth.symbol:
+        return False
+    lines = obj.get("lines")
+    if not isinstance(lines, list) or len(lines) != 2:
+        return False
+    low, high = lines
+    if not isinstance(low, int) or not isinstance(high, int):
+        return False
+    return not (high < truth.lines[0] or low > truth.lines[1])
+
+
 def build_arms(test_gate: str) -> tuple[ArmSpec, ...]:
     """The four arms. `test_gate` is a command-scoped Bash rule, e.g. `Bash(cargo test:*)`.
 

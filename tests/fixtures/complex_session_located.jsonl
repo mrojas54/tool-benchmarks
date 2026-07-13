@@ -1,0 +1,5 @@
+{"type":"assistant","timestamp":"2026-07-12T10:00:00Z","requestId":"req_1","sessionId":"sess-complex-located","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Grep","input":{"pattern":"formatSlot"}}]}}
+{"type":"user","timestamp":"2026-07-12T10:00:01Z","sessionId":"sess-complex-located","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"web/src/lib/schedule.ts:12:formatSlot"}]}}
+{"type":"assistant","timestamp":"2026-07-12T10:00:02Z","requestId":"req_2","sessionId":"sess-complex-located","message":{"role":"assistant","content":[{"type":"text","text":"LOCATED: {\"file\": \"web/src/lib/schedule.ts\", \"symbol\": \"formatSlot\", \"lines\": [12, 20]}"}]}}
+{"type":"assistant","timestamp":"2026-07-12T10:00:03Z","requestId":"req_3","sessionId":"sess-complex-located","message":{"role":"assistant","content":[{"type":"tool_use","id":"t2","name":"Edit","input":{"file_path":"web/src/lib/schedule.ts"}}]}}
+{"type":"user","timestamp":"2026-07-12T10:00:04Z","sessionId":"sess-complex-located","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":"ok"}]}}

@@ -9,10 +9,15 @@ from toolbench.complex import (
     BANNED_TOOLS,
     DEFAULT_FIXTURE_ROOT,
     DEFECTS,
+    Truth,
     build_arms,
     derive_test_gate,
+    find_located,
     load_defects,
+    located_correct,
 )
+
+FIXTURE = "tests/fixtures/complex_session_located.jsonl"
 
 
 def _write_fixture(
@@ -437,3 +442,36 @@ class PatchTruthTests(unittest.TestCase):
             )
         )
         self.assertIn("POST-PATCH", raw["_convention"])
+
+
+class LocatedTests(unittest.TestCase):
+    def test_finds_the_located_line_and_its_timestamp(self) -> None:
+        hit = find_located(FIXTURE)
+        assert hit is not None
+        ts, obj = hit
+        self.assertEqual(ts, "2026-07-12T10:00:02Z")
+        self.assertEqual(obj["symbol"], "formatSlot")
+
+    def test_correct_when_file_and_symbol_match_and_lines_overlap(self) -> None:
+        hit = find_located(FIXTURE)
+        assert hit is not None
+        self.assertTrue(
+            located_correct(hit[1], Truth("web/src/lib/schedule.ts", "formatSlot", (15, 18)))
+        )
+
+    def test_right_symbol_in_the_wrong_file_is_not_a_hit(self) -> None:
+        hit = find_located(FIXTURE)
+        assert hit is not None
+        self.assertFalse(
+            located_correct(hit[1], Truth("web/src/lib/other.ts", "formatSlot", (15, 18)))
+        )
+
+    def test_disjoint_line_ranges_are_not_a_hit(self) -> None:
+        hit = find_located(FIXTURE)
+        assert hit is not None
+        self.assertFalse(
+            located_correct(hit[1], Truth("web/src/lib/schedule.ts", "formatSlot", (90, 99)))
+        )
+
+    def test_a_session_that_never_locates_returns_none(self) -> None:
+        self.assertIsNone(find_located("tests/fixtures/complex_session_agent_escape.jsonl"))
