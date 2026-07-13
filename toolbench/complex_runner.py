@@ -184,6 +184,26 @@ def _default_deps_base() -> Path:
     return Path(tempfile.gettempdir()) / f"{_DEPS_CACHE_DIRNAME}-{os.getuid()}"
 
 
+def _mkdir_private(path: Path) -> None:
+    """Create `path` and any missing ancestors private to this user, atomically.
+
+    `mkdir()`'s default mode is `0o777 & ~umask`, so creating first and chmodding to
+    `0o700` after leaves a window in which a permissive umask makes the cache
+    world-writable -- and `parents=True` leaves the INTERMEDIATES permissive for
+    good, since the chmod only ever reaches the leaf. A world-writable parent alone
+    is fatal: another uid can swap our private leaf out from under us, defeating the
+    ownership check rather than tripping it.
+
+    `mode=` closes the window because umask can only CLEAR permission bits, never
+    set them: `0o700` can never widen, whatever the umask. Every directory is
+    private from the instant it exists.
+    """
+    for ancestor in reversed(path.parents):
+        if not ancestor.exists():
+            ancestor.mkdir(mode=0o700)
+    path.mkdir(mode=0o700, exist_ok=True)
+
+
 def _assert_deps_base_safe(deps_base: Path, corpus_root: Path) -> None:
     """Refuse a cache that leaks corpus source or that this user does not own.
 
@@ -212,23 +232,25 @@ def _assert_deps_base_safe(deps_base: Path, corpus_root: Path) -> None:
 
     if cache.is_symlink():  # resolve() above means this is a dangling link
         raise UnsafeDepsCache(f"dependency cache {cache} is a dangling symlink")
-    if cache.exists():
-        st = cache.stat()
-        if st.st_uid != os.getuid():
-            raise UnsafeDepsCache(
-                f"dependency cache {cache} is owned by uid {st.st_uid}, not by this "
-                f"user (uid {os.getuid()}). Its contents are symlinked into every "
-                f"trial tree and executed by the oracles; refusing to trust it."
-            )
-        if st.st_mode & 0o077:
-            raise UnsafeDepsCache(
-                f"dependency cache {cache} is group/world accessible "
-                f"(mode {st.st_mode & 0o777:03o}); another uid could plant a "
-                f"node_modules or venv that the oracles then execute. Expected 700."
-            )
-    else:
-        cache.mkdir(parents=True, exist_ok=True)
-        cache.chmod(0o700)
+    if not cache.exists():
+        _mkdir_private(cache)
+
+    # Validate whatever is now there -- created or pre-existing alike. Checking the
+    # dir we just made is not redundant: it is what catches a hostile umask, or
+    # another uid winning a race to create the path first.
+    st = cache.stat()
+    if st.st_uid != os.getuid():
+        raise UnsafeDepsCache(
+            f"dependency cache {cache} is owned by uid {st.st_uid}, not by this "
+            f"user (uid {os.getuid()}). Its contents are symlinked into every "
+            f"trial tree and executed by the oracles; refusing to trust it."
+        )
+    if st.st_mode & 0o077:
+        raise UnsafeDepsCache(
+            f"dependency cache {cache} is group/world accessible "
+            f"(mode {st.st_mode & 0o777:03o}); another uid could plant a "
+            f"node_modules or venv that the oracles then execute. Expected 700."
+        )
 
 
 def _deps_root(deps_base: Path, repo: str) -> Path:

@@ -11,6 +11,7 @@ from toolbench.complex import ArmSpec, DefectSpec, Truth, build_arms
 from toolbench.complex_runner import (
     UnprovisionedWorktree,
     UnsafeDepsCache,
+    _assert_deps_base_safe,
     _default_deps_base,
     branch_name,
     build_claude_argv,
@@ -525,6 +526,51 @@ class DepsCacheRuntimeGuardTests(unittest.TestCase):
         # under it is symlinked into every trial tree and EXECUTED by the oracles
         # (`npx vitest run`, the venv's pytest), so a foreign cache is code execution.
         self.assertIn(str(os.getuid()), _default_deps_base().name)
+
+    def test_a_created_cache_and_its_parents_are_never_group_or_world_accessible(
+        self,
+    ) -> None:
+        # `mkdir(parents=True)` takes 0777 & ~umask, and a chmod afterwards touches
+        # only the leaf -- the intermediates keep the permissive mode for good. A
+        # world-writable parent lets another uid swap the private leaf out from under
+        # us, which defeats the ownership check rather than passing it.
+        base = (
+            Path(tempfile.gettempdir())
+            / f"vendor-cache-umask-{os.getpid()}"
+            / "nested"
+            / "cache"
+        )
+        self.addCleanup(shutil.rmtree, base.parents[1], True)
+        self.addCleanup(os.umask, os.umask(0))  # permissive umask; restore after
+        _assert_deps_base_safe(base, self.corpus_root)
+        for created in (base, base.parent, base.parents[1]):
+            self.assertEqual(
+                created.stat().st_mode & 0o077,
+                0,
+                f"{created} is group/world accessible",
+            )
+
+    def test_the_cache_leaf_is_created_private_not_chmodded_private_afterwards(
+        self,
+    ) -> None:
+        # The race: `mkdir()` then `chmod(0o700)` leaves the dir at 0777 & ~umask in
+        # between, and under a permissive umask another uid can win that window and
+        # plant a node_modules the oracles will execute. umask can only CLEAR bits, so
+        # `mkdir(mode=0o700)` can never yield anything wider -- the dir is private from
+        # the instant it exists. The end state is 0700 either way, so asserting on the
+        # call is the only way to see a window that by construction leaves no trace.
+        base = Path(tempfile.gettempdir()) / f"vendor-cache-atomic-{os.getpid()}"
+        self.addCleanup(shutil.rmtree, base, True)
+        real_mkdir = Path.mkdir
+        modes: list[object] = []
+
+        def spy(path: Path, *args: object, **kwargs: object) -> None:
+            modes.append(kwargs.get("mode"))
+            real_mkdir(path, *args, **kwargs)  # type: ignore[arg-type]
+
+        with mock.patch.object(Path, "mkdir", spy):
+            _assert_deps_base_safe(base, self.corpus_root)
+        self.assertEqual(modes, [0o700])
 
     def test_ensure_deps_refuses_a_pre_existing_group_or_world_writable_cache(self) -> None:
         # `if target.exists(): continue` trusts whatever is already on disk. A cache
