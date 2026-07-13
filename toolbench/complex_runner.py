@@ -281,6 +281,15 @@ def provision_worktree(
     repo_path = corpus_root / defect.repo
     branch = branch_name(defect, arm, trial)
 
+    # Refuse a dest that already holds files (a prior failed/partial trial): with
+    # `exist_ok=True` those stale files would be swept into `git add -A` and into
+    # the "hermetic" initial commit. An absent or empty dest is fine.
+    if dest.exists() and any(dest.iterdir()):
+        raise FileExistsError(
+            f"{dest} is not empty: refusing to provision over a non-empty tree "
+            "(a stale trial dir would leak files into the hermetic commit). "
+            "Remove it first."
+        )
     dest.mkdir(parents=True, exist_ok=True)
     # Export the pinned tree into `dest` as plain files: the archive carries no
     # history and no object store, so nothing pre-defect is reachable afterward.

@@ -259,6 +259,20 @@ class ProvisionWorktreeTests(unittest.TestCase):
         self.assertEqual((dest / "a.txt").read_text(encoding="utf-8"), "original\n")
         self.assertEqual(_run(["git", "status", "--porcelain"], dest).stdout, "")
 
+    def test_a_non_empty_dest_is_refused_not_provisioned_over(self) -> None:
+        # F2: `dest.mkdir(exist_ok=True)` + extract meant a dest still holding
+        # files from a prior failed/partial trial got provisioned OVER -- the stale
+        # files swept into `git add -A` and into the "hermetic" initial commit. The
+        # old `git worktree add` refused a non-empty dest; provisioning must too.
+        dest = self.root / "wt_dirty"
+        dest.mkdir(parents=True)
+        (dest / "stale.txt").write_text("left over from a failed trial\n", encoding="utf-8")
+        with self.assertRaises(FileExistsError):
+            provision_worktree(
+                self.defect, _arm("bash"), 1, self.corpus_root, dest,
+                fixture_root=self.fixture_root,
+            )
+
     def test_worktree_is_pinned_to_the_manifest_sha_not_whatever_head_is(self) -> None:
         # Advance the source repo past the pinned sha; the worktree must still
         # land on the pinned commit, not on whatever the corpus repo's HEAD is.
