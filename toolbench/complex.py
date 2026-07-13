@@ -691,11 +691,15 @@ def render_profile(rows: list[ProfileRow]) -> str:
             f"| {row.fixed_unlocated} | {row.unsolved} |"
         )
     lines.append("")
-    lines.append("`—` = no solved trial in that cell; cost is undefined, not zero.")
+    lines.append(
+        "`—` in a cost column = no defined sample for that metric; the cost is "
+        "undefined, not zero. It does NOT mean the cell is unsolved -- a "
+        "fixed-but-unlocated trial is solved yet renders `—` for N2 (next line)."
+    )
     lines.append(
         "`fixed, unlocated` = reached green with no correct `LOCATED:` line, so "
-        "the fix has no N2. The cost is real but is not edit cost; it is not "
-        "back-filled into median N2."
+        "the fix has no N2 by construction. Those trials ARE solved; their cost is "
+        "real but is not edit cost, and it is not back-filled into median N2."
     )
 
     offenders = [row for row in rows if row.violations]

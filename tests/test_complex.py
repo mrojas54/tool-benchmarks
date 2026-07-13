@@ -751,6 +751,17 @@ class ProfileTests(unittest.TestCase):
         ]))
         self.assertIn("fixed, unlocated", text)
 
+    def test_the_dash_legend_does_not_call_a_solved_cell_unsolved(self) -> None:
+        # F4: C2 made median N2 render `—` for fixed-but-unlocated trials, which ARE
+        # solved. The old legend said `—` means "no solved trial", which misreads
+        # that solved cell as unsolved. `—` means the cost metric has no defined
+        # sample; the fixed-but-unlocated case is explained on its own line.
+        text = render_profile(build_profile([
+            _trial("serena", False, True, None, None, total=9999),
+        ]))
+        self.assertNotIn("no solved trial", text)
+        self.assertIn("no defined sample", text)
+
     def test_an_arm_that_never_solves_reports_no_cost_at_all(self) -> None:
         # Its cheapness is meaningless; a number here would be a lie.
         rows = build_profile([_trial("bash", False, False, None, None)])
