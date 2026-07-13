@@ -1,0 +1,5 @@
+{
+  "cmd": ["npx", "vitest", "run", "tests/handlers/commit.test.ts"],
+  "cwd": "falcon-detective",
+  "language": "typescript"
+}

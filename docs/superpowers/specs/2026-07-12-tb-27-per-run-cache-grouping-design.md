@@ -3,8 +3,7 @@
 Date: 2026-07-12
 Ticket: `TB-27` (buildplan `T17`)
 Depends on: `TB-26` / `S39` (session-grain cache sums), landed
-Status: design approved; contract rows authored in SPEC/EVALUATION/BUILDPLAN;
-implementation not yet started
+Status: implemented (TB-27 / PR #46); contract rows live in SPEC/EVALUATION/BUILDPLAN
 
 ## Why this exists
 
@@ -187,9 +186,9 @@ it.**
 
 ## Contract rows
 
-Authored ahead of implementation so the premise correction is the living contract:
+Landed with the implementation (PR #46):
 
 - `SPEC.md` — **S40**, the run-grain criterion.
-- `EVALUATION.md` — S40 eval row (tests above; marked planned until TB-27 lands).
+- `EVALUATION.md` — S40 eval row.
 - `BUILDPLAN.md` — `T17` corrected (`run.json` + entry-grain; not `agents.md`).
-- `TB-27` — ticket title/description corrected on the board.
+- `TB-27` — ticket title/description corrected; status `done`.

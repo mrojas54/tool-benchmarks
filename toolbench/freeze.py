@@ -44,12 +44,19 @@ def _ref_to_dict(ref: SessionRef) -> dict[str, str | bool | None]:
 
 
 def _is_subagent_from_manifest(d: dict[str, str | bool | None], path: str | None) -> bool:
-    """Explicit bool flag wins; omitted flag falls back to legacy path nesting (S13)."""
-    if "is_subagent" in d:
-        flag = d["is_subagent"]
-        return isinstance(flag, bool) and flag
-    # Pre-CQ-3.2 manifests omit the flag; recover from `/subagents/` so
-    # `--exclude-subagents` still drops them on freeze replay.
+    """True if EITHER the flag says so or the path proves it (S13).
+
+    TB-29: manifests frozen before the discovery fix persist an explicit
+    `"is_subagent": false` for real subagent sessions -- written by the very code that
+    could never set it True. Letting an explicit flag win would carry the no-op into
+    replay forever, so a stale `false` would keep `--exclude-subagents` lying on every
+    frozen corpus. The path is ground truth: a session under `/subagents/` IS one,
+    whatever a stale flag claims. OR-ing the two also self-heals legacy manifests that
+    omit the key entirely.
+    """
+    flag = d.get("is_subagent")
+    if isinstance(flag, bool) and flag:
+        return True
     return path is not None and "/subagents/" in path
 
 

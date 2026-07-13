@@ -1,0 +1,4 @@
+{"type":"assistant","timestamp":"2026-07-12T10:00:00Z","requestId":"req_1","sessionId":"sess-gate-escape","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"npx vitest run lib/paperpal/__tests__/hint.test.ts"}}]}}
+{"type":"user","timestamp":"2026-07-12T10:00:01Z","sessionId":"sess-gate-escape","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"1 failing"}]}}
+{"type":"assistant","timestamp":"2026-07-12T10:00:02Z","requestId":"req_2","sessionId":"sess-gate-escape","message":{"role":"assistant","content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"npx vitest run; rg formatSlot lib"}}]}}
+{"type":"user","timestamp":"2026-07-12T10:00:03Z","sessionId":"sess-gate-escape","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":"lib/schedule.ts:12:formatSlot"}]}}

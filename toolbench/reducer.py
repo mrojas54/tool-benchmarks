@@ -8,10 +8,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from toolbench.transcript import ParseResult, UsageProvenance
+from toolbench.run_manifest import RunManifest
+from toolbench.transcript import BranchUsage, ParseResult, UsageProvenance
 
 OVERSIZED_OUTPUT_TOKENS = 5000
 UNKNOWN_MODEL = "unknown"
+# git stamps a literal "HEAD" as the branch when the checkout is detached, so this is
+# a real gitBranch value that is not a branch name -- and no manifest can list it.
+DETACHED_BRANCH = "HEAD"
 
 
 @dataclass
@@ -42,6 +46,58 @@ class AgentStats:
     # S39: summed session-grain cache tokens (caveat only; never ranks).
     cache_read_tokens_total: int = 0
     cache_creation_tokens_total: int = 0
+
+
+@dataclass
+class RunStats:
+    """One orchestration run's cache cost (S40) — caveat only, never ranked (S19).
+
+    Attribution is per-ENTRY, by that entry's `gitBranch`. `unattributed` is the
+    usage on non-run branches *within candidate sessions* (sessions with >=1 entry
+    on a run branch) — the straddle spillover, and nothing else. Scoped corpus-wide
+    it would be dominated by unrelated `main` work and read as noise on every run.
+    """
+
+    read: int = 0
+    creation: int = 0
+    input: int = 0
+    output: int = 0
+    candidate_sessions: int = 0
+    unattributed_read: int = 0
+    unattributed_creation: int = 0
+    # TB-28: usage on entries stamped gitBranch="HEAD" (a detached checkout). "HEAD"
+    # is the ABSENCE of a branch, not a branch, so it can never match a manifest and
+    # cannot be attributed to a run -- but a delegator in a detached worktree is
+    # indistinguishable from unrelated detached work, so it cannot be disclaimed
+    # either. Named, never folded into `read` (S23/S38: report the gap, never a
+    # silent zero -- and never a fabricated attribution).
+    detached_sessions: int = 0
+    detached_read: int = 0
+    detached_creation: int = 0
+    detached_input: int = 0
+    detached_output: int = 0
+    branches_seen: set[str] = field(default_factory=set)
+
+    @property
+    def total_cache(self) -> int:
+        """read + creation. The prefix-sharing invariant: a read drop offset by a
+        creation rise moved no tokens, so read alone is never the metric (S39)."""
+        return self.read + self.creation
+
+    def per_ticket(self, tickets: int) -> dict[str, float]:
+        """Normalize by ticket count so runs of different size compare."""
+        if tickets <= 0:
+            raise ValueError("tickets must be > 0 to normalize per ticket")
+        return {
+            "cache_read": self.read / tickets,
+            "cache_creation": self.creation / tickets,
+            "total_cache": self.total_cache / tickets,
+        }
+
+    def missing_branches(self, manifest: RunManifest) -> list[str]:
+        """Manifest branches that matched zero entries — a typo'd or renamed branch
+        would otherwise read as a ticket that cost nothing (S23/S38: name the gap)."""
+        return sorted(manifest.branches - self.branches_seen)
 
 
 @dataclass
@@ -79,6 +135,8 @@ class Reducer:
     tools: dict[tuple[str, str], ToolStats] = field(default_factory=dict)
     tools_by_model: dict[tuple[str, str, str], ToolStats] = field(default_factory=dict)
     inefficiency: InefficiencyCounters = field(default_factory=InefficiencyCounters)
+    run: RunManifest | None = None
+    run_stats: RunStats = field(default_factory=RunStats)
 
     def absorb(self, agent: str, result: ParseResult) -> None:
         """Fold one parsed session's calls into the running counters.
@@ -111,6 +169,11 @@ class Reducer:
             agent_stats.cache_creation_tokens_total += creation
             if read > 0 or creation > 0:
                 agent_stats.sessions_with_cache_hit += 1
+
+        # S40: entry-grain run attribution. Kept out of the per-call loop -- cache
+        # tokens are billed per message, not per tool call.
+        if self.run is not None:
+            self._absorb_run(result)
 
         prev_name: str | None = None
         prev_bad = False
@@ -171,6 +234,50 @@ class Reducer:
 
             prev_name = call.name
             prev_bad = is_bad
+
+    def _absorb_run(self, result: ParseResult) -> None:
+        """Fold one session into the run totals (S40). Only *candidate* sessions --
+        those with at least one entry on a run branch -- contribute anything."""
+        assert self.run is not None
+
+        # TB-28: book detached-HEAD usage BEFORE the candidate test. A delegator in a
+        # detached checkout has no run-branch entry at all, so it never reaches the
+        # loop below -- it would early-return and vanish from both the run total and
+        # `unattributed`, undercounting the run with no failure signal.
+        detached = result.usage_by_branch.get(DETACHED_BRANCH)
+        if detached is not None and _spent_anything(detached):
+            self.run_stats.detached_sessions += 1
+            self.run_stats.detached_read += detached.read
+            self.run_stats.detached_creation += detached.creation
+            self.run_stats.detached_input += detached.input
+            self.run_stats.detached_output += detached.output
+
+        in_set = {b for b in result.usage_by_branch if b in self.run.branches}
+        if not in_set:
+            return  # not part of this run; contributes to neither total
+        self.run_stats.candidate_sessions += 1
+        self.run_stats.branches_seen |= in_set
+        for branch, usage in result.usage_by_branch.items():
+            if branch in self.run.branches:
+                self.run_stats.read += usage.read
+                self.run_stats.creation += usage.creation
+                self.run_stats.input += usage.input
+                self.run_stats.output += usage.output
+            elif branch == DETACHED_BRANCH:
+                continue  # already booked as detached; `unattributed` means a BRANCH
+            else:
+                # Straddle spillover: work done in the same session on another branch.
+                self.run_stats.unattributed_read += usage.read
+                self.run_stats.unattributed_creation += usage.creation
+
+
+def _spent_anything(usage: BranchUsage) -> bool:
+    """Did this bucket cost ANY tokens? Gating the detached blind spot on cache tokens
+    alone (read/creation) would let an uncached detached turn -- real input/output, zero
+    cache -- fall through the `continue` below AND the booking above, reproducing the
+    very silent drop TB-28 exists to close. A measured zero is not a blind spot; an
+    uncounted cost is."""
+    return bool(usage.read or usage.creation or usage.input or usage.output)
 
 
 def _bump(counter: dict[str, int], tool: str) -> None:

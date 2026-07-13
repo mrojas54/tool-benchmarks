@@ -33,7 +33,7 @@ from toolbench.sources import (
     SkipReason,
     SkipRecord,
 )
-from toolbench.transcript import ParseResult
+from toolbench.transcript import BranchUsage, ParseResult
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -126,6 +126,20 @@ class DateRangeFilterTests(unittest.TestCase):
         self.assertIsNotNone(filtered.session_cache_read_tokens)
         self.assertIsNotNone(filtered.session_cache_creation_tokens)
 
+    def test_usage_by_branch_survives_date_filtering(self) -> None:
+        """S40 inherits the TB-25 invariant: usage_by_branch is session-grain, not a
+        per-call value, so it passes through --date-from/--date-to intact even when
+        every call is filtered out."""
+        result = ParseResult(
+            calls=[make_call(ts="2026-06-01T00:00:00Z")],
+            malformed=0,
+            usage_by_branch={"feat/tb-21": BranchUsage(read=300, creation=30, messages=1)},
+        )
+        filtered = _apply_date_range(result, "2026-07-01", None)
+        self.assertEqual(len(filtered.calls), 0)
+        self.assertEqual(filtered.usage_by_branch["feat/tb-21"].read, 300)
+        self.assertEqual(filtered.usage_by_branch["feat/tb-21"].creation, 30)
+
 
 class CliParsingTests(unittest.TestCase):
     def test_default_scope_is_agent_all_and_all_projects(self) -> None:
@@ -177,6 +191,23 @@ class CliParsingTests(unittest.TestCase):
     def test_verbose_flag(self) -> None:
         args = parse_args(["--verbose"])
         self.assertTrue(args.verbose)
+
+    def test_run_manifest_and_tickets_flags(self) -> None:
+        args = parse_args(["--run-manifest", "run.json", "--tickets", "3"])
+        self.assertEqual(args.run_manifest, "run.json")
+        self.assertEqual(args.tickets, 3)
+
+    def test_run_manifest_defaults_to_none(self) -> None:
+        args = parse_args([])
+        self.assertIsNone(args.run_manifest)
+        self.assertIsNone(args.tickets)
+
+    def test_tickets_zero_is_rejected(self) -> None:
+        """S39/S40: `--tickets 0` cannot normalize. Reject it at the CLI rather than
+        silently skipping normalization -- a per-ticket figure quietly missing from
+        the report is how a benchmark comparison gets made against the wrong number."""
+        with self.assertRaises(SystemExit):
+            parse_args(["--tickets", "0"])
 
 class SubagentFilterTests(unittest.TestCase):
     def test_filter_subagents_uses_is_subagent_flag(self) -> None:
@@ -376,6 +407,31 @@ class NonUtf8SessionTests(unittest.TestCase):
         self.assertIn("decode_error: 1", report)
         # the skipped id is available under --verbose
         self.assertIn("bad-session", report)
+
+class RunManifestMainTests(unittest.TestCase):
+    def test_malformed_run_manifest_exits_1_with_a_clear_message(self) -> None:
+        """The ticket originally pointed --run-manifest at agents.md (markdown).
+        Feeding one in must fail clearly, not with a stack trace."""
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "agents.md"
+            path.write_text("# Agents\n\n| Role | Ticket |\n", encoding="utf-8")
+            err = io.StringIO()
+            with redirect_stderr(err), redirect_stdout(io.StringIO()):
+                code = main(["--run-manifest", str(path)])
+            self.assertEqual(code, 1)
+            self.assertIn("not valid JSON", err.getvalue())
+
+    def test_non_utf8_run_manifest_exits_1_with_a_clear_message(self) -> None:
+        """UnicodeDecodeError subclasses ValueError, not OSError -- it must not
+        escape as an uncaught traceback (S23)."""
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "run.json"
+            path.write_bytes(b"\xff\xfe\x00invalid")
+            err = io.StringIO()
+            with redirect_stderr(err), redirect_stdout(io.StringIO()):
+                code = main(["--run-manifest", str(path)])
+            self.assertEqual(code, 1)
+            self.assertIn("not valid UTF-8", err.getvalue())
 
 class NonTranscriptExportTests(unittest.TestCase):
     """Binary payloads demote to skipped_roots, keeping `Malformed lines` honest (TB-10).

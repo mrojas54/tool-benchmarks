@@ -1,0 +1,10 @@
+{
+  "run": "tb-21-23",
+  "tickets": ["TB-21", "TB-22", "TB-23"],
+  "branches": [
+    "feat/tb-21-discovery-reconciliation",
+    "feat/tb-22-corpus-reproducibility",
+    "feat/tb-23-typed-skips"
+  ],
+  "worktrees": []
+}

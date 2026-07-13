@@ -4,7 +4,7 @@
 
 `toolbench` is an offline, standard-library-only Python CLI harness (no web
 server, no database daemon, no long-running services). "Running the app" means
-invoking the CLI entry points (`passive`, `probe`, `cache_tokens`); "testing
+invoking the CLI entry points (`passive`, `probe`); "testing
 end to end" means the hermetic `pytest` suite plus the strict gate. Standard
 commands live in `README.md` (Usage + Quality gate) and `pyproject.toml`;
 don't duplicate them here.
@@ -23,7 +23,7 @@ Non-obvious notes for this environment:
   module-level code, printing report tables to stdout mid-run.
 - **Running the passive analyzer on real data:** there is no `--root` CLI flag;
   raw scanning defaults to `~/.claude/projects` and treats the first path segment
-  under the root as the project (subagent files at `<project>/subagents/*.jsonl`
+  under the root as the project (subagent files at `<project>/<session-uuid>/subagents/*.jsonl`
   keep that owning project and set `is_subagent`). To exercise it, drop a
   `*.jsonl` transcript at `~/.claude/projects/<project>/session.jsonl` and run
   `uv run python -m toolbench.passive --agent all --all --index-source raw`.
@@ -34,13 +34,12 @@ Non-obvious notes for this environment:
   `--format trace` export raises `NonIsolableTurns` (S30) — use a native
   Claude Code transcript for probes. Probe joins via `ClaudeParser` with
   `keep_raw_input` / `track_turns` (no private Claude walker).
-- **Cache-token façade:** `uv run python -m toolbench.cache_tokens` works from
-  the repo root. From `~` (cwd hygiene for measuring `~/.claude`), invoke by
-  file path as in `.claude/skills/cache-token-metrics/SKILL.md` — `-m` fails
-  outside the checkout because the package is not installed into the venv.
-  Per-run grouping on passive is TB-27 / **S40** (design approved: entry-grain
-  by `gitBranch` via `--run-manifest <run.json>`, not `agents.md`) — see
-  `docs/superpowers/specs/2026-07-12-tb-27-per-run-cache-grouping-design.md`.
+- **Per-run cache-token grouping:** `--run-manifest <run.json>` is a flag on
+  `toolbench.passive` (S40), not a separate module. `uv run python -m
+  toolbench.passive --run-manifest run.json` works from the repo root. From
+  `~` (cwd hygiene for measuring `~/.claude`), invoke by file path as in
+  `.claude/skills/cache-token-metrics/SKILL.md` — `-m` fails outside the
+  checkout because the package is not installed into the venv.
 - **Module split:** aggregation is `reducer.py`, markdown/fingerprint is
   `report.py`, freeze I/O is `freeze.py`; `passive.py` is CLI + orchestration
   and re-exports the historical public symbols.

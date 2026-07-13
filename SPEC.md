@@ -31,7 +31,7 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 - **S7 — raw discovery.** `iter_session_files(root="~/.claude/projects",
   project=None, since=None)` yields Claude Code JSONL paths, filtered by
   owning-project-dir substring (`project in rel.parts[0]`, so
-  `<project>/subagents/*.jsonl` still matches — TB-8; not merely
+  `<project>/<session-uuid>/subagents/*.jsonl` still matches — TB-8; not merely
   `path.parent.name`) and file mtime (`since`, ISO-8601); raises
   `FileNotFoundError` if `root` is missing.
 - **S8 — AgentsView listing.** `iter_agentsview_sessions(agent="all", …)`
@@ -96,7 +96,7 @@ and re-exports the public symbols historical imports expect.
 - **S13 — subagents.** Included by default; `--exclude-subagents` drops refs
   with `SessionRef.is_subagent` set at discovery. Raw discovery attributes
   project as the first path segment under the session root and sets the flag
-  for `<project>/subagents/*.jsonl` — never by stamping `project="subagents"`
+  for `<project>/<session-uuid>/subagents/*.jsonl` — never by stamping `project="subagents"`
   or filtering on a path substring after the fact.
 - **S14 — report sections.** Five, in order: (1) Agent breakdown, (2) Tool
   leaderboard (per agent+tool), (3) Model breakdown (per agent+model+tool,
@@ -191,31 +191,33 @@ and re-exports the public symbols historical imports expect.
   field passes `--date-from`/`--date-to` intact. Read and creation are surfaced
   together deliberately: a prefix-sharing change (per-ticket context extracts vs a
   shared contract) trades one for the other, so a read delta read alone misleads
-  (TB-26; foundation for the per-run `--run-manifest` grouping, TB-27 / S40).
-- **S40 — run-grain cache attribution is per entry by `gitBranch`, not per
-  session.** A run's cost is the sum of usage on every transcript *entry* whose
-  `gitBranch` is in the run's branch set. Attribution is per-entry because
-  sessions straddle branches (~18% in the project corpus) and because root-checkout
-  delegators are not always confined to a worktree — a session-grain partition
-  either over-counts (one touching entry donates the whole session) or under-counts
-  (straddlers dropped). A *candidate session* has at least one entry on a run
-  branch; `unattributed` is the usage on **non-run branches within candidate
-  sessions** (straddle spillover), counted and reported, never silently dropped.
-  Sessions that never touch a run branch are outside the run and contribute to
-  neither figure. The CLI input is `--run-manifest <run.json>` (not
-  `agents.md`): the orchestrator emits `{run, tickets, branches, worktrees?}` at
-  dispatch while branch data is still live — `agents.md`'s Active table is
-  overwritten each tick and its Archived table has no branch column.
-  `worktrees` is an optional scan-narrowing hint only, never a correctness input.
-  `ClaudeParser` gains an additive `usage_by_branch` bucket in the same pass as
-  the S39 session totals (which stay undisturbed); the reducer folds in-set
-  branches into run totals and out-of-set into `unattributed`; the report is a
-  caveat surface (totals, per-ticket normalization, unattributed tally) that never
-  ranks. A manifest branch matching zero entries is reported, not silently zero.
-  Non-Claude agents are out of scope (`gitBranch` is a Claude Code field). Design:
-  `docs/superpowers/specs/2026-07-12-tb-27-per-run-cache-grouping-design.md`
-  (TB-27 / BUILDPLAN T17; design approved, not yet implemented — until it lands,
-  `toolbench.cache_tokens` remains the manual run-aggregation precursor).
+  (TB-26; foundation for the per-run `--run-manifest` grouping, TB-27).
+- **S40 — per-run cache-token grouping, entry-grain.**
+  A run's cache cost is the sum of `usage` on every transcript **entry** whose
+  `gitBranch` is in the run's branch set, supplied by a JSON run-manifest
+  (`--run-manifest`, format per the S37 freeze precedent) that the orchestrator
+  emits **at dispatch**. Attribution is per-entry, not per-session: a session is
+  not owned by one run (29/158 straddle >1 branch), and delegators do not always
+  run in worktrees (one is logged as having "Ran in ROOT checkout"), so neither
+  branch nor `cwd` partitions sessions cleanly. 1834/1834 usage-bearing entries
+  carry `gitBranch` — but **presence is not attributability** (TB-28): a detached
+  checkout stamps the literal `"HEAD"`, which is the absence of a branch and can
+  never match a manifest, so such usage is neither foldable into a run nor
+  disclaimable from it (a detached delegator and unrelated detached work are
+  indistinguishable). It is therefore booked to a separate `detached_*` bucket and
+  **named** in the run section — never folded into the total (which would fabricate
+  an attribution) and never dropped (which silently undercounts the run, the
+  project's signature failure). `ClaudeParser` buckets into
+  `usage_by_branch` in its existing pass (no second interpreter, CQ 1.2), additive
+  beside the S39 session totals, so `session total == sum of buckets` is an
+  invariant. `unattributed` is the usage on non-run branches **within candidate
+  sessions** (those with >=1 entry on a run branch) — the straddle spillover;
+  scoped corpus-wide it would be dominated by unrelated `main` work. A manifest
+  branch matching zero entries is reported, never a silent zero (S23/S38). The run
+  section renders read + creation together, normalized per ticket, as a Summary
+  caveat — never a ranking column (S19). `.lattice/orchestration/agents.md` cannot
+  serve as the manifest: it discards its Branch column on run completion (TB-27;
+  builds on the session-grain sums of S39/TB-26).
 
 ## Active probes — `toolbench/probe.py` + `protocols/active-probes.md`
 
@@ -262,10 +264,10 @@ and re-exports the public symbols historical imports expect.
 - **S20 — stdlib runtime, uv project.** The shipped `toolbench` package
   imports nothing third-party; the project is uv-managed (`pyproject.toml`
   + `uv.lock`, empty runtime deps, `dev` group `ruff`/`mypy`/`pytest`).
-- **S21 — entry points.** Runnable as `uv run python -m toolbench.passive`,
-  `… toolbench.probe`, and `… toolbench.cache_tokens` (S39 run-aggregation
-  façade; bridge until TB-27 / S40 folds `--run-manifest` into passive);
-  tests via `uv run pytest -q` (S31).
+- **S21 — entry points.** Runnable as `uv run python -m toolbench.passive`
+  and `… toolbench.probe`; tests via `uv run pytest -q` (S31). Run-grain
+  grouping (`--run-manifest` / `--tickets`) is a dimension on `toolbench.passive`
+  itself (S40) — the analyzer owns run grain, not a third CLI.
 - **S22 — strict gate.** `uv run ruff check .`, `uv run mypy --strict
   toolbench tests`, and the full pytest suite are green before any PR.
 - **S23 — error handling.** Empty session selection → clear message,

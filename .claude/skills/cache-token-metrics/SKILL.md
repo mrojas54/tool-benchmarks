@@ -1,6 +1,6 @@
 ---
 name: cache-token-metrics
-description: Measure a lattice-orchestrator run's cache-token cost (read + creation, per run, normalized per ticket) from its raw Claude transcripts — steps 1-4 of the token benchmark. Use when benchmarking orchestration token footprint, comparing a run before/after a change, or validating the lattice token-reduction levers. Engine is `toolbench.cache_tokens`, a run-aggregation façade over ClaudeParser (S39).
+description: Measure a lattice-orchestrator run's cache-token cost (read + creation, per run, normalized per ticket) from its raw Claude transcripts — steps 1-4 of the token benchmark. Use when benchmarking orchestration token footprint, comparing a run before/after a change, or validating the lattice token-reduction levers. Engine is `toolbench.passive --run-manifest` (S40): run-grain grouping is a dimension ON the passive analyzer, not a standalone reader.
 ---
 
 # cache-token-metrics
@@ -10,54 +10,42 @@ Claude Code transcripts of a lattice run, sums `usage` per session, folds the ru
 sessions into one total, and normalizes per ticket so runs of different size compare.
 
 Session summing goes through **`ClaudeParser`** (S39 / CQ 1.2) — the same parse path as
-the passive analyzer. `toolbench.cache_tokens` is the run-aggregation + CLI layer until
-TB-27's `--run-manifest` lands on passive (S40).
+every other passive-analyzer report. Run-grain grouping (`--run-manifest` / `--tickets`)
+is TB-27 / S40: it landed as a grouping dimension on `toolbench.passive` itself, so there
+is one analyzer and one number — no separate run-aggregation CLI to drift against it.
 
 **Runs against `~/.claude/projects`** — invoke from `~` (cwd hygiene), not from a project
 checkout, so the read doesn't bill an unrelated project's cache.
-
-## S40 design note (what TB-27 will change)
-
-The approved TB-27 criterion (**S40**) is **entry-grain**, not session-grain: a run's
-cost is the sum of usage on every transcript *entry* whose `gitBranch` is in the run's
-branch set. Sessions that straddle branches (~18% in this corpus) must not donate their
-whole total. The CLI input will be `--run-manifest <run.json>` emitted at dispatch
-(`{run, tickets, branches, worktrees?}`) — **not** `agents.md`, which discards branch
-columns when a run finishes. See
-`docs/superpowers/specs/2026-07-12-tb-27-per-run-cache-grouping-design.md`.
-
-Until that lands, this skill's hand-built transcript list remains an **approximate**
-session-grain precursor. Prefer branch/time correlation when choosing paths, and treat
-straddling sessions as a known over-count risk.
 
 ## The measurement (recipe steps 1-4)
 
 1. **Pick two comparable runs.** Best: replay one small throwaway contract, levers off vs
    on. Cheapest: one recent pre-change run vs one new post-change run of *similar ticket
-   count*. Record each run's Lattice ticket count, time window from `run-state.md`, and
-   (if still available) the branch/worktree set from the Active table in
-   `.lattice/orchestration/agents.md` — knowing that table is overwritten on completion.
-2. **Build the run manifest.** Prefer the branches that were live for the run. Collect
-   `~/.claude/projects/*/<uuid>.jsonl` transcripts whose cwd matches a run worktree (or
-   the root checkout for root-running delegators) and whose mtime falls in the window.
-   Write one transcript path per line to a manifest file. (No run-id exists in transcripts
-   — this correlation *is* the manifest. TB-27 / S40 will replace it with entry-grain
-   filtering from a dispatch-time `run.json`.)
-3. **Sum per session** — `toolbench.cache_tokens` delegates to `ClaudeParser`, which
-   stamps session-grain `cache_read` / `cache_creation` / input / output from messages
-   that carry `usage`.
-4. **Aggregate + normalize** — it folds the manifest's sessions into one `RunUsage` and, with
-   `--tickets N`, reports per-ticket figures.
+   count*. Record each run's `.lattice/orchestration/agents.md`, its Lattice ticket count,
+   and its time window from `run-state.md`.
+2. **Build the run manifest.** JSON, written by the orchestrator **at dispatch** (agents.md
+   discards its Branch column once the run finishes, so reconstructing it after the fact
+   isn't reliable): `{"run": "2", "tickets": ["TB-18", "TB-19"], "branches":
+   ["feat/tb-18", "tb-19-pytest-gate"], "worktrees": ["~/wt/tb-19"]}` (`worktrees` is
+   optional; `branches` is not — an empty or missing list is refused as malformed rather
+   than silently attributing nothing). No run-id exists inside a transcript — the branch
+   set in this manifest *is* the correlation.
+3. **Sum per session** — the passive analyzer's `ClaudeParser` stamps session-grain
+   `cache_read` / `cache_creation` / input / output *and* buckets that same usage by each
+   entry's `gitBranch` (S40), so a session that straddles branches only donates the entries
+   that actually touched the run's branches, not its whole total.
+4. **Aggregate + normalize** — `--run-manifest` folds every scanned session's matching
+   branch buckets into one run total (reporting unattributed spillover and any manifest
+   branch that matched zero entries); `--tickets N` then normalizes it per ticket.
 
 ```bash
-# from ~ , per run. Invoke the reader BY FILE PATH: `-m toolbench.cache_tokens` only
-# resolves from the repo root (toolbench isn't installed into the venv), whereas this
-# skill runs from ~ for cwd hygiene — so the module form fails here, the path form works.
-uv run --project ~/tool-benchmarks python ~/tool-benchmarks/toolbench/cache_tokens.py \
-    --manifest run-A.manifest --tickets 12
-# or pass transcript paths directly:
-uv run --project ~/tool-benchmarks python ~/tool-benchmarks/toolbench/cache_tokens.py \
-    ~/.claude/projects/<proj>/*.jsonl --tickets 12 --json
+# from ~ , per run. `toolbench` is not installed into the venv, so `-m toolbench.passive`
+# only resolves with the repo root on PYTHONPATH -- set it explicitly rather than `cd`ing
+# into the repo, which would defeat the cwd hygiene above.
+# Discovery flags (--agent/--project/--since/--limit) still bound which sessions get
+# scanned; --run-manifest then filters+folds by branch within that scan.
+PYTHONPATH=~/tool-benchmarks uv run --project ~/tool-benchmarks python -m toolbench.passive \
+    --agent claude --run-manifest run-A.json --tickets 12
 ```
 
 ## Reading the result — the one trap
@@ -68,7 +56,7 @@ uv run --project ~/tool-benchmarks python ~/tool-benchmarks/toolbench/cache_toke
   change (per-ticket context extracts vs a shared contract) just moved cost between the two
   buckets; `TOTAL_BILLED` is unchanged. **This is why the reader always prints creation next
   to read** — cache-read alone misleads (S39). The eval
-  `test_prefix_sharing_trap_conserves_total` pins exactly this.
+  `test_prefix_sharing_trap_read_drop_offset_by_creation_rise` pins exactly this.
 - **Guardrails to check alongside tokens:** wall-clock (`run-state.md` timestamps),
   full-contract-escalation count (delegator completion comments — the Standard Clause 13
   flag), Result Validator pass rate. A token win that raises escalations or fails validation
@@ -76,27 +64,34 @@ uv run --project ~/tool-benchmarks python ~/tool-benchmarks/toolbench/cache_toke
 - **Caveats to state in any writeup:** observational (uncontrolled) comparisons are confounded
   by run difficulty — normalize per ticket and say so; n=1-vs-1 is directional, not
   significant. The `/session-report` skill cross-checks these numbers from the same data via
-  an independent implementation. Session-grain hand manifests can over-count straddlers
-  (S40).
+  an independent implementation.
 
 ## Evals
 
-Fixture-backed pytest, under the repo's standard gate (`tests/test_cache_tokens.py`,
-fixtures in `tests/fixtures/cache_tokens/`):
+Fixture-backed pytest, under the repo's standard gate — no dedicated test file for this
+skill; the contracts live where the code that implements them lives:
 
 ```bash
-cd ~/tool-benchmarks && uv run pytest -q tests/test_cache_tokens.py
+cd ~/tool-benchmarks && uv run pytest -q tests/test_parsers.py tests/test_reducer.py tests/test_run_manifest.py
 ```
 
-They pin the S39 contracts: read+creation summation, `0`-not-`None` when usage is present
-with zero cache, `None` when unmeasured, run aggregation with an unmeasured-session count,
-per-ticket normalization (and its `tickets > 0` guard), and the prefix-sharing trap above.
+- **`tests/test_parsers.py`** — per-session read+creation summation, `0`-not-`None` when
+  usage is present with zero cache, `None` when unmeasured, and `gitBranch` bucketing
+  (including the no-`gitBranch`-on-the-entry case, which buckets under `""`).
+- **`tests/test_reducer.py`** — run aggregation restricted to manifest branches, the
+  straddling-session counter-trap (a session touching a run branch for one entry donates
+  only that entry, not its session total), missing-branch reporting, per-ticket
+  normalization (and its `tickets > 0` guard), and the prefix-sharing trap
+  (`test_prefix_sharing_trap_read_drop_offset_by_creation_rise`).
+- **`tests/test_run_manifest.py`** — the run-manifest JSON reader itself (malformed/empty
+  `branches`, non-JSON input, UTF-8 errors).
 
 ## Engine & scope
 
-`toolbench/cache_tokens.py` — `sum_session` façades over `ClaudeParser` (which stamps
-`ParseResult.session_cache_*` / input / output); `sum_run` / `per_ticket` + CLI remain
-here for run-grain aggregation. Passive by path (`python toolbench/cache_tokens.py …`) or
-`-m toolbench.cache_tokens` from the repo root. Per-run grouping via
-`passive --run-manifest <run.json>` is TB-27 / S40 (this skill is that ticket's manual
-precursor).
+`toolbench/passive.py` — `ClaudeParser` (which stamps `ParseResult.session_cache_*` /
+input / output / `usage_by_branch`) feeds a `Reducer`; when `--run-manifest` names a run
+(`toolbench/run_manifest.py`), the reducer folds only the manifest's branches into a
+`RunStats` and, with `--tickets N`, reports per-ticket figures. Run-grain grouping is a
+dimension on the one analyzer (TB-27 / S40) — there is no separate CLI for it. (The prior
+standalone run-aggregation module that held this before `--run-manifest` landed has been
+retired; its evals are re-homed above.)

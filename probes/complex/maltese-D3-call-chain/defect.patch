@@ -1,0 +1,13 @@
+diff --git a/falcon-mcp/src/sandbox.rs b/falcon-mcp/src/sandbox.rs
+index c9fabf8..57e5359 100644
+--- a/falcon-mcp/src/sandbox.rs
++++ b/falcon-mcp/src/sandbox.rs
+@@ -128,7 +128,7 @@ impl Sandbox {
+     }
+
+     pub fn check_writable(&self) -> anyhow::Result<()> {
+-        if self.read_only {
++        if !self.read_only {
+             anyhow::bail!("sandbox is read-only");
+         }
+         Ok(())

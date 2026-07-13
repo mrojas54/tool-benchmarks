@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-12T14:50:03Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "id": "art_01KXBCX1F8MD9RQ7XEKJ0SPA1W",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KXBCX1F8MD9RQ7XEKJ0SPA1W.md",
+    "size_bytes": 2896
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": "Closed by PR #47 (merged 330a314).\n\nFIX: sources.py::_project_and_subagent tested rel.parts[1] == 'subagents', but the real on-disk layout is <project>/<session-uuid>/subagents/agent-*.jsonl \u2014 parts[1",
+  "tags": [],
+  "title": "Review findings",
+  "token_usage": null,
+  "type": "note"
+}

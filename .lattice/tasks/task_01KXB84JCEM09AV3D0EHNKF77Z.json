@@ -1,0 +1,44 @@
+{
+  "assigned_to": null,
+  "branch_links": [
+    {
+      "branch": "fix/tb-28-29-run-attribution-gaps",
+      "linked_at": "2026-07-12T14:19:40Z",
+      "linked_by": "agent:claude",
+      "repo": null
+    }
+  ],
+  "comment_count": 1,
+  "complexity": null,
+  "created_at": "2026-07-12T13:26:46Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "description": "sources.py:102 tests rel.parts[1] == 'subagents', but the real raw layout is <project>/<session-uuid>/subagents/agent-*.jsonl \u2014 the session UUID sits at parts[1], so is_subagent is NEVER True on raw scans. Passing --exclude-subagents therefore prints 'Subagents included: no' in the report while still including them: the report states the opposite of what it did. Pre-existing (CQ 3.2), predates TB-27 and does not affect S40's run totals (subagent cost belongs in the run, which is what currently happens). Found by the TB-27 final whole-branch review.",
+  "done_at": "2026-07-12T14:50:03Z",
+  "evidence_refs": [
+    {
+      "id": "ev_01KXBCX1F9AT1QG6DGB11R22CS",
+      "role": "review",
+      "source_type": "comment"
+    },
+    {
+      "id": "art_01KXBCX1F8MD9RQ7XEKJ0SPA1W",
+      "role": "review",
+      "source_type": "artifact"
+    }
+  ],
+  "id": "task_01KXB84JCEM09AV3D0EHNKF77Z",
+  "last_event_id": "ev_01KXBCX1F9AT1QG6DGB11R22CV",
+  "last_status_changed_at": "2026-07-12T14:50:03Z",
+  "priority": "medium",
+  "relationships_out": [],
+  "reopened_count": 0,
+  "schema_version": 1,
+  "short_id": "TB-29",
+  "status": "done",
+  "tags": null,
+  "title": "exclude-subagents flag is a silent no-op: is_subagent path detection tests the wrong path segment",
+  "type": "bug",
+  "updated_at": "2026-07-12T14:50:03Z",
+  "urgency": null
+}

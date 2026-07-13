@@ -1,0 +1,13 @@
+diff --git a/falcon-detective/src/handlers/commit.ts b/falcon-detective/src/handlers/commit.ts
+index d455814..c5e639b 100644
+--- a/falcon-detective/src/handlers/commit.ts
++++ b/falcon-detective/src/handlers/commit.ts
+@@ -37,7 +37,7 @@ export async function commitOneHandle({
+   });
+   await mcp.connect();
+   try {
+-    await mcp.call("git_add", { paths: [value.diffPath] }, OkResult);
++    await mcp.call("git_add", { path: value.diffPath }, OkResult);
+     const r = await mcp.call(
+       "git_commit",
+       {

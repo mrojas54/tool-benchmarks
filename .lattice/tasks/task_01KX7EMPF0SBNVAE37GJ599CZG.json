@@ -6,12 +6,23 @@
   "created_at": "2026-07-11T02:03:29Z",
   "created_by": "agent:claude",
   "custom_fields": {},
-  "description": "Add per-run grouping to the passive analyzer under SPEC S40: `passive --run-manifest <run.json>` where run.json is orchestrator-emitted at dispatch ({run, tickets, branches, worktrees?}). Fold entry-grain usage whose gitBranch is in the run branch set into one reducer; non-run-branch usage within candidate sessions accumulates as unattributed (reported, never silent). Emit cache read+creation per run, normalized per ticket. Claude-only. Retire the standalone cache_tokens façade once landed. NOT agents.md (discards branch data on completion) and NOT a session-set partition (sessions straddle branches). Design: docs/superpowers/specs/2026-07-12-tb-27-per-run-cache-grouping-design.md. Depends on TB-26 (S39).",
-  "done_at": null,
-  "evidence_refs": [],
+  "description": "Per-run cache-token grouping (S40): --run-manifest <run.json> supplies a run's branch set; cache read+creation are attributed PER ENTRY by that entry's gitBranch, normalized per ticket. Entry-grain, not session-grain: sessions straddle branches (29/158) and delegators do not always run in worktrees, so no clean session->run partition exists. PREMISE CORRECTION: the original description named agents.md as the manifest input; it discards its Branch column on run completion and cannot serve. Spec: S40. Depends on TB-26.",
+  "done_at": "2026-07-12T13:29:30Z",
+  "evidence_refs": [
+    {
+      "id": "ev_01KXB89JJD0BFR3VREK4A2VAES",
+      "role": "review",
+      "source_type": "comment"
+    },
+    {
+      "id": "art_01KXB89JJD0BFR3VREK4A2VAER",
+      "role": "review",
+      "source_type": "artifact"
+    }
+  ],
   "id": "task_01KX7EMPF0SBNVAE37GJ599CZG",
-  "last_event_id": "ev_01KXBDOC1S40TB27CONTRACT01",
-  "last_status_changed_at": "2026-07-11T02:03:29Z",
+  "last_event_id": "ev_01KXB89JJD0BFR3VREK4A2VAEW",
+  "last_status_changed_at": "2026-07-12T13:29:30Z",
   "priority": "medium",
   "relationships_out": [
     {
@@ -25,10 +36,10 @@
   "reopened_count": 0,
   "schema_version": 1,
   "short_id": "TB-27",
-  "status": "backlog",
+  "status": "done",
   "tags": null,
-  "title": "per-run cache-token grouping (S40): --run-manifest <run.json> folds entry-grain gitBranch usage into one reducer",
+  "title": "Per-run cache-token grouping (S40): --run-manifest <run.json>, entry-grain by gitBranch",
   "type": "task",
-  "updated_at": "2026-07-12T11:05:00Z",
+  "updated_at": "2026-07-12T13:29:30Z",
   "urgency": null
 }

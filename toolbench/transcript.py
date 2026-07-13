@@ -100,6 +100,22 @@ class TurnStats:
 
 
 @dataclass
+class BranchUsage:
+    """Per-branch usage sums for one session (S40).
+
+    Keyed in `ParseResult.usage_by_branch` by the *entry's* `gitBranch`. A session
+    that straddles branches has one bucket per branch: attribution is per-entry,
+    because a session is not owned by one run (29/158 sessions straddle).
+    """
+
+    read: int = 0
+    creation: int = 0
+    input: int = 0
+    output: int = 0
+    messages: int = 0
+
+
+@dataclass
 class ParseResult:
     """Output of a `TranscriptParser.parse` pass (S5): joined calls plus a malformed-line count.
 
@@ -135,6 +151,10 @@ class ParseResult:
     session_input_tokens: int = 0
     session_output_tokens: int = 0
     session_usage_messages: int = 0
+    # S40: per-entry usage bucketed by gitBranch. ADDITIVE beside the S39 session
+    # totals -- the invariant `session total == sum of buckets` is an eval. Entries
+    # with usage but no gitBranch bucket under "" so no billed token is dropped.
+    usage_by_branch: dict[str, BranchUsage] = field(default_factory=dict)
     unjoinable: dict[str, int] = field(default_factory=dict)
     # Populated only when ClaudeParser(track_turns=True); empty otherwise.
     turns: dict[str, TurnStats] = field(default_factory=dict)

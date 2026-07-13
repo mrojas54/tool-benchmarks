@@ -1,0 +1,13 @@
+diff --git a/web/lib/paperpal/hint.ts b/web/lib/paperpal/hint.ts
+index 961ee28..d329792 100644
+--- a/web/lib/paperpal/hint.ts
++++ b/web/lib/paperpal/hint.ts
+@@ -29,7 +29,7 @@ export async function fetchHint(
+   }
+ 
+   return postPaperPalJson<AnalyzeHintResponse>(
+-    "/functions/v1/analyze-hint",
++    "/functions/v1/analyze-hints",
+     body,
+     accessToken,
+   );
