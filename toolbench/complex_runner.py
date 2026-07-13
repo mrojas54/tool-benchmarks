@@ -7,10 +7,10 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
@@ -129,14 +129,24 @@ def _find_fixture_dir(fixture_root: Path, defect: DefectSpec) -> Path:
 # cache nested under `corpus_root` (`corpus/.deps/<repo>`) failed this -- `..` from
 # it reaches `corpus/` and its sibling clone `corpus/<repo>` = unpatched source, the
 # identical leak as C1 in a new costume. Even a repo-root sibling like `.trial-deps/`
-# fails, because the repo root has `corpus/` as a child. So the default base is
-# `$XDG_CACHE_HOME/toolbench/deps` (falling back to `~/.cache/...`): its ancestry is
-# `~/.cache/toolbench`, `~/.cache`, `~` -- all source-free. The base is a parameter
-# so tests can point it at a throwaway location.
+# fails, because the repo root has `corpus/` as a child.
+#
+# But *location outside the tree* is not enough, and `~/.cache/toolbench/deps` (the
+# prior fix) still leaked: any two paths on one filesystem share a common ancestor,
+# and a cache under `$HOME` shares `$HOME` with a corpus checked out under `$HOME`
+# (tool-benchmarks lives under `~`). `$HOME` is walkable, so `..` from the cache
+# reaches `~` and back down into `corpus/`. The only safe placement is one where the
+# cache and the corpus checkout DIVERGE AT THE FILESYSTEM ROOT -- their sole common
+# ancestor is `/`. `tempfile.gettempdir()` (honoring `$TMPDIR`; macOS
+# `/var/folders/...`, else `/tmp`) is such a location relative to a `$HOME` checkout,
+# and the leaf name is deliberately non-suggestive -- it embeds neither "toolbench"
+# nor "corpus", so a committed symlink target reveals no breadcrumb toward the
+# corpus. The base stays a parameter so a caller (or a test) can override it.
+_DEPS_CACHE_DIRNAME = "vendor-cache"
+
+
 def _default_deps_base() -> Path:
-    base = os.environ.get("XDG_CACHE_HOME")
-    root = Path(base) if base else Path.home() / ".cache"
-    return root / "toolbench" / "deps"
+    return Path(tempfile.gettempdir()) / _DEPS_CACHE_DIRNAME
 
 
 def _deps_root(deps_base: Path, repo: str) -> Path:
@@ -147,7 +157,8 @@ def ensure_deps(corpus_root: Path, repo: str, deps_base: Path | None = None) -> 
     """Build `repo`'s dependency cache under `<deps_base>/<repo>/` if absent.
 
     The cache lives outside `corpus_root` (see the module note above): its default
-    is `$XDG_CACHE_HOME/toolbench/deps`, whose ancestry holds no corpus source.
+    is under `tempfile.gettempdir()`, which diverges from a `$HOME` corpus checkout
+    at the filesystem root, so no cache ancestor is walkable back to corpus source.
 
     Idempotent: a dep whose target path already exists is left alone, so this is
     cheap to call before every trial. All work here happens OUTSIDE the measured

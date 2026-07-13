@@ -9,6 +9,7 @@ from unittest import mock
 from toolbench.complex import ArmSpec, DefectSpec, Truth, build_arms
 from toolbench.complex_runner import (
     UnprovisionedWorktree,
+    _default_deps_base,
     branch_name,
     build_claude_argv,
     provision_worktree,
@@ -294,7 +295,10 @@ class DepsCacheAncestryTests(unittest.TestCase):
     clone: otherwise a bash/control arm can `cd node_modules && cd ../../..` back
     into unpatched source. `corpus/.deps/<repo>` failed exactly this -- corpus_root
     is its ancestor and `corpus_root/<repo>` is a live clone. The fix moves the
-    cache outside corpus_root entirely (default `$XDG_CACHE_HOME/toolbench/deps`).
+    cache outside corpus_root entirely (default under `tempfile.gettempdir()`).
+
+    Still necessary but NOT sufficient -- see DepsCacheRootDivergenceTests for the
+    filesystem-root-divergence invariant that the `~/.cache` default failed.
     """
 
     def setUp(self) -> None:
@@ -342,14 +346,16 @@ class DepsCacheAncestryTests(unittest.TestCase):
             test_gate="Bash(true:*)",
         )
 
-        # Pre-populate the cache under BOTH the OLD leaky layout (corpus/.deps/...)
-        # and the FIXED layout ($XDG_CACHE_HOME/toolbench/deps/...) so the symlink
-        # target exists either way and the test turns on ancestry, not on a missing
-        # cache. `_link_deps` only symlinks an existing target; no npm ci needed.
-        self._populate(self.corpus_root / ".deps" / "toy" / "web" / "node_modules")
-        self.xdg = self.root / "xdg-cache"
-        self._populate(self.xdg / "toolbench" / "deps" / "toy" / "web" / "node_modules")
-        patcher = mock.patch.dict(os.environ, {"XDG_CACHE_HOME": str(self.xdg)})
+        # Point the default dep-cache base at a throwaway dir and pre-populate the
+        # cached target there, so the symlink resolves and the test turns on
+        # ancestry, not on a missing cache. `_link_deps` only symlinks an existing
+        # target; no npm ci needed.
+        self.deps_base = self.root / "cache"
+        self._populate(self.deps_base / "toy" / "web" / "node_modules")
+        patcher = mock.patch(
+            "toolbench.complex_runner._default_deps_base",
+            return_value=self.deps_base,
+        )
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -378,6 +384,48 @@ class DepsCacheAncestryTests(unittest.TestCase):
                 forbidden,
                 ancestry,
                 f"dep symlink resolves under {forbidden}; `..` walks back to source",
+            )
+
+
+class DepsCacheRootDivergenceTests(unittest.TestCase):
+    """F1 residual (codex re-review of the `~/.cache` fix) -- location alone is not
+    sufficient. Any two paths on one filesystem share a common ancestor (at worst
+    `/`); only when the dep cache and the corpus checkout diverge at the filesystem
+    ROOT -- their sole common ancestor is `/` -- is there no walkable path from a
+    cache ancestor back into pristine source. A `~/.cache` default shares `$HOME`
+    with a corpus checked out under `$HOME`, and `$HOME` is walkable: the identical
+    leak in a new costume. This encodes codex's invariant: for every ancestor of the
+    resolved cache target other than `/`, that ancestor must NOT also be an ancestor
+    of the corpus checkout.
+    """
+
+    def setUp(self) -> None:
+        # Model the real deployment: tool-benchmarks (hence `corpus/`) lives under
+        # $HOME. A throwaway dir under $HOME -- cleaned up -- reproduces the shared
+        # `$HOME` ancestor that made the `~/.cache` default leaky, without touching
+        # the real corpus or the real dep cache.
+        self._tmp = tempfile.TemporaryDirectory(dir=Path.home())
+        self.addCleanup(self._tmp.cleanup)
+        self.corpus_root = Path(self._tmp.name) / "tool-benchmarks" / "corpus"
+        self.corpus_root.mkdir(parents=True)
+
+    def test_default_cache_diverges_from_corpus_at_filesystem_root(self) -> None:
+        # The resolved target a trial tree's `web/node_modules` symlink would point
+        # at, using the real default base -- no override.
+        cache_target = (
+            _default_deps_base() / "toy" / "web" / "node_modules"
+        ).resolve()
+        corpus = self.corpus_root.resolve()
+        root = Path(cache_target.anchor)
+        for ancestor in cache_target.parents:
+            if ancestor == root:
+                continue
+            self.assertNotEqual(
+                os.path.commonpath([ancestor, corpus]),
+                str(ancestor),
+                f"cache ancestor {ancestor} is also an ancestor of the corpus "
+                f"checkout {corpus}: `..` from the cache walks back to pristine "
+                "source",
             )
 
 
