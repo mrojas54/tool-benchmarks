@@ -346,6 +346,8 @@ class MainExitContractTests(unittest.TestCase):
         }
         runner = FakeRunner(
             [
+                # Parent probe, then the full listing -- discovery pages twice (TB-31).
+                completed(stdout=json.dumps(payload)),
                 completed(stdout=json.dumps(payload)),
                 completed(stdout=raw_text),
             ]
@@ -392,6 +394,8 @@ class NonUtf8SessionTests(unittest.TestCase):
         }
         runner = FakeRunner(
             [
+                # Parent probe, then the full listing -- discovery pages twice (TB-31).
+                completed(stdout=json.dumps(payload)),
                 completed(stdout=json.dumps(payload)),
                 UnicodeDecodeError("utf-8", b"\xa0", 0, 1, "invalid start byte"),
                 completed(stdout=raw_text),
@@ -454,6 +458,8 @@ class NonTranscriptExportTests(unittest.TestCase):
         }
         runner = FakeRunner(
             [
+                # Parent probe, then the full listing -- discovery pages twice (TB-31).
+                completed(stdout=json.dumps(payload)),
                 completed(stdout=json.dumps(payload)),
                 completed(stdout=sqlite_payload),
                 completed(stdout=raw_text),
@@ -483,7 +489,7 @@ class NonTranscriptExportTests(unittest.TestCase):
             "next_cursor": "",
             "total": 1,
         }
-        runner = FakeRunner([completed(stdout=json.dumps(payload)), completed(stdout="SQLite format 3\x00")])
+        runner = FakeRunner([completed(stdout=json.dumps(payload)), completed(stdout=json.dumps(payload)), completed(stdout="SQLite format 3\x00")])
         with redirect_stdout(io.StringIO()):
             main(["--index-source", "agentsview"], runner=runner)
         self.assertEqual(set(tmp_root.glob("*.jsonl")) - before, set())
@@ -622,6 +628,8 @@ class DiscoveryReconciliationMainTests(unittest.TestCase):
         }
         runner = FakeRunner(
             [
+                # Parent probe, then the full listing -- discovery pages twice (TB-31).
+                completed(stdout=json.dumps(payload)),
                 completed(stdout=json.dumps(payload)),
                 completed(stdout=good),
                 completed(returncode=1, stderr="fatal: source file not found: /x/dead-1.jsonl"),
@@ -667,7 +675,7 @@ class CorpusFingerprintMainTests(unittest.TestCase):
         reports = []
         for _ in range(2):
             runner = FakeRunner(
-                [completed(stdout=self._payload()), completed(stdout=good), completed(stdout=good)]
+                [completed(stdout=self._payload()), completed(stdout=self._payload()), completed(stdout=good), completed(stdout=good)]
             )
             out = io.StringIO()
             with redirect_stdout(out):
@@ -679,11 +687,12 @@ class CorpusFingerprintMainTests(unittest.TestCase):
         good = (FIXTURES / "sample.jsonl").read_text()
         # run 1: both sessions scan.
         r1 = FakeRunner(
-            [completed(stdout=self._payload()), completed(stdout=good), completed(stdout=good)]
+            [completed(stdout=self._payload()), completed(stdout=self._payload()), completed(stdout=good), completed(stdout=good)]
         )
         # run 2: good-2's transcript has aged out of the retention window.
         r2 = FakeRunner(
             [
+                completed(stdout=self._payload()),
                 completed(stdout=self._payload()),
                 completed(stdout=good),
                 completed(returncode=1, stderr="fatal: source file not found: /x/good-2.jsonl"),
@@ -712,10 +721,10 @@ class CorpusFingerprintMainTests(unittest.TestCase):
         )
         grown = good + extra
         r1 = FakeRunner(
-            [completed(stdout=self._payload()), completed(stdout=good), completed(stdout=good)]
+            [completed(stdout=self._payload()), completed(stdout=self._payload()), completed(stdout=good), completed(stdout=good)]
         )
         r2 = FakeRunner(
-            [completed(stdout=self._payload()), completed(stdout=grown), completed(stdout=good)]
+            [completed(stdout=self._payload()), completed(stdout=self._payload()), completed(stdout=grown), completed(stdout=good)]
         )
         outs = []
         for runner in (r1, r2):
@@ -749,7 +758,7 @@ class CorpusFreezeMainTests(unittest.TestCase):
         with TemporaryDirectory() as d:
             manifest = str(Path(d) / "corpus.manifest")
             runner = FakeRunner(
-                [completed(stdout=self._payload()), completed(stdout=good), completed(stdout=good)]
+                [completed(stdout=self._payload()), completed(stdout=self._payload()), completed(stdout=good), completed(stdout=good)]
             )
             with redirect_stdout(io.StringIO()):
                 code = main(["--index-source", "agentsview", "--freeze", manifest], runner=runner)
@@ -821,3 +830,59 @@ class CorpusFreezeMainTests(unittest.TestCase):
                 outs.append(out.getvalue())
             self.assertEqual(outs[0], outs[1])
 
+
+
+class SubagentExclusionAcrossIndexSourcesTests(unittest.TestCase):
+    """TB-31: `--exclude-subagents` must move the corpus fingerprint on BOTH index
+    sources, and the provenance line must report what was actually filtered.
+
+    It used to be a silent no-op on the AgentsView path: the listing never asked for
+    child sessions, so no ref was ever stamped `is_subagent` and the filter had nothing
+    to remove -- while the report still flipped to "Subagents included: no". Identical
+    fingerprints with the flag on and off, and an unearned claim beside them.
+    """
+
+    _PARENT = {"id": "good-1", "project": "p", "agent": "claude"}
+    _CHILD = {"id": "agent-child-1", "project": "p", "agent": "claude"}
+
+    def _listing(self, *sessions: dict[str, str]) -> str:
+        return json.dumps({"sessions": list(sessions), "next_cursor": "", "total": len(sessions)})
+
+    def _run(self, argv: list[str], exports: int) -> str:
+        transcript = (FIXTURES / "sample.jsonl").read_text()
+        runner = FakeRunner(
+            [
+                completed(stdout=self._listing(self._PARENT)),                 # parent probe
+                completed(stdout=self._listing(self._PARENT, self._CHILD)),    # full listing
+                *[completed(stdout=transcript) for _ in range(exports)],
+            ]
+        )
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(main(["--index-source", "agentsview", *argv], runner=runner), 0)
+        return out.getvalue()
+
+    def _line(self, report: str, needle: str) -> str:
+        return next(ln for ln in report.splitlines() if needle in ln)
+
+    def test_excluding_subagents_moves_the_fingerprint_on_the_agentsview_path(self) -> None:
+        included = self._run([], exports=2)
+        excluded = self._run(["--exclude-subagents"], exports=1)
+        self.assertNotEqual(
+            self._line(included, "Corpus fingerprint:"),
+            self._line(excluded, "Corpus fingerprint:"),
+        )
+
+    def test_the_child_is_the_session_that_leaves_the_corpus(self) -> None:
+        self.assertIn("scanned: 2", self._run([], exports=2))
+        self.assertIn("scanned: 1", self._run(["--exclude-subagents"], exports=1))
+
+    def test_provenance_line_reports_what_was_actually_filtered(self) -> None:
+        self.assertIn(
+            "Subagents included: yes (1 of 2 discovered are subagent sessions)",
+            self._run([], exports=2),
+        )
+        self.assertIn(
+            "Subagents included: no (1 of 2 discovered excluded)",
+            self._run(["--exclude-subagents"], exports=1),
+        )

@@ -395,8 +395,10 @@ class PassiveIntegration(unittest.TestCase):
             "next_cursor": "",
             "total": 1,
         }
+        # Twice: discovery pages the parent probe, then the full listing (TB-31).
         replies = [
             subprocess.CompletedProcess(args=[], returncode=0, stdout=json.dumps(payload), stderr="")
+            for _ in range(2)
         ]
 
         def runner(argv: list[str]) -> subprocess.CompletedProcess[str]:

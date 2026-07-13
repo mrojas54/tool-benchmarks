@@ -3,17 +3,34 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 IndexSource = Literal["auto", "agentsview", "raw"]
 Runner = Callable[[list[str]], "subprocess.CompletedProcess[str]"]
+
+# Every exclusion AgentsView applies by default. The design contract
+# (docs/2026-07-07-tool-benchmarks-design.md) mandated all three from the start; the
+# implementation passed none, and lost 70% of the archive to the omission (TB-30).
+_ALL_INCLUDES = ("--include-children", "--include-automated", "--include-one-shot")
+
+# The same listing with `--include-children` withheld. Differs from `_ALL_INCLUDES` in
+# exactly one flag, so the difference between the two listings is exactly the set of
+# child sessions -- AgentsView classifying its own taxonomy, rather than us inferring
+# it from row fields that cannot support the inference (TB-31).
+_PROBE_INCLUDES = ("--include-automated", "--include-one-shot")
+
+# "Excluded 7497 sessions by default: 7435 one-shot, 62 automated." -- written to
+# STDERR, which the old code never read, while it parsed only stdout.
+_EXCLUSION_BANNER = re.compile(r"Excluded\s+(\d+)\s+sessions?\s+by default", re.IGNORECASE)
 
 # Bytes sniffed to classify a payload as text or binary. A NUL cannot appear in a
 # JSONL transcript, so it is a sound discriminator rather than a heuristic.
@@ -23,6 +40,15 @@ SNIFF_LEN = 8192
 # transcript is no longer on disk. Matched to raise a typed MissingSourceExport so
 # the reason is decided where the evidence lives, not by regex on the report (TB-23).
 _MISSING_SOURCE_MARKER = "source file not found"
+
+
+class AgentsViewExclusionWarning(UserWarning):
+    """AgentsView dropped sessions from the corpus that we explicitly asked it to keep.
+
+    Not an error -- the run's numbers are still internally consistent -- but the
+    population they describe is not the one the operator asked for, and a benchmark that
+    quietly measures a subset is worse than one that fails (TB-30).
+    """
 
 
 class NonTranscriptExport(RuntimeError):
@@ -88,8 +114,11 @@ class SessionRef:
     project: str
     session_id: str
     path: str | None
-    # Set at discovery (CQ 3.2). Raw scans stamp it from the path layout;
-    # AgentsView refs default False (the index does not expose the nesting).
+    # Set at discovery (CQ 3.2). Raw scans stamp it from the path layout; AgentsView
+    # refs from the parent-probe set difference (TB-31), since the index exposes no
+    # parent/child field. Stamping has to be truthful at discovery for BOTH sources:
+    # `freeze` persists this flag, and its stale-`false` self-heal (freeze.py) can only
+    # fall back to the path -- which AgentsView refs do not have.
     is_subagent: bool = False
 
 
@@ -140,17 +169,19 @@ def iter_session_files(
         yield path
 
 
-def iter_agentsview_sessions(
-    agent: str = "all",
-    project: str | None = None,
-    since: str | None = None,
-    limit: int = 500,
-    runner: Runner = _run_agentsview,
-) -> Iterator[SessionRef]:
-    """Page `agentsview session list --json` with cursor pagination (S8)."""
+def _agentsview_pages(
+    runner: Runner,
+    *,
+    agent: str,
+    project: str | None,
+    since: str | None,
+    limit: int,
+    includes: tuple[str, ...],
+) -> Iterator[tuple[Any, str]]:
+    """Yield `(payload, stderr)` for each cursor page of one `session list` pass."""
     cursor: str | None = None
     while True:
-        argv = ["agentsview", "session", "list", "--json", "--limit", str(limit)]
+        argv = ["agentsview", "session", "list", "--json", "--limit", str(limit), *includes]
         if agent != "all":
             argv += ["--agent", agent]
         if project is not None:
@@ -165,6 +196,70 @@ def iter_agentsview_sessions(
                 f"agentsview session list failed ({result.returncode}): {result.stderr.strip()}"
             )
         payload = json.loads(result.stdout)
+        yield payload, result.stderr
+        cursor = payload.get("next_cursor") or None
+        if not cursor:
+            break
+
+
+def iter_agentsview_sessions(
+    agent: str = "all",
+    project: str | None = None,
+    since: str | None = None,
+    limit: int = 500,
+    runner: Runner = _run_agentsview,
+) -> Iterator[SessionRef]:
+    """Page `agentsview session list --json` with cursor pagination (S8).
+
+    Runs the listing TWICE, because AgentsView is the only thing that can answer
+    either of the questions this function has to answer.
+
+    WHAT WE ARE ALLOWED TO SEE (TB-30). AgentsView excludes one-shot, automated, and
+    child sessions BY DEFAULT. Omitting the three `--include-*` flags cost 70% of the
+    live archive (3,536 of 11,955 sessions discovered) -- and, fatally for a benchmark
+    whose whole purpose is comparing agents, it cost each agent a DIFFERENT fraction:
+    hermes was sampled at 10% of its sessions (it runs mostly one-shot cron work) and
+    cursor at 75%. Every cross-agent number was computed over incomparable populations,
+    and nothing said so. The loss was upstream of discovery, so the report's
+    discovered/scanned/skipped tally balanced perfectly while it happened.
+
+    WHICH OF THEM ARE SUBAGENTS (TB-31). The session-list row exposes no parent/child
+    field, and every field-derived predicate is wrong: `source_session_id != id` also
+    fires on resumed and compacted sessions (1,631 false positives on the live archive),
+    and the `agent-` id token misses codex subagents, which carry neither marker. So we
+    do not guess. The parent probe repeats the listing with `--include-children`
+    withheld; anything in the full listing but not in the probe is a child BY
+    AGENTSVIEW'S OWN DEFINITION. Exact, and it survives a change to the id scheme.
+
+    Cost: one extra metadata-only pass, ~5s for the entire 11.9k-session archive and
+    proportionally less for any `--agent`/`--project`/`--since`-scoped run, since the
+    probe inherits the same filters. Both passes MUST carry identical filters or the
+    difference is taken across two populations and mislabels every ref.
+    """
+    parent_ids: set[str] = set()
+    for payload, _ in _agentsview_pages(
+        runner, agent=agent, project=project, since=since, limit=limit, includes=_PROBE_INCLUDES
+    ):
+        for entry in payload.get("sessions", []):
+            parent_ids.add(entry["id"])
+
+    warned = False
+    for payload, stderr in _agentsview_pages(
+        runner, agent=agent, project=project, since=since, limit=limit, includes=_ALL_INCLUDES
+    ):
+        if not warned and (excluded := _EXCLUSION_BANNER.search(stderr)):
+            # We opted into every exclusion AgentsView documents, so a banner here means
+            # it dropped sessions we did not ask it to drop -- a new default, silently
+            # shrinking the corpus. Discarding this banner is precisely how TB-30 hid
+            # for as long as it did, so it never goes unsaid again.
+            warned = True
+            warnings.warn(
+                f"agentsview excluded {excluded.group(1)} sessions from the corpus despite "
+                f"--include-children/--include-automated/--include-one-shot; the benchmark "
+                f"population is incomplete: {stderr.strip()}",
+                AgentsViewExclusionWarning,
+                stacklevel=2,
+            )
         for entry in payload.get("sessions", []):
             yield SessionRef(
                 agent=entry["agent"],
@@ -172,10 +267,8 @@ def iter_agentsview_sessions(
                 project=entry["project"],
                 session_id=entry["id"],
                 path=None,
+                is_subagent=entry["id"] not in parent_ids,
             )
-        cursor = payload.get("next_cursor") or None
-        if not cursor:
-            break
 
 
 def open_session_jsonl(

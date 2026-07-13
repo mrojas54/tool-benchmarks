@@ -42,6 +42,8 @@ class RenderReportTests(unittest.TestCase):
             fallback_reason=None,
             skips=[],
             include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=0,
             since_note=None,
         )
         headers = [
@@ -61,6 +63,8 @@ class RenderReportTests(unittest.TestCase):
             fallback_reason="agentsview exited 1: daemon down",
             skips=[SkipRecord("nonexistent", "claude", SkipReason.MISSING_SOURCE, "/nonexistent")],
             include_subagents=False,
+            subagents_found=0,
+            sessions_discovered=0,
             since_note="2026-07-01",
         )
         for expected in (
@@ -101,6 +105,8 @@ class RenderReportTests(unittest.TestCase):
             fallback_reason=None,
             skips=[],
             include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=0,
             since_note=None,
         )
         start = report.index("## Inefficiency Callouts")
@@ -156,6 +162,8 @@ class RenderReportTests(unittest.TestCase):
             fallback_reason=None,
             skips=[],
             include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=0,
             since_note=None,
         )
         leaderboard = report[report.index("## Tool Leaderboard") : report.index("## Model Breakdown")]
@@ -179,6 +187,8 @@ class RenderReportTests(unittest.TestCase):
             fallback_reason=None,
             skips=[],
             include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=0,
             since_note=None,
         )
         section = report[report.index("## Model Breakdown") : report.index("## Inefficiency Callouts")]
@@ -209,6 +219,8 @@ class RenderReportTests(unittest.TestCase):
             fallback_reason=None,
             skips=[],
             include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=0,
             since_note=None,
         )
         self.assertIn("0 candidate sessions", report)
@@ -222,6 +234,8 @@ class RenderReportTests(unittest.TestCase):
             fallback_reason=None,
             skips=[],
             include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=0,
             since_note=None,
         )
         self.assertNotIn("Run cache tokens", report)
@@ -249,6 +263,8 @@ class RenderReportTests(unittest.TestCase):
             fallback_reason=None,
             skips=[],
             include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=0,
             since_note=None,
         )
         self.assertIn("Run cache tokens (run 2): read=900 creation=90", report)
@@ -274,6 +290,8 @@ class RenderReportTests(unittest.TestCase):
             fallback_reason=None,
             skips=[],
             include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=0,
             since_note=None,
         )
         self.assertIn("per ticket (2): read=450.0 creation=45.0", report)
@@ -301,6 +319,8 @@ class RenderReportTests(unittest.TestCase):
             fallback_reason=None,
             skips=[],
             include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=0,
             since_note=None,
         )
         self.assertIn("matched no entries: typo/never-pushed", report)
@@ -317,6 +337,8 @@ class UnjoinableReconciliationRenderTests(unittest.TestCase):
             fallback_reason=None,
             skips=[],
             include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=0,
             since_note=None,
         )
         return report[report.index("## Summary") :]
@@ -344,6 +366,8 @@ class CacheNoteRenderTests(unittest.TestCase):
             fallback_reason=None,
             skips=[],
             include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=0,
             since_note=None,
         )
         row = next(line for line in report.splitlines() if "| Read |" in line)
@@ -396,6 +420,8 @@ class SessionGrainCacheCaveatRenderTests(unittest.TestCase):
             fallback_reason=None,
             skips=[],
             include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=0,
             since_note=None,
         )
         return report[report.index("## Agent Breakdown") : report.index("## Tool Leaderboard")]
@@ -432,6 +458,8 @@ class SessionGrainCacheCaveatRenderTests(unittest.TestCase):
             fallback_reason=None,
             skips=[],
             include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=0,
             since_note=None,
         )
         summary = report[report.index("## Summary") :]
@@ -466,6 +494,8 @@ class SessionGrainCacheCaveatRenderTests(unittest.TestCase):
             fallback_reason=None,
             skips=[],
             include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=0,
             since_note=None,
         )
         headers = [
@@ -504,6 +534,8 @@ class SessionGrainCacheCaveatRenderTests(unittest.TestCase):
             fallback_reason=None,
             skips=[],
             include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=0,
             since_note=None,
         )
         leaderboard = report[report.index("## Tool Leaderboard") : report.index("## Model Breakdown")]
@@ -530,6 +562,8 @@ class DiscoveryReconciliationRenderTests(unittest.TestCase):
             fallback_reason=None,
             skips=skips,
             include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=0,
             since_note=None,
             verbose=verbose,
         )
@@ -646,6 +680,8 @@ class CorpusFingerprintRenderTests(unittest.TestCase):
             fallback_reason=None,
             skips=[],
             include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=0,
             since_note=None,
             fingerprint=fingerprint,
         )
@@ -693,6 +729,8 @@ class CorpusFingerprintRenderTests(unittest.TestCase):
             fallback_reason=None,
             skips=[],
             include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=0,
             since_note=None,
         )
         # The run total stays honest -- detached usage is NOT folded in.
@@ -721,6 +759,8 @@ class CorpusFingerprintRenderTests(unittest.TestCase):
             fallback_reason=None,
             skips=[],
             include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=0,
             since_note=None,
         )
         self.assertNotIn("detached-HEAD", report)
