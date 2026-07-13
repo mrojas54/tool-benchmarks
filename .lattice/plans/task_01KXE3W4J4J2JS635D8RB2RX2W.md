@@ -40,3 +40,42 @@ index-source equivalence test (raw vs agentsview over the same project must agre
 on the discovered session-id set).
 
 Found by: operator smoke checkpoint CP2/CP3 (EVALUATION.md), 2026-07-13.
+
+---
+
+## Plan (as built) — PR #53
+
+Shipped together with TB-31; TB-30 alone is not safely shippable (admitting child
+sessions while `--exclude-subagents` still cannot filter them turns a harmless no-op
+into an active false claim).
+
+1. `toolbench/sources.py` — pass `--include-children --include-automated
+   --include-one-shot` on the session listing (`_ALL_INCLUDES`).
+2. `toolbench/sources.py` — stop discarding agentsview's stderr. An exclusion banner on
+   the full listing now raises `AgentsViewExclusionWarning`: we opt into every exclusion
+   agentsview documents, so a banner means it dropped sessions we did not ask it to drop.
+3. Tests — assert the argv carries all three flags.
+
+### Verified before fixing (live archive, full cursor pagination)
+    no flags (what toolbench did):  3,536 sessions
+    all three includes (mandated): 11,955 sessions   -> 70.4% silently excluded
+
+### Per-agent sampling fractions — the real severity
+    claude 1934/8585 = 22.5%   hermes   99/977 = 10.1%
+    codex    90/173 = 52.0%    cursor   55/73  = 75.3%
+A 7.4x spread, in a project whose purpose is comparing agents.
+
+### Deviation from the filed FIX
+The ticket asked for a raw-vs-agentsview *index-source equivalence test*. Not added: the
+two sources are not equivalent by construction — raw scans `~/.claude/projects` (claude
+only, keyed by filesystem UUID) while agentsview indexes every agent under its own id
+scheme and project naming. An equality assertion between them would encode a false
+invariant. The corpus claim is instead pinned where it is actually decidable: the argv
+carries all three flags, and the fingerprint A/B moves on both sources (TB-31).
+
+### Not addressed (candidate follow-up)
+With `--agent all` and a `--limit`, the N most-recent sessions can still be dominated by
+one agent. That is a uniform, visible truncation rather than a hidden default exclusion.
+The CP7 ask to surface per-agent discovered/total is moot for the *default-exclusion*
+cause — every agent is now discovered at 100% of its archive — but would still disclose
+this milder recency skew.

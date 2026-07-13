@@ -1,7 +1,22 @@
 {
   "assigned_to": null,
-  "branch_links": [],
-  "comment_count": 1,
+  "branch_links": [
+    {
+      "branch": "fix/tb-30-31-agentsview-corpus-and-subagents",
+      "linked_at": "2026-07-13T16:56:18Z",
+      "linked_by": {
+        "agent_type": "advance",
+        "base_name": "Vulcan",
+        "framework": "claude-code",
+        "model": "claude-opus-4-8",
+        "name": "Vulcan-1",
+        "serial": 1,
+        "session": "sess_01KXE6GYAJ6320TK4NJ29NKA4P"
+      },
+      "repo": null
+    }
+  ],
+  "comment_count": 2,
   "complexity": "medium",
   "created_at": "2026-07-13T16:09:59Z",
   "created_by": {
@@ -18,14 +33,14 @@
   "done_at": null,
   "evidence_refs": [],
   "id": "task_01KXE3W4J4J2JS635D8RB2RX2W",
-  "last_event_id": "ev_01KXE46B4FMMMC9WEYHX7KVH48",
-  "last_status_changed_at": "2026-07-13T16:09:59Z",
+  "last_event_id": "ev_01KXE6JF7D8G0YHD13F72S7VKZ",
+  "last_status_changed_at": "2026-07-13T16:57:08Z",
   "priority": "high",
   "relationships_out": [],
   "reopened_count": 0,
   "schema_version": 1,
   "short_id": "TB-30",
-  "status": "backlog",
+  "status": "review",
   "tags": [
     "index-source",
     "discovery",
@@ -35,6 +50,6 @@
   ],
   "title": "agentsview index path silently excludes 70% of the archive: --include-{children,automated,one-shot} never passed",
   "type": "bug",
-  "updated_at": "2026-07-13T16:15:34Z",
+  "updated_at": "2026-07-13T16:57:08Z",
   "urgency": "high"
 }
