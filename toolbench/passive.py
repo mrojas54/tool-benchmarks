@@ -313,6 +313,12 @@ def main(
                 freeze_path, refs, corpus_fingerprint(r.session_id for r in refs).digest
             )
 
+    # Counted before the filter runs, on both the discovery and the replay path -- these
+    # are what the provenance line reports, so they must describe the corpus as it was
+    # found, not as it was left (TB-31).
+    sessions_discovered = len(refs)
+    subagents_found = sum(1 for ref in refs if ref.is_subagent)
+
     if args.exclude_subagents:
         refs = filter_subagents(refs)
 
@@ -389,6 +395,8 @@ def main(
         fallback_reason=fallback_reason,
         skips=skips,
         include_subagents=not args.exclude_subagents,
+        subagents_found=subagents_found,
+        sessions_discovered=sessions_discovered,
         since_note=args.since,
         verbose=args.verbose,
         fingerprint=fingerprint,

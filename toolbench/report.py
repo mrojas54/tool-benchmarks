@@ -110,6 +110,8 @@ def render_report(
     fallback_reason: str | None,
     skips: list[SkipRecord],
     include_subagents: bool,
+    subagents_found: int,
+    sessions_discovered: int,
     since_note: str | None,
     verbose: bool = False,
     fingerprint: CorpusFingerprint | None = None,
@@ -307,7 +309,16 @@ def render_report(
         lines.append(f"- Unjoinable tool records (seen, not joined): {unjoinable_total}")
         for (agent_name, kind), count in sorted(reducer.unjoinable.items()):
             lines.append(f"  - {agent_name}/{kind}: {count}")
-    lines.append(f"- Subagents included: {'yes' if include_subagents else 'no'}")
+    # Earned, not asserted (TB-31). This line used to render straight from the CLI flag,
+    # so it printed "Subagents included: no" on the AgentsView path -- which never listed
+    # a subagent and therefore could not have excluded one. Reporting the count actually
+    # stamped at discovery means the claim is falsifiable: a `no` beside `0 of N` says
+    # the index found no subagents, not that the filter did its job.
+    subagent_note = f"{subagents_found} of {sessions_discovered} discovered"
+    if include_subagents:
+        lines.append(f"- Subagents included: yes ({subagent_note} are subagent sessions)")
+    else:
+        lines.append(f"- Subagents included: no ({subagent_note} excluded)")
     lines.append(f"- AgentsView fallback reason: {fallback_reason if fallback_reason else 'none'}")
     lines.append("- Note: --since is file-mtime based.")
     if since_note:

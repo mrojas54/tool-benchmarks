@@ -12,6 +12,7 @@ import pytest
 from tests.fakes import FakeRunner, completed
 from toolbench.passive import filter_subagents
 from toolbench.sources import (
+    AgentsViewExclusionWarning,
     AgentsViewLoader,
     MissingSourceExport,
     NonTranscriptExport,
@@ -36,80 +37,149 @@ _SQLITE_MAGIC = b"SQLite format 3\x00"
 _EMIT_NON_UTF8 = 'import sys; sys.stdout.buffer.write(b\'{"note": "caf\\xa0"}\\n\')'
 
 
+def _page(*sessions: dict[str, str], cursor: str = "") -> str:
+    return json.dumps({"sessions": list(sessions), "next_cursor": cursor, "total": len(sessions)})
+
+
+def _av(*pages: str, stderr: str = "") -> FakeRunner:
+    """Script the two-pass agentsview discovery (TB-31).
+
+    Call order is parent-probe pages first (no --include-children), then the full
+    listing. `stderr` rides on every page so banner assertions do not depend on which
+    page emitted it.
+    """
+    return FakeRunner([completed(stdout=p, stderr=stderr) for p in pages])
+
+
 class IterAgentsviewSessionsTests(unittest.TestCase):
+    """The listing is two passes: a parent probe, then the full corpus (TB-30/TB-31).
+
+    `runner.calls[0]` is always the parent probe; the full listing starts at `calls[1]`.
+    """
+
     def test_single_page(self) -> None:
-        payload = {
-            "sessions": [
-                {"id": "s1", "project": "proj-a", "agent": "claude"},
-                {"id": "s2", "project": "proj-a", "agent": "claude"},
-            ],
-            "next_cursor": "",
-            "total": 2,
-        }
-        runner = FakeRunner([completed(stdout=json.dumps(payload))])
+        s1 = {"id": "s1", "project": "proj-a", "agent": "claude"}
+        s2 = {"id": "s2", "project": "proj-a", "agent": "claude"}
+        runner = _av(_page(s1, s2), _page(s1, s2))
         refs = list(iter_agentsview_sessions(runner=runner))
         self.assertEqual(len(refs), 2)
         self.assertEqual(
             refs[0],
             SessionRef(agent="claude", source="agentsview", project="proj-a", session_id="s1", path=None),
         )
-        self.assertEqual(len(runner.calls), 1)
-        self.assertNotIn("--cursor", runner.calls[0])
+        self.assertEqual(len(runner.calls), 2)
+        self.assertNotIn("--cursor", runner.calls[1])
 
     def test_pagination_follows_cursor_until_empty(self) -> None:
-        page1 = {
-            "sessions": [{"id": "s1", "project": "p", "agent": "claude"}],
-            "next_cursor": "CURSOR1",
-            "total": 2,
-        }
-        page2 = {
-            "sessions": [{"id": "s2", "project": "p", "agent": "claude"}],
-            "next_cursor": "",
-            "total": 2,
-        }
-        runner = FakeRunner([completed(stdout=json.dumps(page1)), completed(stdout=json.dumps(page2))])
+        s1 = {"id": "s1", "project": "p", "agent": "claude"}
+        s2 = {"id": "s2", "project": "p", "agent": "claude"}
+        runner = _av(_page(s1, s2), _page(s1, cursor="CURSOR1"), _page(s2))
         refs = list(iter_agentsview_sessions(runner=runner))
         self.assertEqual([r.session_id for r in refs], ["s1", "s2"])
-        self.assertEqual(len(runner.calls), 2)
-        self.assertNotIn("--cursor", runner.calls[0])
-        self.assertIn("--cursor", runner.calls[1])
-        self.assertEqual(runner.calls[1][runner.calls[1].index("--cursor") + 1], "CURSOR1")
+        self.assertEqual(len(runner.calls), 3)
+        self.assertNotIn("--cursor", runner.calls[1])
+        self.assertIn("--cursor", runner.calls[2])
+        self.assertEqual(runner.calls[2][runner.calls[2].index("--cursor") + 1], "CURSOR1")
 
     def test_pagination_stops_when_cursor_key_absent(self) -> None:
-        page1 = {"sessions": [{"id": "s1", "project": "p", "agent": "claude"}], "total": 1}
-        runner = FakeRunner([completed(stdout=json.dumps(page1))])
+        s1 = {"id": "s1", "project": "p", "agent": "claude"}
+        page_without_cursor_key = json.dumps({"sessions": [s1], "total": 1})
+        runner = _av(page_without_cursor_key, page_without_cursor_key)
         refs = list(iter_agentsview_sessions(runner=runner))
         self.assertEqual(len(refs), 1)
-        self.assertEqual(len(runner.calls), 1)
+        self.assertEqual(len(runner.calls), 2)
 
     def test_argv_includes_agent_project_since_limit(self) -> None:
-        payload = {"sessions": [], "next_cursor": "", "total": 0}
-        runner = FakeRunner([completed(stdout=json.dumps(payload))])
+        runner = _av(_page(), _page())
         list(
             iter_agentsview_sessions(
                 agent="codex", project="tool-benchmarks", since="2026-07-01", limit=50, runner=runner
             )
         )
-        argv = runner.calls[0]
-        self.assertIn("--agent", argv)
-        self.assertEqual(argv[argv.index("--agent") + 1], "codex")
-        self.assertIn("--project", argv)
-        self.assertEqual(argv[argv.index("--project") + 1], "tool-benchmarks")
-        self.assertIn("--date-from", argv)
-        self.assertEqual(argv[argv.index("--date-from") + 1], "2026-07-01")
-        self.assertIn("--limit", argv)
-        self.assertEqual(argv[argv.index("--limit") + 1], "50")
+        # Both passes must carry identical filters, or the set difference between them
+        # is taken across two different populations and every ref is mislabelled.
+        for argv in runner.calls:
+            self.assertEqual(argv[argv.index("--agent") + 1], "codex")
+            self.assertEqual(argv[argv.index("--project") + 1], "tool-benchmarks")
+            self.assertEqual(argv[argv.index("--date-from") + 1], "2026-07-01")
+            self.assertEqual(argv[argv.index("--limit") + 1], "50")
 
     def test_agent_all_omits_agent_flag(self) -> None:
-        payload = {"sessions": [], "next_cursor": "", "total": 0}
-        runner = FakeRunner([completed(stdout=json.dumps(payload))])
+        runner = _av(_page(), _page())
         list(iter_agentsview_sessions(agent="all", runner=runner))
-        self.assertNotIn("--agent", runner.calls[0])
+        for argv in runner.calls:
+            self.assertNotIn("--agent", argv)
 
     def test_nonzero_exit_raises(self) -> None:
         runner = FakeRunner([completed(stdout="", stderr="boom", returncode=1)])
         with self.assertRaises(RuntimeError):
             list(iter_agentsview_sessions(runner=runner))
+
+    # -- TB-30: the corpus the listing is allowed to see -----------------------------
+
+    def test_full_listing_carries_all_three_include_flags(self) -> None:
+        """Without these, agentsview drops one-shot/automated/child sessions by default
+        -- 70% of the live archive, and not uniformly across agents (TB-30)."""
+        runner = _av(_page(), _page())
+        list(iter_agentsview_sessions(runner=runner))
+        full_listing = runner.calls[1]
+        self.assertIn("--include-children", full_listing)
+        self.assertIn("--include-automated", full_listing)
+        self.assertIn("--include-one-shot", full_listing)
+
+    def test_parent_probe_omits_only_include_children(self) -> None:
+        """The probe differs from the full listing in exactly one flag, so the
+        difference between the two listings is precisely the child sessions."""
+        runner = _av(_page(), _page())
+        list(iter_agentsview_sessions(runner=runner))
+        probe = runner.calls[0]
+        self.assertNotIn("--include-children", probe)
+        self.assertIn("--include-automated", probe)
+        self.assertIn("--include-one-shot", probe)
+
+    # -- TB-31: is_subagent, decided by agentsview rather than guessed ----------------
+
+    def test_session_absent_from_parent_listing_is_stamped_subagent(self) -> None:
+        parent = {"id": "s1", "project": "p", "agent": "claude"}
+        child = {"id": "agent-abc123", "project": "p", "agent": "claude"}
+        runner = _av(_page(parent), _page(parent, child))
+        refs = {r.session_id: r for r in iter_agentsview_sessions(runner=runner)}
+        self.assertFalse(refs["s1"].is_subagent)
+        self.assertTrue(refs["agent-abc123"].is_subagent)
+
+    def test_child_without_an_agent_id_token_is_still_stamped(self) -> None:
+        """Codex subagents carry no `agent-` token and no parent pointer -- the live
+        archive has 7. An id-shape heuristic misses them; the set difference does not."""
+        parent = {"id": "codex:0001", "project": "p", "agent": "codex"}
+        child = {"id": "codex:019e10c4-a227-74d2-b912-06f8a4fd5b13", "project": "p", "agent": "codex"}
+        runner = _av(_page(parent), _page(parent, child))
+        refs = {r.session_id: r for r in iter_agentsview_sessions(runner=runner)}
+        self.assertTrue(refs[child["id"]].is_subagent)
+
+    def test_resumed_session_pointing_at_another_session_is_not_a_subagent(self) -> None:
+        """`source_session_id != id` looks like a parent pointer but also fires on
+        resumed/compacted sessions -- 1631 false positives on the live archive. A ref
+        the parent listing returned is a parent, whatever its fields suggest (TB-31)."""
+        resumed = {
+            "id": "s2",
+            "project": "p",
+            "agent": "claude",
+            "source_session_id": "s1",  # an earlier session it was resumed from
+        }
+        runner = _av(_page(resumed), _page(resumed))
+        (ref,) = list(iter_agentsview_sessions(runner=runner))
+        self.assertFalse(ref.is_subagent)
+
+    def test_unexpected_exclusion_banner_is_surfaced(self) -> None:
+        """We now opt into every exclusion agentsview knows about, so a banner on the
+        full listing means it dropped sessions we did not ask it to drop. The banner
+        was previously parsed off stdout and discarded -- that is how TB-30 hid."""
+        banner = "Excluded 7497 sessions by default: 7435 one-shot, 62 automated."
+        s1 = {"id": "s1", "project": "p", "agent": "claude"}
+        runner = _av(_page(s1), _page(s1), stderr=banner)
+        with self.assertWarns(AgentsViewExclusionWarning) as caught:
+            list(iter_agentsview_sessions(runner=runner))
+        self.assertIn("7497", str(caught.warning))
 
 
 class IterSessionFilesTests(unittest.TestCase):
@@ -274,12 +344,14 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
             "next_cursor": "",
             "total": 1,
         }
-        runner = FakeRunner([completed(stdout=json.dumps(payload)), completed(stdout=json.dumps(payload))])
+        # Availability probe, then the listing's own two passes: parent probe + full (TB-31).
+        runner = FakeRunner([completed(stdout=json.dumps(payload))] * 3)
         refs, reason = iter_sessions(index_source="auto", runner=runner)
         ref_list = list(refs)
         self.assertIsNone(reason)
         self.assertEqual(len(ref_list), 1)
         self.assertEqual(ref_list[0].source, "agentsview")
+        self.assertFalse(ref_list[0].is_subagent)
 
     def test_auto_falls_back_to_raw_and_records_reason_on_missing_binary(self) -> None:
         with TemporaryDirectory() as tmp:
