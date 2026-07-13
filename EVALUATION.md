@@ -43,7 +43,7 @@ One row per SPEC criterion, each tagged by how it is verified:
 | S9b | hermes discovery stays on AgentsView `session list` | `autonomous` (routing) / `external-oracle` (list vs stats) | `test` + live AgentsView |
 | S10 | auto/strict/raw index-source behavior + fallback reason | `autonomous` (logic) / `external-oracle` (live) | `test` + `test:full` |
 | S11 | incremental — no whole-corpus list | `autonomous` (reducer unit) / `operator-assisted` (mem at scale) | `test` + `--all --limit 200 --verbose` |
-| S12 | CLI arg parsing / defaults | `autonomous` | `test` |
+| S12 | CLI arg parsing / defaults (incl. `--run-manifest` / `--tickets`, S40) | `autonomous` | `test` (`test_passive_cli.py`) |
 | S13 | subagent include/exclude path filter | `autonomous` | `test` (`test_sources.py` real nested layout `<project>/<session-uuid>/subagents/` sets `is_subagent`, and `--exclude-subagents` is asserted on the FILTERED refs, not on the flag — TB-29: the old fixture built a flat `<project>/subagents/` that exists nowhere on disk, so the suite ratified a no-op; `test_freeze.py` a stale `"is_subagent": false` frozen by the pre-fix code does not survive replay — the path is ground truth — while a genuine non-subagent stays `False`) |
 | S14 | five report sections; callouts carry denominators + top offender | `autonomous` | `test` (report string) |
 | S15 | report provenance fields present (incl. skipped roots) | `autonomous` | `test` (report string) |

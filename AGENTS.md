@@ -35,14 +35,22 @@ Non-obvious notes for this environment:
   Claude Code transcript for probes. Probe joins via `ClaudeParser` with
   `keep_raw_input` / `track_turns` (no private Claude walker).
 - **Per-run cache-token grouping:** `--run-manifest <run.json>` is a flag on
-  `toolbench.passive` (S40), not a separate module. `uv run python -m
-  toolbench.passive --run-manifest run.json` works from the repo root. From
-  `~` (cwd hygiene for measuring `~/.claude`), invoke by file path as in
+  `toolbench.passive` (S40), not a separate module. Reader lives in
+  `run_manifest.py`. `uv run python -m toolbench.passive --run-manifest
+  run.json` works from the repo root. From `~` (cwd hygiene for measuring
+  `~/.claude`), invoke by file path as in
   `.claude/skills/cache-token-metrics/SKILL.md` — `-m` fails outside the
-  checkout because the package is not installed into the venv.
+  checkout because the package is not installed into the venv. Detached
+  checkouts stamp `gitBranch="HEAD"` and are named in the run section, never
+  folded into the run total (TB-28).
 - **Module split:** aggregation is `reducer.py`, markdown/fingerprint is
-  `report.py`, freeze I/O is `freeze.py`; `passive.py` is CLI + orchestration
-  and re-exports the historical public symbols.
+  `report.py`, freeze I/O is `freeze.py`, run-manifest I/O is
+  `run_manifest.py`; `passive.py` is CLI + orchestration and re-exports the
+  historical public symbols.
+- **Subagent paths:** real layout is
+  `<project>/<session-uuid>/subagents/*.jsonl` (TB-29). `--exclude-subagents`
+  drops those refs; freeze replay re-derives the flag from the path so a
+  stale pre-fix `"is_subagent": false` cannot keep them included.
 - **Generated output:** reports land in `reports/`, which is gitignored.
 - **Optional external dependencies are not present here and are not needed for the
   gate:** the `agentsview` CLI, real `~/.claude`/Codex transcript roots, and the

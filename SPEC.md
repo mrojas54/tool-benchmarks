@@ -92,7 +92,8 @@ and re-exports the public symbols historical imports expect.
   reducers and report counters live globally (`Reducer` in `reducer.py`).
 - **S12 — CLI.** Flags: `--agent`, `--all | --project`, `--since`,
   `--date-from`, `--date-to`, `--out`, `--limit`, `--exclude-subagents`,
-  `--index-source`, `--verbose`, `--freeze`; default scope `--agent all --all`.
+  `--index-source`, `--verbose`, `--freeze`, `--run-manifest`, `--tickets`;
+  default scope `--agent all --all`.
 - **S13 — subagents.** Included by default; `--exclude-subagents` drops refs
   with `SessionRef.is_subagent` set at discovery. Raw discovery attributes
   project as the first path segment under the session root and sets the flag
