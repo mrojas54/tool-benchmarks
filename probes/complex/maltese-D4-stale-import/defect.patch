@@ -1,0 +1,12 @@
+diff --git a/falcon-detective/src/cli.ts b/falcon-detective/src/cli.ts
+index 37a4879..2c13635 100644
+--- a/falcon-detective/src/cli.ts
++++ b/falcon-detective/src/cli.ts
+@@ -1,6 +1,6 @@
+ import { resolve } from "node:path";
+ import { runPipeline } from "@barnum/barnum/pipeline";
+-import { detective } from "./workflows/tidy-and-debug.js";
++import { detective } from "./workflow/tidy-and-debug.js";
+
+ function arg(name: string, fallback?: string): string {
+   const i = process.argv.indexOf(`--${name}`);
