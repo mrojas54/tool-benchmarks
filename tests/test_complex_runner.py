@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -9,9 +10,11 @@ from unittest import mock
 from toolbench.complex import ArmSpec, DefectSpec, Truth, build_arms
 from toolbench.complex_runner import (
     UnprovisionedWorktree,
+    UnsafeDepsCache,
     _default_deps_base,
     branch_name,
     build_claude_argv,
+    ensure_deps,
     provision_worktree,
     run_trial,
     shell_oracle,
@@ -302,7 +305,12 @@ class DepsCacheAncestryTests(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
+        # Model the real deployment, and satisfy the runtime guard: the corpus lives
+        # under $HOME and the cache under the temp root, so the two diverge at `/`.
+        # A single throwaway root for both (the previous fixture) is itself the leak
+        # -- `..` from the cache reaches that root and descends into corpus/toy --
+        # and `_assert_deps_base_safe` now refuses it, correctly.
+        self._tmp = tempfile.TemporaryDirectory(dir=Path.home())
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
 
@@ -346,11 +354,14 @@ class DepsCacheAncestryTests(unittest.TestCase):
             test_gate="Bash(true:*)",
         )
 
-        # Point the default dep-cache base at a throwaway dir and pre-populate the
-        # cached target there, so the symlink resolves and the test turns on
-        # ancestry, not on a missing cache. `_link_deps` only symlinks an existing
-        # target; no npm ci needed.
-        self.deps_base = self.root / "cache"
+        # Point the default dep-cache base at a throwaway dir UNDER THE TEMP ROOT --
+        # divergent from the $HOME corpus above -- and pre-populate the cached target
+        # there, so the symlink resolves and the test turns on ancestry, not on a
+        # missing cache. `_link_deps` only symlinks an existing target; no npm ci
+        # needed.
+        self._cache_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._cache_tmp.cleanup)
+        self.deps_base = Path(self._cache_tmp.name) / "cache"
         self._populate(self.deps_base / "toy" / "web" / "node_modules")
         patcher = mock.patch(
             "toolbench.complex_runner._default_deps_base",
@@ -363,6 +374,9 @@ class DepsCacheAncestryTests(unittest.TestCase):
     def _populate(node_modules: Path) -> None:
         node_modules.mkdir(parents=True)
         (node_modules / "pkg.js").write_text("dep\n", encoding="utf-8")
+        # The guard requires a private cache base; mkdir honors umask (0755), so set
+        # it explicitly rather than depending on the runner's umask.
+        node_modules.parents[2].chmod(0o700)
 
     def test_resolved_dep_symlink_has_no_corpus_clone_in_its_ancestry(self) -> None:
         dest = self.root / "wt"
@@ -427,6 +441,100 @@ class DepsCacheRootDivergenceTests(unittest.TestCase):
                 f"checkout {corpus}: `..` from the cache walks back to pristine "
                 "source",
             )
+
+
+# A repo that declares a dep is the only kind that gets a symlink into the cache,
+# so it is the only kind the guard fires on.
+_DEPS_MANIFEST = {
+    "toy": {"sha": "0" * 40, "deps": [{"path": "web/node_modules", "npm_ci": "web"}]}
+}
+
+
+class DepsCacheRuntimeGuardTests(unittest.TestCase):
+    """The root-divergence invariant, enforced at RUNTIME rather than asserted in a
+    comment and a single test. `DepsCacheRootDivergenceTests` checks the default the
+    *current* environment happens to produce; it cannot catch a `TMPDIR` pointing
+    under `$HOME`, nor a corpus that itself lives under the temp root (a checkout
+    under `/tmp` on Linux CI). Both re-open the C1/F1 leak: cache and corpus regain a
+    walkable common ancestor, so `..` from a trial's `web/node_modules` symlink target
+    reaches pristine source. The guard must run on the real `corpus_root`, on every
+    run, and refuse rather than proceed.
+    """
+
+    def setUp(self) -> None:
+        # Corpus under $HOME, the real deployment shape.
+        self._home = tempfile.TemporaryDirectory(dir=Path.home())
+        self.addCleanup(self._home.cleanup)
+        self.corpus_root = Path(self._home.name) / "tool-benchmarks" / "corpus"
+        self.corpus_root.mkdir(parents=True)
+        (self.corpus_root / "manifest.json").write_text(
+            json.dumps(_DEPS_MANIFEST), encoding="utf-8"
+        )
+
+    def test_ensure_deps_refuses_a_cache_sharing_a_walkable_ancestor_with_the_corpus(
+        self,
+    ) -> None:
+        # TMPDIR under $HOME: cache and corpus share the throwaway $HOME dir, which
+        # is walkable -- `..` from the cache reaches it and descends into corpus/toy.
+        leaky_base = Path(self._home.name) / "tmp" / "vendor-cache"
+        with self.assertRaises(UnsafeDepsCache):
+            ensure_deps(self.corpus_root, "toy", deps_base=leaky_base)
+
+    def test_ensure_deps_refuses_a_corpus_that_lives_under_the_cache_temp_root(self) -> None:
+        # Linux CI: the checkout itself sits under /tmp, so the default cache and the
+        # corpus share the temp root. The default base is fine in isolation -- it is
+        # only unsafe *relative to this corpus*, which is why the check needs both.
+        with tempfile.TemporaryDirectory() as tmp:
+            corpus_in_tmp = Path(tmp) / "corpus"
+            corpus_in_tmp.mkdir()
+            (corpus_in_tmp / "manifest.json").write_text(
+                json.dumps(_DEPS_MANIFEST), encoding="utf-8"
+            )
+            with self.assertRaises(UnsafeDepsCache):
+                ensure_deps(corpus_in_tmp, "toy", deps_base=_default_deps_base())
+
+    def test_provision_worktree_refuses_a_leaky_cache_base(self) -> None:
+        # The symlink is written by provision_worktree, so the guard has to hold on
+        # that path too -- not only on the ensure_deps build path.
+        leaky_base = Path(self._home.name) / "tmp" / "vendor-cache"
+        defect = DefectSpec(
+            id="D1",
+            repo="toy",
+            language="typescript",
+            truth=Truth("web/app.js", "a", (1, 1)),
+            predicted_winner="neutral",
+            rationale="toy fixture",
+            oracle_cmd=("true",),
+            oracle_cwd=".",
+            test_gate="Bash(true:*)",
+        )
+        with self.assertRaises(UnsafeDepsCache):
+            provision_worktree(
+                defect,
+                _arm("bash"),
+                1,
+                self.corpus_root,
+                Path(self._home.name) / "wt",
+                fixture_root=Path(self._home.name) / "probes" / "complex",
+                deps_base=leaky_base,
+            )
+
+    def test_default_cache_base_is_private_to_the_current_user(self) -> None:
+        # On Linux gettempdir() is the shared, world-writable /tmp, so an unqualified
+        # `vendor-cache` leaf is a path another uid can pre-create and own. Everything
+        # under it is symlinked into every trial tree and EXECUTED by the oracles
+        # (`npx vitest run`, the venv's pytest), so a foreign cache is code execution.
+        self.assertIn(str(os.getuid()), _default_deps_base().name)
+
+    def test_ensure_deps_refuses_a_pre_existing_group_or_world_writable_cache(self) -> None:
+        # `if target.exists(): continue` trusts whatever is already on disk. A cache
+        # dir another user can write is a cache another user can poison.
+        hostile = Path(tempfile.gettempdir()) / f"vendor-cache-hostile-{os.getpid()}"
+        hostile.mkdir(mode=0o777)
+        self.addCleanup(shutil.rmtree, hostile, True)
+        os.chmod(hostile, 0o777)  # defeat umask
+        with self.assertRaises(UnsafeDepsCache):
+            ensure_deps(self.corpus_root, "toy", deps_base=hostile)
 
 
 class ShellOracleTests(unittest.TestCase):

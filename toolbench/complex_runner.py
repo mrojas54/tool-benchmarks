@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -40,6 +41,26 @@ class UnprovisionedWorktree(RuntimeError):
     There is no correct default prompt, so there is no fallback -- a broken
     trial must fail loudly rather than quietly produce a plausible-looking,
     compromised result.
+    """
+
+
+class UnsafeDepsCache(RuntimeError):
+    """Raised when the dependency cache cannot be trusted for this corpus.
+
+    Two ways it goes wrong, both re-opening the C1/F1 leak or worse:
+
+    1. The cache and `corpus_root` share a walkable ancestor other than `/`.
+       `..` from a trial's `web/node_modules` symlink target then climbs to
+       that ancestor and descends into pristine source. The module note below
+       argues this invariant; this exception enforces it against the REAL
+       corpus at runtime, because a comment cannot fail a run.
+    2. The cache is not private to this user. Everything under it is symlinked
+       into every trial tree and then EXECUTED by the oracles, so a cache dir
+       a second uid can write is arbitrary code execution, not merely a leak.
+
+    Refusing is always correct here: proceeding yields a scored, plausible
+    result produced by a compromised trial, which is worse than no result.
+    Pass an explicit `deps_base` that diverges from the corpus to recover.
     """
 
 
@@ -145,11 +166,69 @@ def _find_fixture_dir(fixture_root: Path, defect: DefectSpec) -> Path:
 # and the leaf name is deliberately non-suggestive -- it embeds neither "toolbench"
 # nor "corpus", so a committed symlink target reveals no breadcrumb toward the
 # corpus. The base stays a parameter so a caller (or a test) can override it.
+#
+# Two things the argument above does NOT establish, both enforced by
+# `_assert_deps_base_safe` on every run that links a dep (see UnsafeDepsCache):
+#   - Divergence is a property of the cache AND the corpus, so it cannot be
+#     settled by choosing a good default. `$TMPDIR` under `$HOME`, or a corpus
+#     checked out under the temp root (Linux CI), puts them back under one
+#     walkable ancestor. Only a check against the real `corpus_root` sees this.
+#   - On Linux `gettempdir()` is the shared, world-writable `/tmp`, so the leaf
+#     is a path any uid can pre-create and own. The cache is symlinked into
+#     every trial tree and executed by the oracles, so a foreign cache is code
+#     execution. The leaf is therefore per-uid and must be private.
 _DEPS_CACHE_DIRNAME = "vendor-cache"
 
 
 def _default_deps_base() -> Path:
-    return Path(tempfile.gettempdir()) / _DEPS_CACHE_DIRNAME
+    return Path(tempfile.gettempdir()) / f"{_DEPS_CACHE_DIRNAME}-{os.getuid()}"
+
+
+def _assert_deps_base_safe(deps_base: Path, corpus_root: Path) -> None:
+    """Refuse a cache that leaks corpus source or that this user does not own.
+
+    Called before any dep is built or symlinked. Resolves both paths first, so a
+    symlinked cache ancestor pointing back under the corpus is caught as the real
+    path it is rather than the path it advertises.
+    """
+    cache = deps_base.resolve()
+    corpus = corpus_root.resolve()
+    anchor = Path(cache.anchor)
+
+    # The invariant: `/` is the ONLY ancestor the two may share. Walking the
+    # cache's own ancestry (not the corpus's) is what catches a cache nested
+    # under the corpus as well as the two merely sharing `$HOME` or `/tmp`.
+    for ancestor in (cache, *cache.parents):
+        if ancestor == anchor:
+            continue
+        if os.path.commonpath([ancestor, corpus]) == str(ancestor):
+            raise UnsafeDepsCache(
+                f"dependency cache {cache} and corpus {corpus} share the walkable "
+                f"ancestor {ancestor}: `..` from a trial's dep symlink reaches it and "
+                f"descends into pristine source. They may share only {anchor}. "
+                f"Set $TMPDIR (or pass deps_base=) to a location that diverges from "
+                f"the corpus checkout at the filesystem root."
+            )
+
+    if cache.is_symlink():  # resolve() above means this is a dangling link
+        raise UnsafeDepsCache(f"dependency cache {cache} is a dangling symlink")
+    if cache.exists():
+        st = cache.stat()
+        if st.st_uid != os.getuid():
+            raise UnsafeDepsCache(
+                f"dependency cache {cache} is owned by uid {st.st_uid}, not by this "
+                f"user (uid {os.getuid()}). Its contents are symlinked into every "
+                f"trial tree and executed by the oracles; refusing to trust it."
+            )
+        if st.st_mode & 0o077:
+            raise UnsafeDepsCache(
+                f"dependency cache {cache} is group/world accessible "
+                f"(mode {st.st_mode & 0o777:03o}); another uid could plant a "
+                f"node_modules or venv that the oracles then execute. Expected 700."
+            )
+    else:
+        cache.mkdir(parents=True, exist_ok=True)
+        cache.chmod(0o700)
 
 
 def _deps_root(deps_base: Path, repo: str) -> Path:
@@ -178,6 +257,11 @@ def ensure_deps(corpus_root: Path, repo: str, deps_base: Path | None = None) -> 
     entry = manifest[repo]
     repo_src = corpus_root / repo
     deps_root = _deps_root(deps_base, repo)
+
+    # Only repos that declare deps get a symlink into the cache, so only they can
+    # leak through it -- and only they need a cache worth trusting.
+    if entry.get("deps"):
+        _assert_deps_base_safe(deps_base, corpus_root)
 
     for dep in entry.get("deps", []):
         target = deps_root / dep["path"]
@@ -294,6 +378,12 @@ def provision_worktree(
     sha = manifest[defect.repo]["sha"]
     repo_path = corpus_root / defect.repo
     branch = branch_name(defect, arm, trial)
+
+    # Before exporting anything: this tree is about to receive symlinks INTO the
+    # cache (`_link_deps` below), so an unsafe cache must abort the trial rather
+    # than be discovered after a tree exists to leak through.
+    if manifest[defect.repo].get("deps"):
+        _assert_deps_base_safe(deps_base, corpus_root)
 
     # Refuse a dest that already holds files (a prior failed/partial trial): with
     # `exist_ok=True` those stale files would be swept into `git add -A` and into
