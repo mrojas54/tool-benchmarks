@@ -598,6 +598,32 @@ class DepsCacheRuntimeGuardTests(unittest.TestCase):
         _assert_deps_base_safe(base, self.corpus_root)  # must not raise
         self.assertEqual(base.stat().st_mode & 0o777, 0o700)
 
+    def test_a_sticky_parent_owned_by_another_user_is_refused(self) -> None:
+        # Sticky restricts renames to the entry's owner OR THE DIRECTORY'S OWNER (or
+        # root). So a sticky 01777 dir owned by an ATTACKER still lets them swap our
+        # cache -- "sticky" alone is too weak an exception. The real defaults survive
+        # this: /tmp is root-owned and /var/folders/... is owned by us.
+        # Owning a dir as another uid needs root, so the foreign owner is mocked; the
+        # mode, the path and the walk are all real.
+        parent = Path(tempfile.gettempdir()) / f"vendor-foreign-{os.getpid()}"
+        parent.mkdir()
+        self.addCleanup(shutil.rmtree, parent, True)
+        os.chmod(parent, 0o1777)
+        target = parent.resolve()  # the guard walks resolved paths
+        real_stat = Path.stat
+
+        def fake_stat(path: Path, **kwargs: object) -> os.stat_result:
+            st = real_stat(path, **kwargs)  # type: ignore[arg-type]
+            if path == target:
+                fields = list(st)
+                fields[4] = os.getuid() + 1  # st_uid: somebody else
+                return os.stat_result(fields)
+            return st
+
+        with mock.patch.object(Path, "stat", fake_stat):
+            with self.assertRaises(UnsafeDepsCache):
+                _assert_deps_base_safe(parent / "cache", self.corpus_root)
+
     def test_ensure_deps_refuses_a_pre_existing_group_or_world_writable_cache(self) -> None:
         # `if target.exists(): continue` trusts whatever is already on disk. A cache
         # dir another user can write is a cache another user can poison.

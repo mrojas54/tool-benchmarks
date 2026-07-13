@@ -236,20 +236,33 @@ def _assert_deps_base_safe(deps_base: Path, corpus_root: Path) -> None:
 
     # A private leaf under a parent others can write is still swappable: they cannot
     # read into it, but they can rename it away and leave their own in its place
-    # after the checks below pass. The sticky bit is precisely the defense -- in a
-    # sticky dir only an entry's owner may rename or delete it -- so writable is
-    # tolerable only WITH it. This is what keeps Linux's 1777 /tmp (the default
-    # cache's parent there) usable while refusing a plain 0777 parent.
+    # after the checks below pass -- defeating the ownership check rather than
+    # tripping it. Two conditions make a writable ancestor tolerable, and BOTH are
+    # needed:
+    #   - sticky: in a sticky dir, only an entry's owner may rename or delete it.
+    #   - owned by us or root: sticky exempts the DIRECTORY'S owner too, so a sticky
+    #     dir owned by an attacker can still be swapped.
+    # Together these admit exactly the real defaults -- Linux's root-owned 1777 /tmp
+    # and macOS's per-user 0700 /var/folders/... -- and refuse the rest.
     for ancestor in cache.parents:
         if not ancestor.exists():
             continue  # created privately by _mkdir_private below
-        mode = ancestor.stat().st_mode
-        if mode & 0o022 and not mode & stat.S_ISVTX:
+        st_ancestor = ancestor.stat()
+        if not st_ancestor.st_mode & 0o022:
+            continue
+        if not st_ancestor.st_mode & stat.S_ISVTX:
             raise UnsafeDepsCache(
                 f"dependency cache ancestor {ancestor} is writable by other users "
-                f"and not sticky (mode {mode & 0o7777:04o}): another uid could "
-                f"replace the cache directory after it is validated. Place the "
-                f"cache under a private or sticky parent."
+                f"and not sticky (mode {st_ancestor.st_mode & 0o7777:04o}): another "
+                f"uid could replace the cache directory after it is validated. "
+                f"Place the cache under a private or sticky parent."
+            )
+        if st_ancestor.st_uid not in (os.getuid(), 0):
+            raise UnsafeDepsCache(
+                f"dependency cache ancestor {ancestor} is world-writable and sticky "
+                f"but owned by uid {st_ancestor.st_uid}: sticky still lets the "
+                f"directory's OWNER rename entries, so that uid could replace the "
+                f"cache after it is validated."
             )
 
     if not cache.exists():
