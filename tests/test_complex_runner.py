@@ -1,0 +1,172 @@
+import json
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+from toolbench.complex import ArmSpec, DefectSpec, Truth, build_arms
+from toolbench.complex_runner import (
+    branch_name,
+    build_claude_argv,
+    provision_worktree,
+    run_trial,
+    shell_oracle,
+)
+
+FIXTURE = Path("tests/fixtures/complex_session_located.jsonl")
+GATE = "Bash(npx vitest run:*)"
+
+DEFECT = DefectSpec(
+    id="DT",
+    repo="wids",
+    language="typescript",
+    truth=Truth("web/src/lib/schedule.ts", "formatSlot", (12, 20)),
+    predicted_winner="native",
+    rationale="test fixture",
+    oracle_cmd=("npx", "vitest", "run", "tests/schedule.test.ts"),
+    oracle_cwd=".",
+    test_gate=GATE,
+)
+
+
+def _arm(name: str) -> ArmSpec:
+    return next(a for a in build_arms(GATE) if a.name == name)
+
+
+class ClaudeArgvTests(unittest.TestCase):
+    def test_allowed_tools_are_passed_and_agent_never_appears(self) -> None:
+        argv = build_claude_argv("find the bug", _arm("serena"), Path("/tmp/wt"))
+        self.assertIn("--allowedTools", argv)
+        allowed = argv[argv.index("--allowedTools") + 1]
+        self.assertIn("mcp__plugin_serena_serena__find_symbol", allowed)
+        self.assertNotIn("Task", allowed)
+        self.assertNotIn("Agent", allowed)
+
+    def test_the_ban_is_also_stated_explicitly(self) -> None:
+        # --allowedTools alone is an allowlist; --disallowedTools states the ban so
+        # a future permissive default cannot quietly reopen the subagent escape.
+        argv = build_claude_argv("find the bug", _arm("control"), Path("/tmp/wt"))
+        self.assertIn("--disallowedTools", argv)
+        self.assertIn("Task", argv[argv.index("--disallowedTools") + 1])
+
+
+class RunTrialTests(unittest.TestCase):
+    def test_oracle_verdict_flows_into_the_scored_result(self) -> None:
+        launched: list[str] = []
+
+        def fake_launch(argv: list[str], cwd: Path) -> Path:
+            launched.append("launched")
+            return FIXTURE
+
+        def fake_oracle(cwd: Path) -> bool:
+            return False  # suite still red
+
+        result = run_trial(DEFECT, _arm("native"), 1, Path("/tmp/wt"), fake_launch, fake_oracle)
+        self.assertEqual(launched, ["launched"])
+        self.assertFalse(result.fixed)
+        self.assertTrue(result.located)
+
+
+def _run(argv: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(argv, cwd=cwd, check=True, capture_output=True, text=True)
+
+
+class ProvisionWorktreeTests(unittest.TestCase):
+    """The fast suite must not depend on `corpus/` existing: a tiny throwaway
+    git repo, built fresh per test, stands in for a vendored corpus repo."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+
+        self.corpus_root = self.root / "corpus"
+        self.repo_dir = self.corpus_root / "toy"
+        self.repo_dir.mkdir(parents=True)
+        _run(["git", "init", "-q"], self.repo_dir)
+        _run(["git", "config", "user.email", "test@example.com"], self.repo_dir)
+        _run(["git", "config", "user.name", "Test"], self.repo_dir)
+        (self.repo_dir / "a.txt").write_text("original\n", encoding="utf-8")
+        _run(["git", "add", "a.txt"], self.repo_dir)
+        _run(["git", "commit", "-q", "-m", "init"], self.repo_dir)
+        self.sha = _run(
+            ["git", "rev-parse", "HEAD"], self.repo_dir
+        ).stdout.strip()
+
+        # A real patch, produced by git itself, so the fixture cannot be a typo'd
+        # hand-written diff that happens to look right.
+        (self.repo_dir / "a.txt").write_text("modified\n", encoding="utf-8")
+        patch_text = subprocess.run(
+            ["git", "diff"], cwd=self.repo_dir, check=True, capture_output=True, text=True
+        ).stdout
+        _run(["git", "checkout", "-q", "--", "a.txt"], self.repo_dir)
+
+        (self.corpus_root / "manifest.json").write_text(
+            json.dumps({"toy": {"sha": self.sha}}), encoding="utf-8"
+        )
+
+        self.fixture_root = self.root / "probes" / "complex"
+        fixture_dir = self.fixture_root / "toy-D1-slug"
+        fixture_dir.mkdir(parents=True)
+        (fixture_dir / "defect.patch").write_text(patch_text, encoding="utf-8")
+        (fixture_dir / "prompt.md").write_text("find the toy bug\n", encoding="utf-8")
+
+        self.defect = DefectSpec(
+            id="D1",
+            repo="toy",
+            language="typescript",
+            truth=Truth("a.txt", "a", (1, 1)),
+            predicted_winner="neutral",
+            rationale="toy fixture",
+            oracle_cmd=("true",),
+            oracle_cwd=".",
+            test_gate="Bash(true:*)",
+        )
+
+    def test_creates_worktree_applies_patch_and_writes_prompt(self) -> None:
+        dest = self.root / "wt"
+        arm = _arm("native")
+        result = provision_worktree(
+            self.defect, arm, 1, self.corpus_root, dest, fixture_root=self.fixture_root
+        )
+        self.assertEqual(result, dest)
+        self.assertEqual((dest / "a.txt").read_text(encoding="utf-8"), "modified\n")
+        self.assertEqual((dest / "PROMPT.md").read_text(encoding="utf-8"), "find the toy bug\n")
+
+    def test_branch_is_named_probe_repo_defect_arm_trial(self) -> None:
+        dest = self.root / "wt2"
+        arm = _arm("serena")
+        provision_worktree(
+            self.defect, arm, 3, self.corpus_root, dest, fixture_root=self.fixture_root
+        )
+        current = _run(["git", "branch", "--show-current"], dest).stdout.strip()
+        self.assertEqual(current, "probe/toy/D1/serena/t3")
+        self.assertEqual(branch_name(self.defect, arm, 3), "probe/toy/D1/serena/t3")
+
+    def test_worktree_is_pinned_to_the_manifest_sha_not_whatever_head_is(self) -> None:
+        # Advance the source repo past the pinned sha; the worktree must still
+        # land on the pinned commit, not on whatever the corpus repo's HEAD is.
+        (self.repo_dir / "b.txt").write_text("later\n", encoding="utf-8")
+        _run(["git", "add", "b.txt"], self.repo_dir)
+        _run(["git", "commit", "-q", "-m", "later commit"], self.repo_dir)
+
+        dest = self.root / "wt3"
+        provision_worktree(
+            self.defect, _arm("bash"), 1, self.corpus_root, dest, fixture_root=self.fixture_root
+        )
+        self.assertFalse((dest / "b.txt").exists())
+
+
+class ShellOracleTests(unittest.TestCase):
+    def test_returns_true_iff_exit_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workdir = Path(tmp)
+            (workdir / "sub").mkdir()
+            oracle_true = shell_oracle(["true"], ".")
+            oracle_false = shell_oracle(["false"], ".")
+            self.assertTrue(oracle_true(workdir))
+            self.assertFalse(oracle_false(workdir))
+
+
+if __name__ == "__main__":
+    unittest.main()
