@@ -844,6 +844,34 @@ class ReadEscapeTests(unittest.TestCase):
         )
         self.assertTrue(any("/etc" in e for e in out), out)
 
+    def test_glob_relative_pattern_resolves_against_its_path_not_the_root(self) -> None:
+        # Over-restriction guard: `pattern` is read relative to `path`, so a `..`
+        # pattern under a non-default in-tree `path` stays inside the tree and must
+        # NOT be voided. `web/src` + `../*.ts` -> `web/*.ts`, in-tree.
+        self.assertEqual(
+            read_escapes(
+                [_rc("Glob", path="web/src", pattern="../*.ts")], TRIAL_ROOT
+            ),
+            (),
+        )
+        # But a pattern that escapes even after resolving against `path` is flagged.
+        out = read_escapes(
+            [_rc("Glob", path="web", pattern="../../corpus/**/*.ts")], TRIAL_ROOT
+        )
+        self.assertTrue(any(e.startswith("ReadEscape:") for e in out), out)
+
+    def test_home_prefixed_env_var_is_not_expanded_as_HOME(self) -> None:
+        # Over-restriction guard: `$HOME` expansion must respect a variable-name
+        # boundary. `$HOMEBREW_PREFIX` is a different variable, not `$HOME` + suffix;
+        # a substring replace would rewrite it into an absolute outside path and
+        # falsely void a benign call.
+        self.assertEqual(
+            read_escapes(
+                [_rc("Bash", command="cat $HOMEBREW_PREFIX/share/x.ts")], TRIAL_ROOT
+            ),
+            (),
+        )
+
     def test_escapes_are_returned_sorted(self) -> None:
         calls = [
             _rc("Bash", command="cat /z/late.ts"),

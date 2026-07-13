@@ -564,7 +564,12 @@ def _expand_home(token: str) -> str:
     that itself lives under home stays correct."""
     expanded = os.path.expanduser(token)
     home = os.path.expanduser("~")
-    return expanded.replace("${HOME}", home).replace("$HOME", home)
+    # `${HOME}` is brace-delimited so a literal replace is unambiguous, but bare
+    # `$HOME` needs a variable-name boundary: a plain substring replace would eat
+    # the prefix of `$HOMEBREW_PREFIX` and forge an absolute outside path, falsely
+    # voiding a benign call.
+    expanded = expanded.replace("${HOME}", home)
+    return re.sub(r"\$HOME(?![A-Za-z0-9_])", home, expanded)
 
 
 def _bash_token_escapes(token: str, root: str) -> bool:
@@ -630,8 +635,17 @@ def read_escapes(calls: list[ToolCall], trial_root: Path) -> tuple[str, ...]:
             # Glob's `path` defaults to "." (in-tree) but its `pattern` is the arg
             # that actually reaches the filesystem: a glob pattern is a path with
             # metacharacters, so an escaping literal prefix (`../corpus/**/*.ts`, an
-            # absolute pattern) reads outside the tree while `path` stays ".".
-            candidates.append(payload.get("pattern"))
+            # absolute pattern) reads outside the tree while `path` stays ".". The
+            # pattern is read RELATIVE TO `path`, so it must be resolved there before
+            # the containment check -- otherwise a legit `path="web/src",
+            # pattern="../*.ts"` (which stays inside the tree) is falsely voided.
+            pattern = payload.get("pattern")
+            if isinstance(pattern, str):
+                base = payload.get("path", ".")
+                base_str = base if isinstance(base, str) else "."
+                candidates.append(
+                    os.path.join(_expand_home(base_str), _expand_home(pattern))
+                )
         for raw in candidates:
             if not isinstance(raw, str):
                 continue
