@@ -21,6 +21,18 @@ Non-obvious notes for this environment:
   `uv run python -m unittest discover tests` as the gate — it silently misses
   module-level `test_*` functions (37 of 220 as of TB-19) and executes
   module-level code, printing report tables to stdout mid-run.
+- **Lattice board integrity (install the pre-commit hook once per clone):**
+  `ln -sf ../../.githooks/pre-commit .git/hooks/pre-commit`. `.git/hooks/` is not
+  versioned, so a fresh clone gets the script but not the wiring; linked worktrees
+  share the main checkout's hooks and need no separate install. The hook rejects a
+  commit whose index holds a `.lattice/tasks/*.json` snapshot with no
+  `task_created`-headed log in `.lattice/events/`. **Never create a task by writing
+  `.lattice/tasks/*.json` directly — always use `lattice create`.** A hand-written
+  snapshot has no event log, and the next ordinary `lattice` mutation appends to the
+  missing file, producing a headless log that `lattice rebuild` can never replay and
+  `lattice doctor` does not flag; the snapshot silently becomes the task's only copy.
+  That happened to TB-15 on 2026-07-09 and went undetected for four days. Do not set
+  `core.hooksPath` — it would disable the existing `post-commit`/`post-rewrite` hooks.
 - **Running the passive analyzer on real data:** there is no `--root` CLI flag;
   raw scanning defaults to `~/.claude/projects` and treats the first path segment
   under the root as the project (subagent files at `<project>/<session-uuid>/subagents/*.jsonl`
