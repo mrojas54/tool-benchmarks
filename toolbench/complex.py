@@ -523,15 +523,28 @@ def arm_violations(calls: list[ToolCall], arm: ArmSpec) -> tuple[str, ...]:
 def _command_escapes_gate(command: str, gate_prefixes: tuple[str, ...]) -> bool:
     """True iff `command` is not one of the arm's permitted oracle invocations.
 
-    Permitted means: it starts with a granted prefix AND carries no shell operator
-    that would reach a second command. Both halves are load-bearing -- a command
-    that starts with the prefix but chains (`npx vitest run; rg`) escapes just as
-    surely as one that never matched the prefix at all.
+    Permitted means: it matches a granted prefix at a TOKEN BOUNDARY AND carries no
+    shell operator that would reach a second command. Both halves are load-bearing
+    -- a command that matches the prefix but chains (`npx vitest run; rg`) escapes
+    just as surely as one that never matched the prefix at all.
+
+    The boundary matters: a bare `startswith` would permit `npx vitest runx` and
+    `cargo testevil`, which share the prefix `npx vitest run` / `cargo test` but are
+    different binaries/commands. A prefix counts as matched only if the command
+    equals it exactly or the next character after it is whitespace.
     """
     stripped = command.strip()
-    if not any(stripped.startswith(prefix) for prefix in gate_prefixes):
+    if not any(_matches_prefix_at_boundary(stripped, prefix) for prefix in gate_prefixes):
         return True
     return _SHELL_CHAIN_RE.search(stripped) is not None
+
+
+def _matches_prefix_at_boundary(command: str, prefix: str) -> bool:
+    """True iff `command` is `prefix` exactly or `prefix` followed by whitespace."""
+    if not command.startswith(prefix):
+        return False
+    rest = command[len(prefix) :]
+    return rest == "" or rest[0].isspace()
 
 
 def score_trial(

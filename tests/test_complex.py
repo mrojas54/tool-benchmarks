@@ -11,6 +11,7 @@ from toolbench.complex import (
     DEFAULT_FIXTURE_ROOT,
     DEFECTS,
     ArmSpec,
+    _command_escapes_gate,
     DefectSpec,
     ProfileRow,
     TrialResult,
@@ -663,6 +664,38 @@ class TrialScoringTests(unittest.TestCase):
         # escape there, so command inspection must not fire.
         calls = load_calls("tests/fixtures/complex_session_gate_escape.jsonl")
         self.assertEqual(arm_violations(calls, _arm("bash")), ())
+
+
+class GateTokenBoundaryTests(unittest.TestCase):
+    """F3: `_command_escapes_gate` matched the prefix with a bare `startswith`, so
+    `npx vitest runx` and `cargo testevil` shared the prefix, carried no shell
+    operator, and were scored PERMITTED though they are different binaries. Since
+    the gate audit is the primary enforcement (the --allowedTools flag does not
+    restrict reads), a prefix must match only at a token boundary."""
+
+    PREFIXES = ("npx vitest run", "cargo test")
+
+    def test_prefix_glued_to_more_word_chars_escapes(self) -> None:
+        self.assertTrue(_command_escapes_gate("npx vitest runx", self.PREFIXES))
+        self.assertTrue(_command_escapes_gate("cargo testevil", self.PREFIXES))
+
+    def test_exact_prefix_is_permitted(self) -> None:
+        self.assertFalse(_command_escapes_gate("npx vitest run", self.PREFIXES))
+        self.assertFalse(_command_escapes_gate("cargo test", self.PREFIXES))
+
+    def test_prefix_then_space_is_permitted(self) -> None:
+        self.assertFalse(
+            _command_escapes_gate("npx vitest run tests/foo.test.ts", self.PREFIXES)
+        )
+
+    def test_prefix_then_tab_is_permitted(self) -> None:
+        self.assertFalse(_command_escapes_gate("cargo test\t--lib", self.PREFIXES))
+
+    def test_a_chained_command_after_the_prefix_still_escapes(self) -> None:
+        # The shell-operator half of the check is unchanged.
+        self.assertTrue(
+            _command_escapes_gate("npx vitest run; rg formatSlot", self.PREFIXES)
+        )
 
 
 def _trial(
