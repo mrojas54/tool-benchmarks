@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -117,6 +119,113 @@ def _find_fixture_dir(fixture_root: Path, defect: DefectSpec) -> Path:
     return matches[0]
 
 
+# A tree exported from a pinned SHA carries only tracked files -- no node_modules,
+# no venv -- so 6 of 8 oracles (`npx vitest run …`) and rich's pytest cannot run
+# in it. Dependencies are provisioned ONCE into `corpus/.deps/<repo>/…` and
+# symlinked into each trial tree. This directory holds ONLY dependencies: it is
+# deliberately NOT nested inside the corpus clone, because a `node_modules` inside
+# `corpus/<repo>/` would give a bash-arm agent a filesystem path back into the
+# pristine, unpatched source (`node_modules/../../lib/...`) -- the identical leak
+# as C1 in a new costume. `.deps/<repo>/` reaches only other dependencies, never
+# source.
+DEPS_DIRNAME = ".deps"
+
+
+def _deps_root(corpus_root: Path, repo: str) -> Path:
+    return corpus_root / DEPS_DIRNAME / repo
+
+
+def ensure_deps(corpus_root: Path, repo: str) -> None:
+    """Build `repo`'s dependency cache under `corpus/.deps/<repo>/` if absent.
+
+    Idempotent: a dep whose target path already exists is left alone, so this is
+    cheap to call before every trial. All work here happens OUTSIDE the measured
+    window -- it must never appear in an agent transcript.
+
+    npm deps are built from a COPY of the package manifests in a source-free cache
+    dir (so `npm ci`'s `node_modules/..` cannot reach corpus source); the rich venv
+    installs pytest and rich's runtime deps but NOT rich itself, so pytest imports
+    the trial tree's own `rich/` (an editable `-e .` install would instead pin
+    imports to whichever tree pip ran in, hiding the defect).
+    """
+    manifest = json.loads((corpus_root / "manifest.json").read_text(encoding="utf-8"))
+    entry = manifest[repo]
+    repo_src = corpus_root / repo
+    deps_root = _deps_root(corpus_root, repo)
+
+    for dep in entry.get("deps", []):
+        target = deps_root / dep["path"]
+        if target.exists():
+            continue
+        if "npm_ci" in dep:
+            subdir = dep["npm_ci"]
+            cache_subdir = deps_root / subdir
+            cache_subdir.mkdir(parents=True, exist_ok=True)
+            for name in ("package.json", "package-lock.json"):
+                shutil.copy2(repo_src / subdir / name, cache_subdir / name)
+            subprocess.run(
+                ["npm", "ci", "--no-audit", "--no-fund"],
+                cwd=cache_subdir,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        elif "venv" in dep:
+            venv_dir = deps_root / dep["path"]
+            venv_dir.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                [sys.executable, "-m", "venv", str(venv_dir)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            pip = venv_dir / "bin" / "pip"
+            subprocess.run(
+                [str(pip), "install", "--quiet", "--upgrade", "pip"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                [str(pip), "install", "--quiet", *dep["venv"]],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        else:  # pragma: no cover - guards against a malformed manifest dep
+            raise ValueError(f"{repo}: dep {dep!r} declares no known build kind")
+
+    for step in entry.get("warmup", []):
+        # Warm-up populates a GLOBAL cache (e.g. ~/.cargo) rather than a tree path,
+        # so the rust oracle can build in the trial tree without a network fetch
+        # inside the trial. It has no symlink; it is pure environment setup.
+        subprocess.run(list(step), cwd=repo_src, check=True, capture_output=True, text=True)
+
+
+def _link_deps(entry: dict[str, object], corpus_root: Path, repo: str, dest: Path) -> None:
+    """Symlink each of `repo`'s cached deps into the trial tree at its own path.
+
+    Raises if a declared dep is missing from the cache rather than leaving a
+    dangling link: a silently-absent `node_modules` would make the oracle fail as
+    if the fix were wrong, which is the C7 failure this whole path exists to
+    prevent. Call `ensure_deps` first.
+    """
+    deps_root = _deps_root(corpus_root, repo)
+    deps = entry.get("deps", [])
+    assert isinstance(deps, list)
+    for dep in deps:
+        rel = dep["path"]
+        src = deps_root / rel
+        if not src.exists():
+            raise FileNotFoundError(
+                f"{repo}: dependency cache {src} is missing -- run ensure_deps "
+                f"before provisioning a trial tree that needs it"
+            )
+        link = dest / rel
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(src)
+
+
 def provision_worktree(
     defect: DefectSpec,
     arm: ArmSpec,
@@ -186,6 +295,11 @@ def provision_worktree(
 
     prompt_text = (fixture_dir / "prompt.md").read_text(encoding="utf-8")
     (dest / "PROMPT.md").write_text(prompt_text, encoding="utf-8")
+
+    # Symlinked before the commit so the links are part of the single initial add
+    # and `git status` stays clean. The targets live in `corpus/.deps/`, which
+    # holds only dependencies -- committing the link exposes no source.
+    _link_deps(manifest[defect.repo], corpus_root, defect.repo, dest)
 
     # A fresh repo whose single commit IS the defect state. Identity is set on the
     # commit invocation so provisioning needs no global git config. PROMPT.md is
