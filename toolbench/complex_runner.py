@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -232,6 +233,25 @@ def _assert_deps_base_safe(deps_base: Path, corpus_root: Path) -> None:
 
     if cache.is_symlink():  # resolve() above means this is a dangling link
         raise UnsafeDepsCache(f"dependency cache {cache} is a dangling symlink")
+
+    # A private leaf under a parent others can write is still swappable: they cannot
+    # read into it, but they can rename it away and leave their own in its place
+    # after the checks below pass. The sticky bit is precisely the defense -- in a
+    # sticky dir only an entry's owner may rename or delete it -- so writable is
+    # tolerable only WITH it. This is what keeps Linux's 1777 /tmp (the default
+    # cache's parent there) usable while refusing a plain 0777 parent.
+    for ancestor in cache.parents:
+        if not ancestor.exists():
+            continue  # created privately by _mkdir_private below
+        mode = ancestor.stat().st_mode
+        if mode & 0o022 and not mode & stat.S_ISVTX:
+            raise UnsafeDepsCache(
+                f"dependency cache ancestor {ancestor} is writable by other users "
+                f"and not sticky (mode {mode & 0o7777:04o}): another uid could "
+                f"replace the cache directory after it is validated. Place the "
+                f"cache under a private or sticky parent."
+            )
+
     if not cache.exists():
         _mkdir_private(cache)
 

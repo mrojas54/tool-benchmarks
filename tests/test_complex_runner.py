@@ -572,6 +572,32 @@ class DepsCacheRuntimeGuardTests(unittest.TestCase):
             _assert_deps_base_safe(base, self.corpus_root)
         self.assertEqual(modes, [0o700])
 
+    def test_a_cache_under_a_world_writable_non_sticky_parent_is_refused(self) -> None:
+        # Creating the leaf 0700 is not enough if the PARENT is writable by others and
+        # not sticky: another uid cannot read into our leaf, but it can rename it away
+        # and drop its own in place after validation passes -- defeating the ownership
+        # check rather than tripping it. Only the parent's mode can stop that.
+        parent = Path(tempfile.gettempdir()) / f"vendor-parent-{os.getpid()}"
+        parent.mkdir()
+        self.addCleanup(shutil.rmtree, parent, True)
+        os.chmod(parent, 0o777)  # writable by anyone, NOT sticky
+        with self.assertRaises(UnsafeDepsCache):
+            _assert_deps_base_safe(parent / "cache", self.corpus_root)
+
+    def test_a_sticky_world_writable_parent_is_accepted(self) -> None:
+        # The rule must be "writable AND not sticky", not merely "writable": Linux's
+        # /tmp -- the default cache's parent there -- is 1777. The sticky bit is
+        # exactly the defense against the rename-swap above: in a sticky dir only an
+        # entry's owner may rename or delete it. Rejecting writable-but-sticky parents
+        # would refuse to run on every Linux box.
+        parent = Path(tempfile.gettempdir()) / f"vendor-sticky-{os.getpid()}"
+        parent.mkdir()
+        self.addCleanup(shutil.rmtree, parent, True)
+        os.chmod(parent, 0o1777)  # what /tmp is
+        base = parent / "cache"
+        _assert_deps_base_safe(base, self.corpus_root)  # must not raise
+        self.assertEqual(base.stat().st_mode & 0o777, 0o700)
+
     def test_ensure_deps_refuses_a_pre_existing_group_or_world_writable_cache(self) -> None:
         # `if target.exists(): continue` trusts whatever is already on disk. A cache
         # dir another user can write is a cache another user can poison.
