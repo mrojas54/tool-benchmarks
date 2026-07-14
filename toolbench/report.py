@@ -450,6 +450,41 @@ def _reasons_by_count(skips: list[SkipRecord]) -> list[tuple[SkipReason, int]]:
     return sorted(tally.items(), key=lambda kv: (-kv[1], kv[0].value))
 
 
+def _agentsview_timeout_note(timeout: float | None, skips: list[SkipRecord]) -> str | None:
+    """Name the AgentsView timeout only when it changed what the reader is looking at (TB-39).
+
+    Two ways it can, and they are not the same fact:
+
+    1. IT TRUNCATED THE CORPUS. Sessions were killed mid-export and skipped, so the report
+       describes a smaller population than the archive holds. TB-21/TB-33's standing rule is
+       that a reader must never be left to attribute to the archive a gap that our own
+       ceiling caused -- so the ceiling is named next to what it cost.
+    2. IT WAS ABSENT. Under `--agentsview-timeout 0` the run was unbounded and could have
+       blocked forever (TB-32, deliberately re-armed). No skip can ever record this -- an
+       unbounded call does not time out -- so keying disclosure on skips alone would leave
+       the ONE configuration that can hang as the only one the report never mentions. A
+       clean report is not evidence of a healthy daemon; it may only be evidence of luck.
+
+    `None` means agentsview was never called (raw scan, freeze replay): no fact to state.
+    A clean bounded run also says nothing -- a knob sitting at its default is not news.
+    """
+    if timeout is None:
+        return None
+    timed_out = sum(1 for s in skips if s.reason is SkipReason.EXPORT_TIMEOUT)
+    if timed_out:
+        ceiling = "unbounded" if timeout == 0 else f"{timeout}s"
+        return (
+            f"- AgentsView timeout: {ceiling} — {timed_out} session(s) skipped as "
+            f"`export_timeout`; the corpus is truncated by this ceiling, not by the archive."
+        )
+    if timeout == 0:
+        return (
+            "- AgentsView timeout: unbounded (--agentsview-timeout 0) — a hung daemon would "
+            "have blocked this run indefinitely rather than degrading to raw."
+        )
+    return None
+
+
 def render_report(
     reducer: Reducer,
     *,
@@ -468,6 +503,7 @@ def render_report(
     limit: int | None = None,
     limit_truncated: bool | None = False,
     sampled_by_agent: dict[str, int] | None = None,
+    agentsview_timeout: float | None = None,
 ) -> str:
     """Render the five-section report (S14) with provenance (S15).
 
@@ -710,6 +746,9 @@ def render_report(
     else:
         lines.append(f"- Subagents included: no ({subagent_note} excluded)")
     lines.append(f"- AgentsView fallback reason: {fallback_reason if fallback_reason else 'none'}")
+    timeout_note = _agentsview_timeout_note(agentsview_timeout, skips)
+    if timeout_note:
+        lines.append(timeout_note)
     lines.append("- Note: --since is file-mtime based.")
     if since_note:
         lines.append(f"- --since value used: {since_note}")

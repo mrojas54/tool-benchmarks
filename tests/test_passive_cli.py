@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -27,6 +28,7 @@ from toolbench.passive import (
     tally_skips,
 )
 from toolbench.sources import (
+    AGENTSVIEW_TIMEOUT_S,
     MissingSourceExport,
     NonTranscriptExport,
     Runner,
@@ -1258,3 +1260,77 @@ class LimitTruncationProbeFailureTests(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             _discover_refs(args, "/nonexistent", runner)
+
+
+# -- TB-39: --agentsview-timeout ------------------------------------------------------
+#
+# TB-32 bounded every agentsview call at 60s. That constant is a compromise, and a
+# compromise is wrong for somebody at both ends: a slow-but-healthy daemon gets killed
+# (a corpus truncated by OUR default), and an operator debugging a hang cannot give up
+# sooner. The flag makes the bound theirs. `0` re-arms the TB-32 hang deliberately --
+# which is why the report discloses it rather than merely permitting it.
+
+
+class AgentsViewTimeoutFlagTests(unittest.TestCase):
+    def test_default_is_the_tb32_constant(self) -> None:
+        """Absent the flag, behaviour must be byte-for-byte TB-32's."""
+        self.assertEqual(parse_args([]).agentsview_timeout, AGENTSVIEW_TIMEOUT_S)
+
+    def test_flag_parses_as_float(self) -> None:
+        self.assertEqual(parse_args(["--agentsview-timeout", "5.5"]).agentsview_timeout, 5.5)
+
+    def test_zero_means_unbounded(self) -> None:
+        self.assertEqual(parse_args(["--agentsview-timeout", "0"]).agentsview_timeout, 0.0)
+
+    def test_negative_is_rejected_at_parse(self) -> None:
+        """A negative ceiling is not a policy choice, it is nonsense. Reject rather than
+        silently coerce -- the precedent is `--tickets` (_positive_int, S39)."""
+        with self.assertRaises(SystemExit):
+            with redirect_stderr(io.StringIO()):
+                parse_args(["--agentsview-timeout", "-1"])
+
+    def test_flag_value_actually_reaches_subprocess_run(self) -> None:
+        """The test that matters: not that the flag PARSES, but that the number arrives
+        at the syscall. Asserts the bound value on the real default runner main() builds,
+        rather than on a fake that would prove nothing."""
+        seen: list[float | None] = []
+
+        def spy(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            timeout = kwargs.get("timeout")
+            assert timeout is None or isinstance(timeout, float)
+            seen.append(timeout)
+            raise FileNotFoundError("agentsview")  # bail out immediately; we only want the kwarg
+
+        with unittest.mock.patch("toolbench.sources.subprocess.run", spy):
+            with TemporaryDirectory() as tmp:
+                with redirect_stdout(io.StringIO()):
+                    main(["--agentsview-timeout", "7.5", "--index-source", "auto"], root=tmp)
+        self.assertEqual(seen[0], 7.5)
+
+    def test_zero_passes_timeout_none_to_subprocess_run(self) -> None:
+        """`timeout=None` is subprocess.run's native 'block forever'. The escape hatch is
+        real, not a very large number."""
+        seen: list[float | None] = []
+
+        def spy(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            timeout = kwargs.get("timeout")
+            assert timeout is None or isinstance(timeout, float)
+            seen.append(timeout)
+            raise FileNotFoundError("agentsview")
+
+        with unittest.mock.patch("toolbench.sources.subprocess.run", spy):
+            with TemporaryDirectory() as tmp:
+                with redirect_stdout(io.StringIO()):
+                    main(["--agentsview-timeout", "0", "--index-source", "auto"], root=tmp)
+        self.assertIsNone(seen[0])
+
+    def test_an_injected_runner_is_never_wrapped(self) -> None:
+        """The flag configures the DEFAULT runner; it must not override an explicit seam.
+        Every test in this suite injects a runner, so wrapping one would silently change
+        what they exercise."""
+        runner = FakeRunner([completed(returncode=1, stderr="daemon down")])
+        with TemporaryDirectory() as tmp:
+            with redirect_stdout(io.StringIO()):
+                main(["--agentsview-timeout", "7.5"], runner=runner, root=tmp)
+        # The fake ran (it is single-arg and would raise TypeError if handed a timeout).
+        self.assertTrue(runner.calls)
