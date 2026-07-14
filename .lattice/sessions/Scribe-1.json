@@ -1,0 +1,13 @@
+{
+  "agent_type": "triage",
+  "base_name": "Scribe",
+  "framework": "claude-code",
+  "last_active": "2026-07-14T03:46:21Z",
+  "model": "claude-opus-4-8",
+  "name": "Scribe-1",
+  "parent": "human:michelle",
+  "serial": 1,
+  "session": "sess_01KXEJ2C3JK579PEPHCEW7WFH2",
+  "started_at": "2026-07-13T20:18:04Z",
+  "status": "active"
+}

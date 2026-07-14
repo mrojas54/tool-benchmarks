@@ -729,7 +729,9 @@ def test_discover_refs_records_a_missing_root_as_a_typed_skip() -> None:
     # FileNotFoundError becomes a typed SkipRecord rather than a bare string.
     args = parse_args(["--index-source", "auto"])
     runner = FakeRunner([FileNotFoundError("no agentsview")])
-    _refs, _fallback, skips, census = _discover_refs(args, "/definitely/not/a/real/root", runner)
+    _refs, _fallback, skips, census, _truncated = _discover_refs(
+        args, "/definitely/not/a/real/root", runner
+    )
     assert skips, "a missing raw root must be recorded as a skip"
     assert all(isinstance(s, SkipRecord) for s in skips)
     assert skips[0].reason is SkipReason.MISSING_SOURCE
@@ -1088,3 +1090,171 @@ class SubagentExclusionAcrossIndexSourcesTests(unittest.TestCase):
             "Subagents included: no (1 of 2 discovered excluded)",
             self._run(["--exclude-subagents"], exports=1),
         )
+
+
+class LimitTruncationSignalTests(unittest.TestCase):
+    """Passing `--limit` is not evidence that it CUT anything (roborev #98/#101, TB-35).
+
+    The report may only name `--limit` as the cause of an uneven spread when the limit
+    actually truncated the corpus. The flag's presence cannot establish that: `--limit
+    9000` over an 8778-session archive stops nothing. So truncation is OBSERVED at
+    discovery -- when the ref loop stops on the limit, we ask the iterator for one more
+    ref, and only a ref that exists proves sessions were left behind.
+    """
+
+    def _root_with(self, n: int) -> str:
+        tmp = Path(tempfile.mkdtemp())
+        project = tmp / "proj-a"
+        project.mkdir()
+        for i in range(n):
+            (project / f"sess-{i}.jsonl").write_text("{}\n")
+        self.addCleanup(shutil.rmtree, tmp)
+        return str(tmp)
+
+    def test_limit_below_corpus_size_observes_truncation(self) -> None:
+        args = parse_args(["--index-source", "raw", "--limit", "2"])
+        refs, _, _, _, truncated = _discover_refs(args, self._root_with(5), None)
+
+        self.assertEqual(len(refs), 2)
+        self.assertTrue(truncated)
+
+    def test_limit_equal_to_corpus_size_truncates_nothing(self) -> None:
+        # THE case the flag alone cannot see, and the reason this signal exists. The loop
+        # DOES break on the limit -- `len(refs) >= args.limit` is true -- but there was no
+        # sixth session to pull. Nothing was cut, so nothing may be blamed on the limit.
+        args = parse_args(["--index-source", "raw", "--limit", "5"])
+        refs, _, _, _, truncated = _discover_refs(args, self._root_with(5), None)
+
+        self.assertEqual(len(refs), 5)
+        self.assertFalse(truncated)
+
+    def test_no_limit_never_truncates(self) -> None:
+        args = parse_args(["--index-source", "raw"])
+        _, _, _, _, truncated = _discover_refs(args, self._root_with(5), None)
+
+        self.assertFalse(truncated)
+
+
+class LimitTruncationProbePopulationTests(unittest.TestCase):
+    """The probe must ask about the population the REPORT counts (roborev #103).
+
+    The refs listing always yields children -- they have to be discovered before
+    `filter_subagents` can drop them (sources.py, `_ALL_INCLUDES`). So under
+    `--exclude-subagents` the ref sitting just past the limit may be a child the report
+    never counts, and taking that as truncation would blame `--limit` for a gap in a
+    population it did not cut. The probe therefore skips exactly what the report skips.
+    """
+
+    def _root(self) -> str:
+        """3 parents, then 2 subagents -- in `sorted(rglob(...))` order."""
+        tmp = Path(tempfile.mkdtemp())
+        project = tmp / "proj-a"
+        project.mkdir()
+        for i in range(3):
+            (project / f"sess-{i}.jsonl").write_text("{}\n")
+        # <project>/<session>/subagents/<agent>.jsonl -- the real layout (TB-29). "zzz-"
+        # keeps these last in the sorted listing, so they are what a limit of 3 leaves behind.
+        subagents = project / "zzz-session" / "subagents"
+        subagents.mkdir(parents=True)
+        for i in range(2):
+            (subagents / f"agent-{i}.jsonl").write_text("{}\n")
+        self.addCleanup(shutil.rmtree, tmp)
+        return str(tmp)
+
+    def test_only_excluded_subagents_beyond_the_limit_is_not_truncation(self) -> None:
+        # THE case: the limit stops the listing with 2 refs still behind it, but both are
+        # children `--exclude-subagents` drops. Nothing the report counts was left behind,
+        # so the limit cut nothing FROM THE REPORTED POPULATION and may not be named.
+        args = parse_args(["--index-source", "raw", "--exclude-subagents", "--limit", "3"])
+        refs, _, _, _, truncated = _discover_refs(args, self._root(), None)
+
+        self.assertEqual(len(refs), 3)
+        self.assertFalse(truncated)
+
+    def test_a_parent_beyond_the_limit_is_truncation(self) -> None:
+        # The control on the test above: the probe must still SEE a left-behind parent
+        # rather than becoming an unconditional False.
+        args = parse_args(["--index-source", "raw", "--exclude-subagents", "--limit", "2"])
+        refs, _, _, _, truncated = _discover_refs(args, self._root(), None)
+
+        self.assertEqual(len(refs), 2)
+        self.assertTrue(truncated)
+
+    def test_subagents_beyond_the_limit_count_when_they_are_included(self) -> None:
+        # Same corpus, same limit, no `--exclude-subagents`: now the children ARE the
+        # reported population, so leaving them behind IS truncation. The probe tracks the
+        # flag because the population does.
+        args = parse_args(["--index-source", "raw", "--limit", "3"])
+        _, _, _, _, truncated = _discover_refs(args, self._root(), None)
+
+        self.assertTrue(truncated)
+
+
+class LimitTruncationProbeFailureTests(unittest.TestCase):
+    """A probe that cannot answer must say so -- not answer wrong (roborev #103).
+
+    The probe runs AFTER this run already holds every ref it asked for, and it may cost a
+    fresh page. If that page fails, the run is still complete: the failure may not crash
+    it, may not fabricate a skip, and may not zero the census. Nor may it return `False`,
+    which the report renders as "`--limit N` truncated nothing" -- a measurement nobody
+    took. Unobserved is `None`.
+    """
+
+    def _script(self, failure: object, *, auto: bool = False) -> FakeRunner:
+        sessions = [
+            {"id": "s-0", "project": "p", "agent": "claude"},
+            {"id": "s-1", "project": "p", "agent": "claude"},
+        ]
+        probe = {"sessions": sessions, "next_cursor": "", "total": 2}
+        census = {"sessions": [], "next_cursor": "", "total": 4}
+        # Page 1 fills the limit exactly and advertises a page 2 -- so the probe's `next()`
+        # must go back to the runner, which is where the failure lands.
+        page_1 = {"sessions": sessions, "next_cursor": "page-2", "total": 4}
+        responses: list[object] = [
+            completed(stdout=json.dumps(probe)),  # parent probe (TB-31)
+            completed(stdout=json.dumps(census)),  # per-agent census (TB-33)
+            completed(stdout=json.dumps(census)),  # run-scoped archive total
+            completed(stdout=json.dumps(page_1)),  # the listing this run consumed
+            failure,  # the probe's extra page
+        ]
+        if auto:  # `auto` asks whether agentsview is there at all before using it
+            responses.insert(0, completed(returncode=0))
+        return FakeRunner(responses)  # type: ignore[arg-type]
+
+    def test_a_failed_page_leaves_truncation_unobserved(self) -> None:
+        # rc != 0 -> RuntimeError out of `_agentsview_pages`, which `_discover_refs` never
+        # caught: a complete run died on its own diagnostic.
+        args = parse_args(["--index-source", "agentsview", "--limit", "2"])
+        runner = self._script(completed(returncode=1, stderr="daemon down"))
+        refs, _, skips, census, truncated = _discover_refs(args, "/nonexistent", runner)
+
+        self.assertIsNone(truncated)
+        self.assertEqual([r.session_id for r in refs], ["s-0", "s-1"])
+        self.assertEqual(skips, [])
+        self.assertEqual(census.totals, {"claude": 4})
+
+    def test_a_vanished_source_at_the_probe_does_not_fabricate_a_skip(self) -> None:
+        # The insidious one. `FileNotFoundError` IS caught under `auto` -- by the guard for
+        # a source that vanishes DURING discovery -- so a run already holding every ref it
+        # asked for got rewritten into a MISSING_SOURCE skip with an empty census. The refs
+        # were never in doubt; only the probe failed.
+        args = parse_args(["--index-source", "auto", "--limit", "2"])
+        runner = self._script(FileNotFoundError("agentsview vanished"), auto=True)
+        refs, _, skips, census, truncated = _discover_refs(args, "/nonexistent", runner)
+
+        self.assertIsNone(truncated)
+        self.assertEqual([r.session_id for r in refs], ["s-0", "s-1"])
+        self.assertEqual(skips, [])
+        self.assertEqual(census.totals, {"claude": 4})
+        self.assertIsNone(census.unavailable_reason)
+
+    def test_a_mid_listing_failure_before_the_limit_still_raises(self) -> None:
+        # The guard is scoped to the PROBE, not widened to the whole loop. A listing that
+        # dies while refs are still being collected leaves an INCOMPLETE sample, and that
+        # is a real discovery failure -- it must keep raising rather than be downgraded to
+        # a shrug about truncation.
+        args = parse_args(["--index-source", "agentsview", "--limit", "9"])
+        runner = self._script(completed(returncode=1, stderr="daemon down"))
+
+        with self.assertRaises(RuntimeError):
+            _discover_refs(args, "/nonexistent", runner)
