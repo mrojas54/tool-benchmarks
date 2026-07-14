@@ -25,6 +25,8 @@ from toolbench.sources import (
     SessionRef,
     SkipReason,
     SkipRecord,
+    _list_argv,
+    _probe_agentsview,
     _run_agentsview,
     discover_agentsview,
     iter_agentsview_sessions,
@@ -838,6 +840,20 @@ class AgentsViewTimeoutTests(unittest.TestCase):
         timeout as a RuntimeError is what routes it into the handling that exists."""
         self.assertTrue(issubclass(AgentsViewTimeout, RuntimeError))
         self.assertFalse(issubclass(AgentsViewTimeout, subprocess.SubprocessError))
+
+    def test_probe_argv_is_built_by_the_sole_builder(self) -> None:
+        """TB-36: `_probe_agentsview` routes through `_list_argv` like every other
+        `session list` call site, even though it is the filter-free exception to the
+        invariant `_list_argv` exists to enforce -- it discards the payload and never
+        feeds a census denominator or a discovery numerator."""
+        runner = FakeRunner([completed(stdout=_total_page(0))])
+        reason = _probe_agentsview(runner)
+        self.assertIsNone(reason)
+        self.assertEqual(len(runner.calls), 1)
+        self.assertEqual(
+            runner.calls[0],
+            _list_argv(agent="all", project=None, since=None, limit=1, includes=()),
+        )
 
     def test_auto_falls_back_to_raw_when_the_probe_times_out(self) -> None:
         """S10's intent: an unhealthy AgentsView degrades the scan, never blocks it."""

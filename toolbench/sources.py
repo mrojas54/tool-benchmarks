@@ -610,9 +610,17 @@ def _probe_agentsview(runner: Runner) -> str | None:
     exit), and hung (AgentsViewTimeout, TB-32). All three land here as a named reason so
     the scan degrades to raw and the report says why -- an unhealthy AgentsView must
     never block a scan, which is the whole of S10's intent.
+
+    Routed through `_list_argv` (TB-36) like every other `session list` call site, even
+    though this one is exempt from the invariant `_list_argv` exists to enforce: this
+    argv is discarded wholesale (returncode/exit status only) and never feeds a census
+    denominator or a discovery numerator, so `agent="all"`, `project=None`, `since=None`,
+    and an empty `includes` are correct here -- not a stand-in for real filters.
     """
     try:
-        result = runner(["agentsview", "session", "list", "--json", "--limit", "1"])
+        result = runner(
+            _list_argv(agent="all", project=None, since=None, limit=1, includes=())
+        )
     except FileNotFoundError as exc:
         return f"agentsview binary not found: {exc}"
     except AgentsViewTimeout as exc:
