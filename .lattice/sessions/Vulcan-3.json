@@ -2,7 +2,7 @@
   "agent_type": "advance",
   "base_name": "Vulcan",
   "framework": "claude-code",
-  "last_active": "2026-07-14T06:29:34Z",
+  "last_active": "2026-07-14T06:36:34Z",
   "model": "claude-opus-4-8",
   "name": "Vulcan-3",
   "prompt": "TB-39 --agentsview-timeout flag",
