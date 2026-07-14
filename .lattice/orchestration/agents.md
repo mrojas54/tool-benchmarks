@@ -1,12 +1,17 @@
-# Agents — tool-benchmarks (run 2: TB-19 · TB-18 · TB-20)
+# Agents — tool-benchmarks (run 3: TB-34 · TB-36 · TB-37 · TB-38)
 
-Active table overwritten each dispatch tick (Lattice + `c11 tree` are ground truth).
-Run-1 delegator history retained under Archived.
+Active table overwritten each dispatch tick. Run 3 uses Agent-tool worktree
+isolation, not c11 panes/surfaces — "Surface ref"/"Pane ref" are N/A this run;
+ground truth is the Agent tool's background-task status plus verified git/PR
+state. Run 1 + Run 2 delegator history retained under Archived.
 
-## Active
-| Role | Ticket | Surface ref | Pane ref | Branch | Worktree | Phase | Last seen | Spawned at |
-|------|--------|-------------|----------|--------|----------|-------|-----------|------------|
-| (none — dispatch complete 2026-07-10 06:42; all three tickets at review) | | | | | | | | |
+## Active (Run 3, dispatched 2026-07-14, Phase 1)
+| Role | Ticket | Branch | Worktree isolation | Phase | Spawned at |
+|------|--------|--------|---------------------|-------|------------|
+| delegator (inline-full) | TB-34 | `fix/tb-34-zero-match-census-disclosure` | Agent-tool worktree | dispatched | 2026-07-14 (Run 3 Phase 1) |
+| delegator (fast-track) | TB-36 | `chore/tb-36-probe-argv-sole-builder` | Agent-tool worktree | dispatched | 2026-07-14 (Run 3 Phase 1) |
+| delegator (inline-full) | TB-37 | `feat/tb-37-freeze-manifest-census` | Agent-tool worktree | dispatched | 2026-07-14 (Run 3 Phase 1) |
+| delegator (inline-full) | TB-38 | `fix/tb-38-auto-fallback-mid-listing` | Agent-tool worktree | dispatched | 2026-07-14 (Run 3 Phase 1) |
 
 ## Archived (run history)
 | Actor | Ticket | Outcome | Notes |
