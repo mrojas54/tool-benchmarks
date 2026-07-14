@@ -4,11 +4,12 @@
     "Scribe-1": "sess_01KXEJ2C3JK579PEPHCEW7WFH2",
     "Vulcan-1": "sess_01KXE6GYAJ6320TK4NJ29NKA4P",
     "Vulcan-2": "sess_01KXFH7HF6DJ3AVNXKKTGJZ9MS",
-    "Vulcan-3": "sess_01KXFN0VJVQNSK8V3GG5DY1H9M"
+    "Vulcan-3": "sess_01KXFN0VJVQNSK8V3GG5DY1H9M",
+    "Vulcan-4": "sess_01KXFP0F8TK6FZVT405X2F1SJM"
   },
   "serial_counters": {
     "Argus": 1,
     "Scribe": 1,
-    "Vulcan": 3
+    "Vulcan": 4
   }
 }
