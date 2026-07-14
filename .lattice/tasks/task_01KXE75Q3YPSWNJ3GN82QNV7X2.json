@@ -1,6 +1,13 @@
 {
   "assigned_to": null,
-  "branch_links": [],
+  "branch_links": [
+    {
+      "branch": "fix/tb-33-agent-sampling-disclosure",
+      "linked_at": "2026-07-13T17:41:00Z",
+      "linked_by": "agent:Vulcan-1",
+      "repo": null
+    }
+  ],
   "comment_count": 0,
   "complexity": "medium",
   "created_at": "2026-07-13T17:07:39Z",
@@ -16,10 +23,16 @@
   "custom_fields": {},
   "description": "TB-30 fixed the HIDDEN per-agent sampling skew (agentsview's default exclusions). A second, independent skew remains, from a different cause, and the report still does not disclose it.\n\nWITH `--agent all` AND A `--limit`, sessions are taken in RECENCY order across the whole\narchive. Agents do not produce sessions at the same rate, so the window's per-agent\ncomposition has no relation to each agent's share of the archive -- and each agent ends up\nsampled at a wildly different fraction of its own history.\n\nMEASURED (live archive, all three --include-* flags, 2026-07-13):\n\n  archive totals: claude 8591 | hermes 978 | codex 175 | cursor 73\n\n  --agent all --limit 200  ->  fraction of that agent's OWN sessions in the window:\n    claude   141 scanned   1.64%\n    hermes    19 scanned   1.94%\n    codex     33 scanned  18.86%   <- 11.5x claude's fraction\n    cursor     0 scanned   0.00%   <- never appears at ANY limit tested (50/200/500)\n\nTHE WORSE HALF: AN AGENT CAN VANISH WITH NO NOTE. The rendered Agent Breakdown for\n`--agent all --all --limit 200` is:\n\n    | agent  | sessions | calls | output_tokens | ... |\n    | claude |      141 |  1401 |        587033 |     |\n    | codex  |       33 |   369 |        721451 |     |\n    | cowork |        6 |   240 |        191185 |     |\n    | hermes |       19 |   115 |          1897 |     |\n\ncursor is simply ABSENT. A reader sees a four-agent comparison and has no way to learn that\na fifth agent exists in the archive with 73 sessions, none of which the window reached.\nNothing in the report distinguishes 'this agent has no sessions' from 'this agent has\nsessions we did not look at'.\n\nWHY THE TABLE IS NOT COMPARABLE AS RENDERED: rows sit side by side as if they were like for\nlike, but each is a different sampling fraction of a different-sized population. codex's 369\ncalls come from 18.9% of its archive; claude's 1401 from 1.6% of its. Any ratio a reader\nforms across rows -- calls/session, tokens/call, error rate -- silently mixes sampling\ndepth into the comparison. Same failure MODE as TB-30, different cause: TB-30 was a hidden\ndefault exclusion, this is visible truncation that is nonetheless never surfaced.\n\nDISTINCT FROM TB-30 (which is fixed, PR #53): every agent is now DISCOVERABLE at 100% of its\narchive. This ticket is purely about what `--limit` then does to that population, and about\nthe report's silence on it.\n\nFIX (proposed):\n  1. Carry per-agent discovered/total through discovery. agentsview's session-list payload\n     already returns a `total` key per query, so the denominator is one extra scoped call\n     per agent -- no extra pagination.\n  2. Add a per-agent sampling column or Summary block, e.g.\n       - claude: 141 of 8591 sessions (1.6% of archive)\n       - codex:   33 of  175 sessions (18.9% of archive)\n       - cursor:   0 of   73 sessions (0% -- present in the archive, not reached by --limit)\n  3. Name agents that exist in the archive but scanned zero sessions, rather than dropping\n     their row. A silently missing row is the TB-30 lesson repeating: absence must be stated,\n     never inferred.\n  4. Consider warning when the spread in sampling fraction across agents exceeds some factor,\n     since that is the condition under which cross-agent numbers stop being comparable.\n\nFound while fixing TB-30/TB-31 (PR #53); split out rather than folded in, to keep that PR to\nthe corpus-restoration + subagent-filter change the tickets described.",
   "done_at": null,
-  "evidence_refs": [],
+  "evidence_refs": [
+    {
+      "id": "art_01KXEHR6MR1BRXKVCF722VX9GT",
+      "role": null,
+      "source_type": "artifact"
+    }
+  ],
   "id": "task_01KXE75Q3YPSWNJ3GN82QNV7X2",
-  "last_event_id": "ev_01KXE76P65TFD5ZM36MGGA7JGF",
-  "last_status_changed_at": "2026-07-13T17:07:39Z",
+  "last_event_id": "ev_01KXEHR6MR1BRXKVCF722VX9GV",
+  "last_status_changed_at": "2026-07-13T20:12:25Z",
   "priority": "high",
   "relationships_out": [
     {
@@ -56,7 +69,7 @@
   "reopened_count": 0,
   "schema_version": 1,
   "short_id": "TB-33",
-  "status": "backlog",
+  "status": "review",
   "tags": [
     "reporting",
     "provenance",
@@ -64,6 +77,6 @@
   ],
   "title": "Agent Breakdown compares agents across undisclosed sampling fractions, and silently omits agents the window never reached",
   "type": "bug",
-  "updated_at": "2026-07-13T17:08:11Z",
+  "updated_at": "2026-07-13T20:12:30Z",
   "urgency": "normal"
 }

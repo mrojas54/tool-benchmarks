@@ -68,3 +68,10 @@ Non-obvious notes for this environment:
   gate:** the `agentsview` CLI, real `~/.claude`/Codex transcript roots, and the
   Hermes archive (`~/.hermes` / `$HERMES_HOME`). Fast-suite skips for absent live
   archives are expected (currently 2 skips when hermes/live paths are missing).
+- **Sampling disclosure (TB-33):** `--limit` caps total refs in RECENCY order across the
+  whole archive, so each agent lands at a different fraction of its own history and an
+  agent whose work is all older than the window vanishes entirely. The Agent Breakdown's
+  `sampled` column carries each agent's denominator; agents present in the archive but
+  never scanned still get a row. Cross-agent ratios are only comparable when the report
+  emits no uneven-sampling line. A frozen corpus (`--freeze`) has no denominator and
+  says so.

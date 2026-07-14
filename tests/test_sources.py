@@ -12,6 +12,7 @@ import pytest
 from tests.fakes import FakeRunner, completed
 from toolbench.passive import filter_subagents
 from toolbench.sources import (
+    AgentCensus,
     AgentsViewExclusionWarning,
     AgentsViewLoader,
     MissingSourceExport,
@@ -22,6 +23,7 @@ from toolbench.sources import (
     SkipReason,
     SkipRecord,
     _run_agentsview,
+    discover_agentsview,
     iter_agentsview_sessions,
     iter_session_files,
     iter_sessions,
@@ -39,6 +41,11 @@ _EMIT_NON_UTF8 = 'import sys; sys.stdout.buffer.write(b\'{"note": "caf\\xa0"}\\n
 
 def _page(*sessions: dict[str, str], cursor: str = "") -> str:
     return json.dumps({"sessions": list(sessions), "next_cursor": cursor, "total": len(sessions)})
+
+
+def _total_page(total: int) -> str:
+    """A `--limit 1` census response: we read `total`, never the rows."""
+    return json.dumps({"sessions": [], "next_cursor": "", "total": total})
 
 
 def _av(*pages: str, stderr: str = "") -> FakeRunner:
@@ -182,6 +189,180 @@ class IterAgentsviewSessionsTests(unittest.TestCase):
         self.assertIn("7497", str(caught.warning))
 
 
+class AgentCensusTests(unittest.TestCase):
+    """Per-agent denominators, gathered under the run's own filters (TB-33)."""
+
+    def test_totals_reconcile_to_zero_residual(self) -> None:
+        # probe pass: two agents present as non-children.
+        probe = _page(
+            {"id": "s1", "agent": "claude", "project": "p"},
+            {"id": "s2", "agent": "codex", "project": "p"},
+        )
+        runner = FakeRunner([
+            completed(stdout=probe),            # probe pass
+            completed(stdout=_total_page(80)),  # census: --agent claude
+            completed(stdout=_total_page(20)),  # census: --agent codex
+            completed(stdout=_total_page(100)), # census: archive total (agent=all)
+            completed(stdout=probe),            # full listing
+        ])
+        census, refs = discover_agentsview(runner, agent="all", project=None, since=None, limit=500)
+        list(refs)
+
+        self.assertIsInstance(census, AgentCensus)
+        self.assertEqual(census.totals, {"claude": 80, "codex": 20})
+        self.assertEqual(census.archive_total, 100)
+        self.assertEqual(census.residual, 0)
+        self.assertIsNone(census.unavailable_reason)
+
+    def test_residual_names_an_agent_the_probe_never_saw(self) -> None:
+        # The probe listing excludes children, so an agent whose sessions are ALL
+        # children is invisible to it. Reconciliation is the only thing that catches it.
+        probe = _page({"id": "s1", "agent": "claude", "project": "p"})
+        runner = FakeRunner([
+            completed(stdout=probe),
+            completed(stdout=_total_page(80)),   # claude
+            completed(stdout=_total_page(100)),  # archive
+            completed(stdout=probe),
+        ])
+        census, refs = discover_agentsview(runner, agent="all", project=None, since=None, limit=500)
+        list(refs)
+
+        self.assertEqual(census.residual, 20)
+
+    def test_census_inherits_project_and_since_filters(self) -> None:
+        probe = _page({"id": "s1", "agent": "claude", "project": "p"})
+        runner = FakeRunner([
+            completed(stdout=probe),
+            completed(stdout=_total_page(5)),
+            completed(stdout=_total_page(5)),
+            completed(stdout=probe),
+        ])
+        census, refs = discover_agentsview(
+            runner, agent="all", project="tool-benchmarks", since="2026-07-01", limit=500
+        )
+        list(refs)
+
+        # A denominator gathered under different filters describes a different
+        # population than the numerator. Every census call must carry both filters.
+        census_calls = [c for c in runner.calls if "--limit" in c and c[c.index("--limit") + 1] == "1"]
+        self.assertEqual(len(census_calls), 2)
+        for argv in census_calls:
+            self.assertIn("--project", argv)
+            self.assertIn("tool-benchmarks", argv)
+            self.assertIn("--date-from", argv)
+            self.assertIn("2026-07-01", argv)
+
+    # -- TB-33 Finding 1/2: the census `--include-*` flags must track the numerator ---
+
+    def _population_scripted_runner(self) -> FakeRunner:
+        """Two agents, so the census makes 3 `--limit 1` calls: claude, codex, archive."""
+        probe = _page(
+            {"id": "s1", "agent": "claude", "project": "p"},
+            {"id": "s2", "agent": "codex", "project": "p"},
+        )
+        return FakeRunner([
+            completed(stdout=probe),            # probe pass
+            completed(stdout=_total_page(80)),  # census: claude
+            completed(stdout=_total_page(20)),  # census: codex
+            completed(stdout=_total_page(100)), # census: archive total
+            completed(stdout=probe),            # full listing
+        ])
+
+    @staticmethod
+    def _census_calls(runner: FakeRunner) -> list[list[str]]:
+        """The `--limit 1` calls only -- excludes the probe pass and full listing,
+        which both page at the run's `limit` instead."""
+        return [c for c in runner.calls if "--limit" in c and c[c.index("--limit") + 1] == "1"]
+
+    def test_default_census_carries_all_three_include_flags(self) -> None:
+        """`include_subagents=True` (the default -- no `--exclude-subagents`) must send
+        every census call the SAME three flags the full listing uses. Mutating
+        `discover_agentsview` to hardcode `_PROBE_INCLUDES` for the census regardless of
+        `include_subagents` -- i.e. re-importing the TB-30 bug into the denominator --
+        must fail this test; see the report for the mutation proof."""
+        runner = self._population_scripted_runner()
+        census, refs = discover_agentsview(
+            runner, agent="all", project=None, since=None, limit=500, include_subagents=True
+        )
+        list(refs)
+
+        census_calls = self._census_calls(runner)
+        self.assertEqual(len(census_calls), 3)
+        for argv in census_calls:
+            self.assertIn("--include-children", argv)
+            self.assertIn("--include-automated", argv)
+            self.assertIn("--include-one-shot", argv)
+        # Sanity: the census actually took (not the unavailable/error branch).
+        self.assertEqual(census.totals, {"claude": 80, "codex": 20})
+
+    def test_exclude_subagents_census_omits_include_children_only(self) -> None:
+        """`include_subagents=False` (`--exclude-subagents`) must send every census call
+        `--include-automated`/`--include-one-shot` but NOT `--include-children` -- the
+        exact set `filter_subagents` (passive.py) leaves in the numerator, since it keeps
+        only refs whose ids came back on the `_PROBE_INCLUDES` listing. Mutating
+        `discover_agentsview` to keep sending `_ALL_INCLUDES` for the census regardless
+        of `include_subagents` must fail this test; see the report for the mutation
+        proof."""
+        runner = self._population_scripted_runner()
+        census, refs = discover_agentsview(
+            runner, agent="all", project=None, since=None, limit=500, include_subagents=False
+        )
+        list(refs)
+
+        census_calls = self._census_calls(runner)
+        self.assertEqual(len(census_calls), 3)
+        for argv in census_calls:
+            self.assertNotIn("--include-children", argv)
+            self.assertIn("--include-automated", argv)
+            self.assertIn("--include-one-shot", argv)
+        self.assertEqual(census.totals, {"claude": 80, "codex": 20})
+
+    def test_scoped_agent_run_reconciles_to_zero(self) -> None:
+        # Under `--agent codex` the run's population IS codex. An UNSCOPED archive total
+        # would compute a residual of every other agent's sessions and scream about
+        # thousands of "unenumerated" sessions that were never in scope.
+        probe = _page({"id": "s1", "agent": "codex", "project": "p"})
+        runner = FakeRunner([
+            completed(stdout=probe),
+            completed(stdout=_total_page(183)),  # census: --agent codex
+            completed(stdout=_total_page(183)),  # archive total, ALSO scoped to codex
+            completed(stdout=probe),
+        ])
+        census, refs = discover_agentsview(runner, agent="codex", project=None, since=None, limit=500)
+        list(refs)
+
+        self.assertEqual(census.residual, 0)
+        self.assertEqual(census.archive_total, 183)
+
+    def test_census_failure_is_disclosed_not_dropped(self) -> None:
+        # A census we cannot take is rendered as "unknown" WITH a reason. Discovery is
+        # unaffected: the refs are already ours.
+        probe = _page({"id": "s1", "agent": "claude", "project": "p"})
+        runner = FakeRunner([
+            completed(stdout=probe),
+            completed(stdout="", stderr="daemon down", returncode=1),  # census blows up
+            completed(stdout=probe),
+        ])
+        census, refs = discover_agentsview(runner, agent="all", project=None, since=None, limit=500)
+
+        self.assertIsNotNone(census.unavailable_reason)
+        assert census.unavailable_reason is not None
+        self.assertIn("daemon down", census.unavailable_reason)
+        self.assertEqual(census.totals, {})
+        self.assertEqual([r.session_id for r in refs], ["s1"])
+
+    def test_iter_agentsview_sessions_takes_no_census(self) -> None:
+        # The back-compat wrapper stays census-free: callers that only want refs must
+        # not pay for denominators they will not render.
+        probe = _page({"id": "s1", "agent": "claude", "project": "p"})
+        runner = FakeRunner([completed(stdout=probe), completed(stdout=probe)])
+
+        refs = list(iter_agentsview_sessions(runner=runner))
+
+        self.assertEqual([r.session_id for r in refs], ["s1"])
+        self.assertEqual(len(runner.calls), 2)  # probe + full listing, nothing else
+
+
 class IterSessionFilesTests(unittest.TestCase):
     def test_missing_root_raises(self) -> None:
         with self.assertRaises(FileNotFoundError):
@@ -283,7 +464,7 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
             proj = Path(tmp) / "proj"
             proj.mkdir()
             (proj / "s1.jsonl").write_text("{}\n")
-            refs, reason = iter_sessions(index_source="raw", root=tmp, runner=FakeRunner([]))
+            refs, reason, _census = iter_sessions(index_source="raw", root=tmp, runner=FakeRunner([]))
             ref_list = list(refs)
             self.assertEqual(len(ref_list), 1)
             self.assertEqual(ref_list[0].source, "raw")
@@ -305,7 +486,7 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
             (session / "subagents").mkdir(parents=True)
             (proj / "parent.jsonl").write_text("{}\n")
             (session / "subagents" / "child.jsonl").write_text("{}\n")
-            refs, _reason = iter_sessions(index_source="raw", root=tmp, runner=FakeRunner([]))
+            refs, _reason, _census = iter_sessions(index_source="raw", root=tmp, runner=FakeRunner([]))
             by_id = {r.session_id: r for r in refs}
             parent = by_id["parent"]
             child = by_id["child"]
@@ -328,15 +509,18 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
             (session / "subagents").mkdir(parents=True)
             (proj / "parent.jsonl").write_text("{}\n")
             (session / "subagents" / "child.jsonl").write_text("{}\n")
-            refs, _reason = iter_sessions(index_source="raw", root=tmp, runner=FakeRunner([]))
+            refs, _reason, _census = iter_sessions(index_source="raw", root=tmp, runner=FakeRunner([]))
             kept = filter_subagents(list(refs))
             self.assertEqual([r.session_id for r in kept], ["parent"])
 
     def test_agentsview_mode_strict_raises_on_missing_binary(self) -> None:
+        # `discover_agentsview` runs its parent-probe pass EAGERLY (TB-33: the census
+        # cannot be gathered lazily, since callers may break out of the ref loop
+        # early), so a missing binary now surfaces from the `iter_sessions` call
+        # itself rather than from consuming the returned iterator.
         runner = FakeRunner([FileNotFoundError("no agentsview")])
-        refs, _reason = iter_sessions(index_source="agentsview", runner=runner)
         with self.assertRaises(FileNotFoundError):
-            list(refs)
+            iter_sessions(index_source="agentsview", runner=runner)
 
     def test_auto_uses_agentsview_when_available(self) -> None:
         payload = {
@@ -344,9 +528,10 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
             "next_cursor": "",
             "total": 1,
         }
-        # Availability probe, then the listing's own two passes: parent probe + full (TB-31).
-        runner = FakeRunner([completed(stdout=json.dumps(payload))] * 3)
-        refs, reason = iter_sessions(index_source="auto", runner=runner)
+        # Availability probe, parent probe, per-agent census (--limit 1, one agent seen)
+        # + archive total, then the full listing (TB-31, TB-33): 5 responses, not 3.
+        runner = FakeRunner([completed(stdout=json.dumps(payload))] * 5)
+        refs, reason, _census = iter_sessions(index_source="auto", runner=runner)
         ref_list = list(refs)
         self.assertIsNone(reason)
         self.assertEqual(len(ref_list), 1)
@@ -359,7 +544,7 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
             proj.mkdir()
             (proj / "s1.jsonl").write_text("{}\n")
             runner = FakeRunner([FileNotFoundError("no agentsview")])
-            refs, reason = iter_sessions(index_source="auto", root=tmp, runner=runner)
+            refs, reason, _census = iter_sessions(index_source="auto", root=tmp, runner=runner)
             ref_list = list(refs)
             self.assertIsNotNone(reason)
             assert reason is not None
@@ -372,7 +557,7 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
             proj = Path(tmp) / "proj"
             proj.mkdir()
             runner = FakeRunner([completed(stderr="daemon down", returncode=1)])
-            refs, reason = iter_sessions(index_source="auto", root=tmp, runner=runner)
+            refs, reason, _census = iter_sessions(index_source="auto", root=tmp, runner=runner)
             list(refs)
             self.assertIsNotNone(reason)
             assert reason is not None
@@ -381,6 +566,71 @@ class IterSessionsIndexSourcePolicyTests(unittest.TestCase):
     def test_unknown_index_source_raises(self) -> None:
         with self.assertRaises(ValueError):
             iter_sessions(index_source="bogus", runner=FakeRunner([]))  # type: ignore[arg-type]
+
+
+class RawCensusTests(unittest.TestCase):
+    """`--limit` truncates the raw path too, and MORE arbitrarily (TB-33)."""
+
+    def test_raw_census_counts_every_discoverable_file(self) -> None:
+        with TemporaryDirectory() as tmp:
+            for name in ("a", "b", "c"):
+                proj = Path(tmp) / "proj"
+                proj.mkdir(exist_ok=True)
+                (proj / f"{name}.jsonl").write_text("{}\n")
+
+            _refs, _reason, census = iter_sessions(
+                index_source="raw", root=tmp, runner=FakeRunner([])
+            )
+
+            # iter_session_files sorts by PATH, so --limit takes an alphabetical slice of
+            # the project tree -- not even a recency window. One agent, so no cross-agent
+            # skew; but "you scanned 1 of 3" still has to be sayable.
+            self.assertEqual(census.totals, {"claude-code": 3})
+            self.assertEqual(census.archive_total, 3)
+            self.assertEqual(census.residual, 0)
+            self.assertIsNone(census.unavailable_reason)
+
+    def test_raw_census_on_a_missing_root_is_unavailable_not_a_crash(self) -> None:
+        _refs, _reason, census = iter_sessions(
+            index_source="raw", root="/nonexistent/root", runner=FakeRunner([])
+        )
+
+        self.assertIsNotNone(census.unavailable_reason)
+        self.assertEqual(census.totals, {})
+
+    def test_raw_census_mixed_tree_pins_the_include_subagents_branch(self) -> None:
+        """Direct pin for `_raw_census`'s `include_subagents` branch (TB-33 Finding 1).
+
+        Real subagent nesting is <project>/<session-uuid>/subagents/*.jsonl -- NOT
+        <project>/subagents/*.jsonl (TB-29 was exactly this path-shape mistake, and
+        the existing raw+exclude CLI test builds a tree where EVERY session is a
+        subagent, so it exits at "no sessions matched" and never renders a
+        denominator). Two parent sessions plus three children nested under one
+        parent's subagents/ dir: the denominator must be 5 with subagents included,
+        2 without. Mutating `_raw_census`'s `if include_subagents:` to `if True:`
+        must fail this test.
+        """
+        with TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "proj"
+            proj.mkdir()
+            (proj / "sess-parent-1.jsonl").write_text("{}\n")
+            (proj / "sess-parent-2.jsonl").write_text("{}\n")
+            sub = proj / "sess-parent-1" / "subagents"
+            sub.mkdir(parents=True)
+            for name in ("agent-a", "agent-b", "agent-c"):
+                (sub / f"{name}.jsonl").write_text("{}\n")
+
+            _refs, _reason, included = iter_sessions(
+                index_source="raw", root=tmp, runner=FakeRunner([]), include_subagents=True
+            )
+            self.assertEqual(included.totals, {"claude-code": 5})
+            self.assertEqual(included.archive_total, 5)
+
+            _refs2, _reason2, excluded = iter_sessions(
+                index_source="raw", root=tmp, runner=FakeRunner([]), include_subagents=False
+            )
+            self.assertEqual(excluded.totals, {"claude-code": 2})
+            self.assertEqual(excluded.archive_total, 2)
 
 
 class NonUtf8DecodeTests(unittest.TestCase):

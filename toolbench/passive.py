@@ -31,6 +31,7 @@ from toolbench.report import (
 )
 from toolbench.run_manifest import MalformedRunManifest, RunManifest, read_run_manifest
 from toolbench.sources import (
+    AgentCensus,
     IndexSource,
     MissingSourceExport,
     NonTranscriptExport,
@@ -231,23 +232,38 @@ def parse_args(argv: list[str] | None) -> CliArgs:
 
 def _discover_refs(
     args: CliArgs, root: str, runner: Runner | None
-) -> tuple[list[SessionRef], str | None, list[SkipRecord]]:
-    """Resolve the index-source policy into a bounded list of refs (S10, S23)."""
+) -> tuple[list[SessionRef], str | None, list[SkipRecord], AgentCensus]:
+    """Resolve the index-source policy into a bounded list of refs (S10, S23).
+
+    The `iter_sessions(...)` CALL itself now belongs inside the try block, not just
+    the ref-iteration loop that follows it. `discover_agentsview` (TB-33) runs its
+    parent-probe pass and per-agent census EAGERLY -- before it hands back a single
+    ref -- because the caller can break out of the ref loop early on `--limit`, and a
+    lazily-gathered census would then be missing exactly when it is needed. That
+    eagerness means a `FileNotFoundError` from a mid-run agentsview disappearance can
+    now surface from the `iter_sessions(...)` call itself, not only from iterating its
+    result. If that call sat outside this guard, `auto` mode would lose its graceful
+    degrade to a `MISSING_SOURCE` skip and `main` would treat a transient agentsview
+    vanish as a fatal source error instead of exit 0.
+    """
     project = None if args.all_projects else args.project
     page_limit = args.limit if args.limit is not None else 500
-    refs_iter, fallback_reason = iter_sessions(
-        index_source=args.index_source,
-        agent=args.agent,
-        project=project,
-        since=args.since,
-        limit=page_limit,
-        root=root,
-        runner=runner,
-    )
 
     refs: list[SessionRef] = []
     skips: list[SkipRecord] = []
+    fallback_reason: str | None = None
+    census: AgentCensus
     try:
+        refs_iter, fallback_reason, census = iter_sessions(
+            index_source=args.index_source,
+            agent=args.agent,
+            project=project,
+            since=args.since,
+            limit=page_limit,
+            root=root,
+            runner=runner,
+            include_subagents=not args.exclude_subagents,
+        )
         for ref in refs_iter:
             refs.append(ref)
             if args.limit is not None and len(refs) >= args.limit:
@@ -255,7 +271,11 @@ def _discover_refs(
     except FileNotFoundError as exc:
         if args.index_source == "auto":
             # A root-level failure has no per-session ref; the absent raw fallback
-            # root is itself a missing source (TB-23).
+            # root -- or, eagerly (TB-33), an agentsview that answered the initial
+            # availability probe but vanished during the parent-probe/census calls
+            # that now run inside `iter_sessions(...)` -- is itself a missing source
+            # (TB-23). Discovery never completed, so there is no census either --
+            # never a fabricated measured zero, always a named reason (TB-33).
             skips.append(
                 SkipRecord(
                     session_id="",
@@ -264,9 +284,14 @@ def _discover_refs(
                     detail=str(exc),
                 )
             )
+            census = AgentCensus(
+                totals={},
+                archive_total=0,
+                unavailable_reason=f"discovery source vanished mid-run: {exc}",
+            )
         else:
             raise
-    return refs, fallback_reason, skips
+    return refs, fallback_reason, skips, census
 
 
 def _parse_ref(ref: SessionRef, runner: Runner | None) -> ParseResult:
@@ -298,13 +323,26 @@ def main(
     refs: list[SessionRef]
     fallback_reason: str | None
     skips: list[SkipRecord]
+    census: AgentCensus
     if replaying:
         assert freeze_path is not None
         manifest = read_manifest(freeze_path)
         refs, fallback_reason, skips = manifest.refs, None, []
+        # A freeze pins the REF LIST, not the archive it was drawn from (TB-22), so no
+        # denominator exists on replay. Persisting one into the manifest would be a
+        # format change this ticket does not own -- and an unstated "unknown" is exactly
+        # the silence TB-33 exists to break, so it is stated instead.
+        census = AgentCensus(
+            totals={},
+            archive_total=0,
+            unavailable_reason=(
+                f"frozen corpus replay ({freeze_path}): no denominator was recorded at "
+                "freeze time"
+            ),
+        )
     else:
         try:
-            refs, fallback_reason, skips = _discover_refs(args, root, runner)
+            refs, fallback_reason, skips, census = _discover_refs(args, root, runner)
         except (FileNotFoundError, RuntimeError) as exc:
             print(f"toolbench.passive: fatal source error: {exc}", file=sys.stderr)
             return 1
@@ -398,10 +436,12 @@ def main(
         subagents_found=subagents_found,
         sessions_discovered=sessions_discovered,
         since_note=args.since,
+        census=census,
         verbose=args.verbose,
         fingerprint=fingerprint,
         freeze_note=freeze_note,
         run_tickets=args.tickets,
+        limit=args.limit,
     )
     if args.out:
         Path(args.out).write_text(report)

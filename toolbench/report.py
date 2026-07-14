@@ -7,8 +7,187 @@ from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from toolbench.reducer import OVERSIZED_OUTPUT_TOKENS, Reducer
-from toolbench.sources import SkipReason, SkipRecord
+from toolbench.reducer import OVERSIZED_OUTPUT_TOKENS, AgentStats, Reducer
+from toolbench.sources import AgentCensus, SkipReason, SkipRecord
+
+# Ratio of the largest per-agent sampling fraction to the smallest, above which
+# cross-agent numbers stop being comparable and the report says so. Arbitrary but
+# STATED -- and it does NOT only fire when a `--limit` actually truncated the corpus.
+# There are two independent causes. (1) `--limit` truncation, applied unevenly across
+# agents because it slices the archive in recency order. (2) Per-agent SKIP ATTRITION:
+# `stats.sessions` (the numerator, from `reducer.agents`) counts sessions that were
+# DISCOVERED *and* PARSED, so an agent that lost a disproportionate share to any
+# `SkipReason` bucket (dead index entries, non-transcript/binary exports, unknown
+# schemas) moves its own fraction with no `--limit` in play at all. The census now
+# inheriting the SAME --include-* population filters the numerator does (TB-33
+# Finding 1) rules out ONE historical false-positive source (an agent's own
+# child/parent ratio skewing the denominator) -- it does not make attrition
+# impossible. Both causes are real, and each has its OWN observable signal, so
+# `_sampling_notes` is handed both and names only what it can see (TB-33 Finding 4):
+# `skips` is non-empty iff attrition happened, and `limit` is not None iff a `--limit`
+# was actually applied. That is a 2x2, not a 1x2. Deriving the limit from `skips` alone
+# -- "no skips, therefore --limit" -- was a false cause AND a false remedy in the case
+# that matters most: an `--all` run (no limit, no skips) with a spread was told to
+# "re-run without `--limit`", i.e. to remove a flag it never passed. A cause is only
+# named here when its own signal says so; when neither signal fires, the spread is real
+# and the line says the window itself is uneven rather than inventing a remedy.
+SPREAD_THRESHOLD = 4.0
+
+
+def _sampled_cell(scanned: int, total: int | None, unavailable: bool) -> str:
+    """One agent's `sampled` cell: the numerator, its denominator, and the fraction."""
+    if unavailable:
+        return "unknown"
+    if total is None:
+        # Scanned, but absent from the census universe -- i.e. an agent the child-excluded
+        # probe never saw. `residual` names it in aggregate; this names it in place.
+        return f"{scanned} of unknown"
+    if total == 0:
+        # `scanned` is NOT dropped here: an agent can be seen in the probe listing and
+        # then report total=0 from the later scoped call (the two are separate,
+        # non-atomic agentsview invocations). Printing "0 of 0" over a nonzero
+        # `scanned` would be the exact silent zero this ticket exists to close.
+        return f"{scanned} of 0"
+    # NOT clamped to 100%: `scanned` and `total` come from separate, non-atomic
+    # agentsview calls (the full listing vs. the `--limit 1` census probe), so a session
+    # created between the two calls can leave scanned > total and print e.g. "5 of 2
+    # (250.0%)". That is a visible bug report -- something drifted between the calls --
+    # and clamping it to 100% would silently launder that signal into a lie.
+    return f"{scanned} of {total} ({scanned / total * 100:.1f}%)"
+
+
+def _sampling_spread(reducer: Reducer, census: AgentCensus) -> float | None:
+    """max/min sampling fraction across agents with >= 1 scanned session.
+
+    Agents with zero scanned sessions are excluded: their fraction is 0, which would send
+    the ratio to infinity and drown the real signal. They are disclosed by name instead.
+    """
+    fractions = [
+        stats.sessions / total
+        for agent, stats in reducer.agents.items()
+        if stats.sessions and (total := census.totals.get(agent))
+    ]
+    if len(fractions) < 2:
+        return None
+    return max(fractions) / min(fractions)
+
+
+def _sampling_notes(
+    reducer: Reducer,
+    census: AgentCensus,
+    skips: list[SkipRecord],
+    limit: int | None,
+) -> list[str]:
+    """Disclosure that belongs BESIDE the table, not forty lines below it (TB-33).
+
+    A reader forming a calls/session ratio across two rows never scrolls to the Summary,
+    so the qualification has to sit where the comparison is made.
+
+    `skips` and `limit` are the two independent signals behind every claim made here, and
+    NEITHER is inferred from the other. `skips` carries per-record `agent` identity, which
+    is what lets a zero-session row say WHY it is zero: an agent nobody looked at and an
+    agent whose every sampled session failed to parse both land at `sessions == 0`, and
+    calling the second one "not reached" tells the reader we never looked when in fact we
+    looked and everything we opened broke (TB-33 Finding 2). `limit` is what lets the
+    uneven-sampling line name `--limit` as a cause only when a `--limit` was actually
+    passed, instead of concluding it from an empty skip list (TB-33 Finding 4).
+    """
+    if census.unavailable_reason is not None:
+        return [
+            f"- Sampling fractions unavailable: {census.unavailable_reason}. Each row above "
+            "may rest on a different fraction of its agent's archive; this run cannot say."
+        ]
+
+    notes: list[str] = []
+    # Per-agent, straight off the raw records -- `tally_skips` would collapse these to
+    # dict[SkipReason, int] and destroy exactly the agent identity this needs, so it is
+    # deliberately not used here.
+    skipped_by_agent = Counter(s.agent for s in skips)
+    zero_session = sorted(
+        agent
+        for agent, total in census.totals.items()
+        if total > 0 and reducer.agents.get(agent, AgentStats()).sessions == 0
+    )
+    never_looked = [a for a in zero_session if not skipped_by_agent[a]]
+    all_skipped = [a for a in zero_session if skipped_by_agent[a]]
+    if never_looked:
+        named = ", ".join(f"{a} ({census.totals[a]} sessions)" for a in never_looked)
+        notes.append(
+            f"- Present in the archive, not reached by this window: {named}. Their rows are "
+            "zeros because we did not look, not because they did no work."
+        )
+    if all_skipped:
+        # `all_skipped` is non-empty only when `skips` is, and `render_report` renders the
+        # tally `if skips:` -- so this pointer always resolves to something on the page.
+        named = ", ".join(
+            f"{a} ({skipped_by_agent[a]} skipped of {census.totals[a]} in archive)"
+            for a in all_skipped
+        )
+        notes.append(
+            f"- Reached, but every session sampled from them was skipped: {named}. Their rows "
+            "are zeros because everything this window opened failed to parse or export, NOT "
+            'because we did not look -- see the "Skipped by reason" tally below.'
+        )
+
+    spread = _sampling_spread(reducer, census)
+    if spread is not None and spread >= SPREAD_THRESHOLD:
+        preamble = (
+            f"- **Sampling is uneven ({spread:.1f}x spread).** Each row is a different "
+            "fraction of a different-sized population, so any ratio formed ACROSS rows "
+            "(calls/session, tokens/call, error rate) mixes sampling depth into the "
+            "comparison and is not comparable."
+        )
+        # Each cause is named ONLY on its own signal: `limit is not None` for truncation,
+        # a non-empty `skips` for attrition. Four cases, and the report earns every word
+        # of each (TB-33 Finding 4).
+        n = len(skips)
+        were = f"{n} session{'s' if n != 1 else ''} {'were' if n != 1 else 'was'} skipped"
+        tally = 'see the Summary\'s "Skipped by reason" tally below'
+        if limit is not None and not skips:
+            # Attrition ruled out by the empty skip list, truncation confirmed by the
+            # flag itself. Both halves observed, so the remedy is real: drop the limit.
+            notes.append(
+                preamble + f" No sessions were skipped this run, which rules out skip "
+                f"attrition, and `--limit {limit}` was applied: the spread comes from that "
+                "limit truncating the corpus unevenly across agents. Re-run without "
+                "`--limit` for a like-for-like table."
+            )
+        elif limit is not None:
+            # Both signals fire. Name both, promise neither remedy alone -- dropping the
+            # limit would not budge the attrition half.
+            notes.append(
+                preamble + f" Both causes are live: `--limit {limit}` was applied AND {were} "
+                f"this run ({tally}). Re-running without `--limit` is not guaranteed to give "
+                "a like-for-like table, since the attrition would survive it."
+            )
+        elif skips:
+            # No limit was passed, so truncation is ruled out by its own signal rather
+            # than assumed away. Attrition is what is left, and it is observed.
+            notes.append(
+                preamble + f" No `--limit` was applied, which rules out limit truncation, and "
+                f"{were} this run: the spread comes from per-agent skip attrition ({tally})."
+            )
+        else:
+            # Neither signal fired, so neither named cause is available -- and the honest
+            # move is to say the spread is real rather than pin it on the nearest flag.
+            # This is the case the old one-armed branch got wrong: it reached here with an
+            # empty skip list and told an `--all` run to "re-run without `--limit`".
+            notes.append(
+                preamble + " Neither of the causes this report can name explains it: no "
+                "`--limit` was applied and no sessions were skipped. The spread is in the "
+                "window itself -- the sessions it reached are a different fraction of each "
+                "agent's archive (a `--since` cutoff, say, or drift between discovery and "
+                "the census). There is no flag to drop; the unevenness is real."
+            )
+
+    if census.residual > 0:
+        notes.append(
+            f"- Reconciliation: {census.residual} archive sessions belong to no agent we "
+            "enumerated. The census universe comes from the child-excluded probe listing, "
+            "so an agent whose sessions are ALL children is invisible to it -- the "
+            "denominators above are incomplete."
+        )
+    return notes
 
 
 @dataclass(frozen=True)
@@ -113,23 +292,32 @@ def render_report(
     subagents_found: int,
     sessions_discovered: int,
     since_note: str | None,
+    census: AgentCensus,
     verbose: bool = False,
     fingerprint: CorpusFingerprint | None = None,
     freeze_note: str | None = None,
     run_tickets: int | None = None,
+    limit: int | None = None,
 ) -> str:
     """Render the five-section report (S14) with provenance (S15)."""
     lines: list[str] = ["# Tool Usage Report", ""]
 
     lines.append("## Agent Breakdown")
     lines.append("")
-    lines.append("| agent | sessions | calls | output_tokens | input_tokens | errors | no_result |")
-    lines.append("|---|---|---|---|---|---|---|")
+    lines.append(
+        "| agent | sampled | sessions | calls | output_tokens | input_tokens | errors | no_result |"
+    )
+    lines.append("|---|---|---|---|---|---|---|---|")
     cache_caveats: list[str] = []
-    for agent in sorted(reducer.agents):
-        s = reducer.agents[agent]
+    # Union, not `reducer.agents`: an agent the window never reached has no AgentStats at
+    # all, and dropping its row is the headline bug (TB-33).
+    for agent in sorted(set(reducer.agents) | set(census.totals)):
+        s = reducer.agents.get(agent, AgentStats())
+        sampled = _sampled_cell(
+            s.sessions, census.totals.get(agent), census.unavailable_reason is not None
+        )
         lines.append(
-            f"| {agent} | {s.sessions} | {s.calls} | {s.output_tokens} | "
+            f"| {agent} | {sampled} | {s.sessions} | {s.calls} | {s.output_tokens} | "
             f"{s.input_tokens} | {s.errors} | {s.no_result} |"
         )
         if s.sessions_with_cache_data > 0:
@@ -141,6 +329,7 @@ def render_report(
                 "(S32: session grain only — not attributable to individual tool calls)."
             )
     lines.extend(cache_caveats)
+    lines.extend(_sampling_notes(reducer, census, skips, limit))
     lines.append("")
 
     lines.append("## Tool Leaderboard")
@@ -223,6 +412,14 @@ def render_report(
     lines.append(
         f"- Sessions discovered: {scanned + skipped} / scanned: {scanned} / skipped: {skipped}"
     )
+    if census.unavailable_reason is None and census.totals:
+        lines.append("- Sampling (scanned of each agent's own archive):")
+        for agent in sorted(census.totals):
+            agent_total = census.totals[agent]
+            scanned_agent = reducer.agents.get(agent, AgentStats()).sessions
+            pct = f"{scanned_agent / agent_total * 100:.1f}%" if agent_total else "n/a"
+            tail = " — not reached by this window" if scanned_agent == 0 else ""
+            lines.append(f"  - {agent}: {scanned_agent} of {agent_total} ({pct}){tail}")
     if fingerprint is not None:
         # Identity of the set that produced the numbers above: two reports whose
         # fingerprints match are diffable; a delta between them is code, not the

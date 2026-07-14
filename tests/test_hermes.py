@@ -395,10 +395,11 @@ class PassiveIntegration(unittest.TestCase):
             "next_cursor": "",
             "total": 1,
         }
-        # Twice: discovery pages the parent probe, then the full listing (TB-31).
+        # Four calls: parent probe, per-agent census (--limit 1, one agent seen) + the
+        # run-scoped archive total, then the full listing (TB-31, TB-33).
         replies = [
             subprocess.CompletedProcess(args=[], returncode=0, stdout=json.dumps(payload), stderr="")
-            for _ in range(2)
+            for _ in range(4)
         ]
 
         def runner(argv: list[str]) -> subprocess.CompletedProcess[str]:

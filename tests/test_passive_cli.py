@@ -29,6 +29,7 @@ from toolbench.passive import (
 from toolbench.sources import (
     MissingSourceExport,
     NonTranscriptExport,
+    Runner,
     SessionRef,
     SkipReason,
     SkipRecord,
@@ -282,6 +283,27 @@ class MainExitContractTests(unittest.TestCase):
         self.assertIn("no sessions matched", message)
         self.assertIn("skipped 1: missing_source=1", message)
 
+    def test_auto_continues_and_reports_skipped_source_when_agentsview_vanishes_mid_discovery(
+        self,
+    ) -> None:
+        # Regression: `discover_agentsview` (TB-33) runs its parent-probe pass and
+        # per-agent census EAGERLY, inside the `iter_sessions(...)` CALL rather than
+        # lazily during ref iteration. Call [0] is the `_probe_agentsview` availability
+        # probe -- it succeeds, so agentsview looks alive. Call [1] is the eager
+        # parent-probe pass inside `discover_agentsview`, and it raises
+        # `FileNotFoundError` -- agentsview vanished moments after the probe. If
+        # `_discover_refs` did not wrap the `iter_sessions(...)` call itself in its
+        # try/except, this would surface as `main`'s fatal source error (exit 1)
+        # instead of degrading gracefully to a `MISSING_SOURCE` skip (exit 0).
+        runner = FakeRunner([completed(returncode=0), FileNotFoundError("agentsview vanished")])
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = main(["--index-source", "auto"], runner=runner, root="/definitely/not/a/real/root")
+        self.assertEqual(code, 0)
+        message = out.getvalue()
+        self.assertIn("no sessions matched", message)
+        self.assertIn("skipped 1: missing_source=1", message)
+
     def test_end_to_end_raw_report(self) -> None:
         with TemporaryDirectory() as tmp:
             proj = Path(tmp) / "-Users-me-tool-benchmarks"
@@ -346,7 +368,11 @@ class MainExitContractTests(unittest.TestCase):
         }
         runner = FakeRunner(
             [
-                # Parent probe, then the full listing -- discovery pages twice (TB-31).
+                # Parent probe, per-agent census (--limit 1, one agent seen: "claude")
+                # + the run-scoped archive total, then the full listing (TB-31, TB-33),
+                # then the session export.
+                completed(stdout=json.dumps(payload)),
+                completed(stdout=json.dumps(payload)),
                 completed(stdout=json.dumps(payload)),
                 completed(stdout=json.dumps(payload)),
                 completed(stdout=raw_text),
@@ -359,6 +385,85 @@ class MainExitContractTests(unittest.TestCase):
         report = out.getvalue()
         self.assertIn("## Summary", report)
         self.assertIn("Malformed lines: 1", report)
+
+
+def _exclude_subagents_population_runner() -> "Runner":
+    """A realistic `agentsview` double for scenario (A) of TB-33 Finding 1.
+
+    `alpha` is 2 parent sessions, 0 children. `beta` is 1 parent, 9 children. Unlike
+    `FakeRunner`, which returns a scripted response regardless of the argv it was sent,
+    this inspects `--include-children` and `--agent` and answers as the REAL agentsview
+    would -- which is what makes it possible to fail on the pre-fix code: pre-fix, the
+    census always requested `_ALL_INCLUDES` (parents + children) no matter what
+    `--exclude-subagents` said, so `beta`'s census total came back 10, not 1, even
+    though only its 1 parent could ever be scanned under that flag.
+    """
+    totals = {
+        ("alpha", True): 2,
+        ("alpha", False): 2,
+        ("beta", True): 10,
+        ("beta", False): 1,
+        ("all", True): 12,
+        ("all", False): 3,
+    }
+    probe_page = _json_page(
+        {"id": "alpha-p1", "project": "p", "agent": "alpha"},
+        {"id": "alpha-p2", "project": "p", "agent": "alpha"},
+        {"id": "beta-p1", "project": "p", "agent": "beta"},
+    )
+    full_page = _json_page(
+        {"id": "alpha-p1", "project": "p", "agent": "alpha"},
+        {"id": "alpha-p2", "project": "p", "agent": "alpha"},
+        {"id": "beta-p1", "project": "p", "agent": "beta"},
+        *(
+            {"id": f"beta-c{i}", "project": "p", "agent": "beta"}
+            for i in range(9)
+        ),
+    )
+    raw_text = (FIXTURES / "sample.jsonl").read_text()
+
+    def runner(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        if argv[:3] == ["agentsview", "session", "export"]:
+            return completed(stdout=raw_text)
+        has_children = "--include-children" in argv
+        agent = argv[argv.index("--agent") + 1] if "--agent" in argv else "all"
+        if argv[argv.index("--limit") + 1] == "1":
+            return completed(stdout=_json_total(totals[(agent, has_children)]))
+        return completed(stdout=full_page if has_children else probe_page)
+
+    return runner
+
+
+def _json_page(*sessions: dict[str, str]) -> str:
+    return json.dumps({"sessions": list(sessions), "next_cursor": "", "total": len(sessions)})
+
+
+def _json_total(total: int) -> str:
+    return json.dumps({"sessions": [], "next_cursor": "", "total": total})
+
+
+class ExcludeSubagentsCensusPopulationTests(unittest.TestCase):
+    """The census denominator must describe the SAME population `--exclude-subagents`
+    leaves in the numerator (TB-33 Finding 1). Models failure scenario (A) from the
+    ticket: no `--limit` at all, an agent (`beta`) whose archive is mostly children.
+    """
+
+    def test_fully_scanned_population_renders_100_percent_and_no_uneven_warning(self) -> None:
+        runner = _exclude_subagents_population_runner()
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = main(["--index-source", "agentsview", "--exclude-subagents"], runner=runner)
+        self.assertEqual(code, 0)
+        report = out.getvalue()
+
+        # Both agents were scanned to 100% of the population THIS RUN measures (parents
+        # only) -- not a misleading "1 of 10 (10.0%)" for beta, whose denominator would
+        # be inflated by 9 children this run structurally cannot ever reach.
+        self.assertIn("alpha | 2 of 2 (100.0%)", report)
+        self.assertIn("beta | 1 of 1 (100.0%)", report)
+        self.assertNotIn("Sampling is uneven", report)
+        self.assertIn("Subagents included: no", report)
+
 
 class NonUtf8SessionTests(unittest.TestCase):
     """One corrupt session must not abort the corpus scan (TB-10)."""
@@ -394,7 +499,10 @@ class NonUtf8SessionTests(unittest.TestCase):
         }
         runner = FakeRunner(
             [
-                # Parent probe, then the full listing -- discovery pages twice (TB-31).
+                # Parent probe, per-agent census (--limit 1, one agent seen: "claude")
+                # + the run-scoped archive total, then the full listing (TB-31, TB-33).
+                completed(stdout=json.dumps(payload)),
+                completed(stdout=json.dumps(payload)),
                 completed(stdout=json.dumps(payload)),
                 completed(stdout=json.dumps(payload)),
                 UnicodeDecodeError("utf-8", b"\xa0", 0, 1, "invalid start byte"),
@@ -458,7 +566,12 @@ class NonTranscriptExportTests(unittest.TestCase):
         }
         runner = FakeRunner(
             [
-                # Parent probe, then the full listing -- discovery pages twice (TB-31).
+                # Parent probe, per-agent census (--limit 1, two agents seen, sorted:
+                # "claude" then "cowork") + the run-scoped archive total, then the full
+                # listing (TB-31, TB-33).
+                completed(stdout=json.dumps(payload)),
+                completed(stdout=json.dumps(payload)),
+                completed(stdout=json.dumps(payload)),
                 completed(stdout=json.dumps(payload)),
                 completed(stdout=json.dumps(payload)),
                 completed(stdout=sqlite_payload),
@@ -489,7 +602,17 @@ class NonTranscriptExportTests(unittest.TestCase):
             "next_cursor": "",
             "total": 1,
         }
-        runner = FakeRunner([completed(stdout=json.dumps(payload)), completed(stdout=json.dumps(payload)), completed(stdout="SQLite format 3\x00")])
+        # Parent probe, per-agent census (--limit 1, one agent seen: "cowork") + the
+        # run-scoped archive total, then the full listing (TB-31, TB-33), then export.
+        runner = FakeRunner(
+            [
+                completed(stdout=json.dumps(payload)),
+                completed(stdout=json.dumps(payload)),
+                completed(stdout=json.dumps(payload)),
+                completed(stdout=json.dumps(payload)),
+                completed(stdout="SQLite format 3\x00"),
+            ]
+        )
         with redirect_stdout(io.StringIO()):
             main(["--index-source", "agentsview"], runner=runner)
         self.assertEqual(set(tmp_root.glob("*.jsonl")) - before, set())
@@ -606,10 +729,13 @@ def test_discover_refs_records_a_missing_root_as_a_typed_skip() -> None:
     # FileNotFoundError becomes a typed SkipRecord rather than a bare string.
     args = parse_args(["--index-source", "auto"])
     runner = FakeRunner([FileNotFoundError("no agentsview")])
-    _refs, _fallback, skips = _discover_refs(args, "/definitely/not/a/real/root", runner)
+    _refs, _fallback, skips, census = _discover_refs(args, "/definitely/not/a/real/root", runner)
     assert skips, "a missing raw root must be recorded as a skip"
     assert all(isinstance(s, SkipRecord) for s in skips)
     assert skips[0].reason is SkipReason.MISSING_SOURCE
+    assert census.unavailable_reason is not None, (
+        "a discovery that never completed must not report a measured zero census"
+    )
 
 class DiscoveryReconciliationMainTests(unittest.TestCase):
     """TB-21 end-to-end: a scanned session, a dead index entry, and an unparseable
@@ -628,7 +754,12 @@ class DiscoveryReconciliationMainTests(unittest.TestCase):
         }
         runner = FakeRunner(
             [
-                # Parent probe, then the full listing -- discovery pages twice (TB-31).
+                # Parent probe, per-agent census (--limit 1, two agents seen, sorted:
+                # "claude" then "cursor") + the run-scoped archive total, then the full
+                # listing (TB-31, TB-33).
+                completed(stdout=json.dumps(payload)),
+                completed(stdout=json.dumps(payload)),
+                completed(stdout=json.dumps(payload)),
                 completed(stdout=json.dumps(payload)),
                 completed(stdout=json.dumps(payload)),
                 completed(stdout=good),
@@ -674,8 +805,17 @@ class CorpusFingerprintMainTests(unittest.TestCase):
         good = (FIXTURES / "sample.jsonl").read_text()
         reports = []
         for _ in range(2):
+            # Parent probe, per-agent census (--limit 1, one agent seen: "claude") +
+            # the run-scoped archive total, then the full listing (TB-31, TB-33).
             runner = FakeRunner(
-                [completed(stdout=self._payload()), completed(stdout=self._payload()), completed(stdout=good), completed(stdout=good)]
+                [
+                    completed(stdout=self._payload()),
+                    completed(stdout=self._payload()),
+                    completed(stdout=self._payload()),
+                    completed(stdout=self._payload()),
+                    completed(stdout=good),
+                    completed(stdout=good),
+                ]
             )
             out = io.StringIO()
             with redirect_stdout(out):
@@ -685,13 +825,24 @@ class CorpusFingerprintMainTests(unittest.TestCase):
 
     def test_a_vanished_session_moves_the_fingerprint(self) -> None:
         good = (FIXTURES / "sample.jsonl").read_text()
-        # run 1: both sessions scan.
+        # run 1: both sessions scan. Parent probe, per-agent census (--limit 1, one
+        # agent seen: "claude") + the run-scoped archive total, then the full listing
+        # (TB-31, TB-33).
         r1 = FakeRunner(
-            [completed(stdout=self._payload()), completed(stdout=self._payload()), completed(stdout=good), completed(stdout=good)]
+            [
+                completed(stdout=self._payload()),
+                completed(stdout=self._payload()),
+                completed(stdout=self._payload()),
+                completed(stdout=self._payload()),
+                completed(stdout=good),
+                completed(stdout=good),
+            ]
         )
         # run 2: good-2's transcript has aged out of the retention window.
         r2 = FakeRunner(
             [
+                completed(stdout=self._payload()),
+                completed(stdout=self._payload()),
                 completed(stdout=self._payload()),
                 completed(stdout=self._payload()),
                 completed(stdout=good),
@@ -720,11 +871,27 @@ class CorpusFingerprintMainTests(unittest.TestCase):
             '"output_tokens":1},"model":"claude-opus-4-8"}}\n'
         )
         grown = good + extra
+        # Parent probe, per-agent census (--limit 1, one agent seen: "claude") + the
+        # run-scoped archive total, then the full listing (TB-31, TB-33).
         r1 = FakeRunner(
-            [completed(stdout=self._payload()), completed(stdout=self._payload()), completed(stdout=good), completed(stdout=good)]
+            [
+                completed(stdout=self._payload()),
+                completed(stdout=self._payload()),
+                completed(stdout=self._payload()),
+                completed(stdout=self._payload()),
+                completed(stdout=good),
+                completed(stdout=good),
+            ]
         )
         r2 = FakeRunner(
-            [completed(stdout=self._payload()), completed(stdout=self._payload()), completed(stdout=grown), completed(stdout=good)]
+            [
+                completed(stdout=self._payload()),
+                completed(stdout=self._payload()),
+                completed(stdout=self._payload()),
+                completed(stdout=self._payload()),
+                completed(stdout=grown),
+                completed(stdout=good),
+            ]
         )
         outs = []
         for runner in (r1, r2):
@@ -757,8 +924,17 @@ class CorpusFreezeMainTests(unittest.TestCase):
         good = (FIXTURES / "sample.jsonl").read_text()
         with TemporaryDirectory() as d:
             manifest = str(Path(d) / "corpus.manifest")
+            # Parent probe, per-agent census (--limit 1, one agent seen: "claude") +
+            # the run-scoped archive total, then the full listing (TB-31, TB-33).
             runner = FakeRunner(
-                [completed(stdout=self._payload()), completed(stdout=self._payload()), completed(stdout=good), completed(stdout=good)]
+                [
+                    completed(stdout=self._payload()),
+                    completed(stdout=self._payload()),
+                    completed(stdout=self._payload()),
+                    completed(stdout=self._payload()),
+                    completed(stdout=good),
+                    completed(stdout=good),
+                ]
             )
             with redirect_stdout(io.StringIO()):
                 code = main(["--index-source", "agentsview", "--freeze", manifest], runner=runner)
@@ -831,6 +1007,28 @@ class CorpusFreezeMainTests(unittest.TestCase):
             self.assertEqual(outs[0], outs[1])
 
 
+class FreezeReplayCensusTests(unittest.TestCase):
+    """A frozen corpus bypasses discovery, so it has no denominator -- say so (TB-33)."""
+
+    def test_replay_discloses_that_sampling_is_unknown(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "projects" / "proj"
+            root.mkdir(parents=True)
+            shutil.copy(FIXTURES / "sample.jsonl", root / "s1.jsonl")
+            manifest = str(Path(tmp) / "freeze.json")
+
+            argv = ["--index-source", "raw", "--all", "--freeze", manifest]
+            # First run discovers and writes the manifest.
+            main(argv, root=str(Path(tmp) / "projects"))
+            # Second run replays it -- discovery, and therefore the census, is bypassed.
+            out = io.StringIO()
+            with redirect_stdout(out):
+                main(argv, root=str(Path(tmp) / "projects"))
+
+            report = out.getvalue()
+            self.assertIn("Sampling fractions unavailable", report)
+            self.assertIn("frozen corpus", report)
+
 
 class SubagentExclusionAcrossIndexSourcesTests(unittest.TestCase):
     """TB-31: `--exclude-subagents` must move the corpus fingerprint on BOTH index
@@ -853,6 +1051,10 @@ class SubagentExclusionAcrossIndexSourcesTests(unittest.TestCase):
         runner = FakeRunner(
             [
                 completed(stdout=self._listing(self._PARENT)),                 # parent probe
+                # per-agent census (--limit 1, one agent seen: "claude") + the
+                # run-scoped archive total (TB-33).
+                completed(stdout=self._listing(self._PARENT)),
+                completed(stdout=self._listing(self._PARENT)),
                 completed(stdout=self._listing(self._PARENT, self._CHILD)),    # full listing
                 *[completed(stdout=transcript) for _ in range(exports)],
             ]

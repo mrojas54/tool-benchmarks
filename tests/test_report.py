@@ -10,8 +10,10 @@ from toolbench.passive import (
     render_report,
     session_signature,
 )
+from toolbench.reducer import AgentStats
 from toolbench.run_manifest import RunManifest
 from toolbench.sources import (
+    AgentCensus,
     SkipReason,
     SkipRecord,
 )
@@ -45,6 +47,7 @@ class RenderReportTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         headers = [
             "## Agent Breakdown",
@@ -66,6 +69,7 @@ class RenderReportTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note="2026-07-01",
+            census=AgentCensus(totals={}, archive_total=0),
         )
         for expected in (
             "Index source: raw",
@@ -108,6 +112,7 @@ class RenderReportTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         start = report.index("## Inefficiency Callouts")
         return report[start : report.index("## Summary")]
@@ -165,6 +170,7 @@ class RenderReportTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         leaderboard = report[report.index("## Tool Leaderboard") : report.index("## Model Breakdown")]
         self.assertLess(leaderboard.index("Bash"), leaderboard.index("Read"))
@@ -190,6 +196,7 @@ class RenderReportTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         section = report[report.index("## Model Breakdown") : report.index("## Inefficiency Callouts")]
         self.assertIn("| claude-code | claude-opus-4-8 | Read | 1 | 100 |", section)
@@ -222,6 +229,7 @@ class RenderReportTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         self.assertIn("0 candidate sessions", report)
         self.assertIn("matched no entries: never/existed", report)
@@ -237,6 +245,7 @@ class RenderReportTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         self.assertNotIn("Run cache tokens", report)
 
@@ -266,6 +275,7 @@ class RenderReportTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         self.assertIn("Run cache tokens (run 2): read=900 creation=90", report)
         self.assertIn("unattributed: read=50 creation=5", report)
@@ -293,6 +303,7 @@ class RenderReportTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         self.assertIn("per ticket (2): read=450.0 creation=45.0", report)
 
@@ -322,6 +333,7 @@ class RenderReportTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         self.assertIn("matched no entries: typo/never-pushed", report)
 
@@ -340,6 +352,7 @@ class UnjoinableReconciliationRenderTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         return report[report.index("## Summary") :]
 
@@ -369,6 +382,7 @@ class CacheNoteRenderTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         row = next(line for line in report.splitlines() if "| Read |" in line)
         return row.rstrip("|").rsplit("|", 1)[-1].strip()
@@ -423,6 +437,7 @@ class SessionGrainCacheCaveatRenderTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         return report[report.index("## Agent Breakdown") : report.index("## Tool Leaderboard")]
 
@@ -461,6 +476,7 @@ class SessionGrainCacheCaveatRenderTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         summary = report[report.index("## Summary") :]
         self.assertIn("Session-grain cache tokens: read=300 creation=30", summary)
@@ -497,6 +513,7 @@ class SessionGrainCacheCaveatRenderTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         headers = [
             "## Agent Breakdown",
@@ -537,6 +554,7 @@ class SessionGrainCacheCaveatRenderTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         leaderboard = report[report.index("## Tool Leaderboard") : report.index("## Model Breakdown")]
         row = next(line for line in leaderboard.splitlines() if "| hermes |" in line)
@@ -565,6 +583,7 @@ class DiscoveryReconciliationRenderTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
             verbose=verbose,
         )
         return report[report.index("## Summary") :]
@@ -683,6 +702,7 @@ class CorpusFingerprintRenderTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
             fingerprint=fingerprint,
         )
         return report[report.index("## Summary") :]
@@ -732,6 +752,7 @@ class CorpusFingerprintRenderTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         # The run total stays honest -- detached usage is NOT folded in.
         self.assertIn("Run cache tokens (run 2): read=900 creation=90", report)
@@ -762,5 +783,272 @@ class CorpusFingerprintRenderTests(unittest.TestCase):
             subagents_found=0,
             sessions_discovered=0,
             since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
         )
         self.assertNotIn("detached-HEAD", report)
+
+
+def _reducer_with(**sessions_by_agent: int) -> Reducer:
+    r = Reducer()
+    for agent, n in sessions_by_agent.items():
+        r.agents[agent] = AgentStats(sessions=n, calls=n * 10)
+    r.calls_joined = sum(n * 10 for n in sessions_by_agent.values())
+    return r
+
+
+def _render(
+    reducer: Reducer,
+    census: AgentCensus,
+    *,
+    skips: list[SkipRecord] | None = None,
+    limit: int | None = None,
+) -> str:
+    # `skips` and `limit` default to the two "no signal" values on purpose: an unadorned
+    # `_render` is an `--all` run that lost nothing, which is precisely the case the
+    # uneven-sampling line used to misreport as `--limit` truncation (TB-33 Finding 4).
+    skips = skips or []
+    return render_report(
+        reducer,
+        index_source="agentsview",
+        fallback_reason=None,
+        skips=skips,
+        include_subagents=True,
+        subagents_found=0,
+        sessions_discovered=sum(s.sessions for s in reducer.agents.values()) + len(skips),
+        since_note=None,
+        census=census,
+        limit=limit,
+    )
+
+
+class SamplingDisclosureTests(unittest.TestCase):
+    """The Agent Breakdown must never render an incomparable table in silence (TB-33)."""
+
+    def test_unreached_agent_gets_a_named_row(self) -> None:
+        # cursor is in the archive with 73 sessions and was never scanned. A four-agent
+        # table that simply omits it is the bug.
+        reducer = _reducer_with(claude=135)
+        census = AgentCensus(totals={"claude": 8595, "cursor": 73}, archive_total=8668)
+
+        out = _render(reducer, census)
+
+        self.assertIn("| cursor |", out)
+        self.assertIn("0 of 73", out)
+        self.assertIn("135 of 8595", out)
+        # Absence is STATED, never inferred from a zero.
+        self.assertIn("not reached", out.lower())
+
+    def test_agent_whose_every_sampled_session_was_skipped_is_not_called_unreached(self) -> None:
+        # TB-33 Finding 2. `sessions == 0` is arrived at by TWO different stories, and the
+        # old line told only one of them: cursor was never looked at, while gemini WAS
+        # looked at and every session opened failed to parse. Both land at zero sessions.
+        # Filing gemini under "not reached ... because we did not look" is flatly false --
+        # we looked, and everything we opened broke, which is a parser bug the reader
+        # needs to see, not an absence to shrug at. `SkipRecord.agent` tells them apart.
+        reducer = _reducer_with(claude=135)
+        census = AgentCensus(
+            totals={"claude": 8595, "cursor": 73, "gemini": 12}, archive_total=8680
+        )
+        skips = [
+            SkipRecord(
+                session_id=f"gemini-{i}",
+                agent="gemini",
+                reason=SkipReason.NON_TRANSCRIPT,
+                detail="binary payload",
+            )
+            for i in range(4)
+        ]
+
+        out = _render(reducer, census, skips=skips)
+
+        # cursor: genuinely never sampled. The original line, still correct, still fires.
+        self.assertIn("not reached by this window: cursor (73 sessions)", out)
+        # gemini: sampled, and every one died in the parser. Must NOT be filed under
+        # "we did not look" -- and must say what actually happened instead.
+        self.assertIn("Reached, but every session sampled from them was skipped", out)
+        self.assertIn("gemini (4 skipped of 12 in archive)", out)
+        self.assertNotIn("gemini (12 sessions)", out)
+        # The tally this line points at really is on the page (`skips` is non-empty).
+        self.assertIn("Skipped by reason", out)
+
+    def test_uneven_sampling_with_limit_and_no_skips_names_limit(self) -> None:
+        # codex 40/183 = 21.9%; claude 135/8595 = 1.6%. Spread ~13.9x. A `--limit` WAS
+        # passed and nothing was skipped, so both halves of the claim are observed: the
+        # empty skip list rules attrition out, the flag itself confirms truncation, and
+        # only here is "re-run without --limit" an honest remedy (TB-33 Finding 4).
+        reducer = _reducer_with(claude=135, codex=40)
+        census = AgentCensus(totals={"claude": 8595, "codex": 183}, archive_total=8778)
+
+        out = _render(reducer, census, limit=175)
+
+        self.assertIn("Sampling is uneven", out)
+        self.assertIn("not comparable", out)
+        self.assertIn("rules out skip attrition", out)
+        self.assertIn("`--limit 175` was applied", out)
+        self.assertIn("Re-run without `--limit` for a like-for-like table", out)
+        # The dangling pointer: nothing in this report renders a "Skipped by reason"
+        # tally when skips is empty, so the line must not send the reader looking for
+        # one -- and the section itself must be verifiably absent, not just unnamed.
+        self.assertNotIn("Skipped by reason", out)
+
+    def test_uneven_sampling_with_no_limit_and_no_skips_blames_neither_cause(self) -> None:
+        # THE REGRESSION (TB-33 Finding 4). Same spread, but this is an `--all` run: no
+        # `--limit`, no skips. The old code reached its zero-skip branch, concluded
+        # "therefore --limit", and told the reader to re-run without a flag they never
+        # passed -- a false cause AND a false remedy, which is the exact species of
+        # unearned claim TB-33 exists to delete. With neither signal firing, the line
+        # must name neither cause and must not prescribe dropping a flag.
+        reducer = _reducer_with(claude=135, codex=40)
+        census = AgentCensus(totals={"claude": 8595, "codex": 183}, archive_total=8778)
+
+        out = _render(reducer, census, limit=None)
+
+        self.assertIn("Sampling is uneven", out)
+        self.assertIn("not comparable", out)
+        self.assertIn("Neither of the causes this report can name explains it", out)
+        self.assertIn("no `--limit` was applied and no sessions were skipped", out)
+        self.assertIn("the unevenness is real", out)
+        # No false remedy, and no pointer at a tally this report does not render.
+        self.assertNotIn("Re-run without `--limit` for a like-for-like table", out)
+        self.assertNotIn("Skipped by reason", out)
+
+    def test_uneven_sampling_with_both_limit_and_skips_names_both(self) -> None:
+        # Both signals fire, so both causes are named -- and dropping the limit is NOT
+        # promised as a fix, because the attrition half would survive it.
+        reducer = _reducer_with(claude=135, codex=40)
+        census = AgentCensus(totals={"claude": 8595, "codex": 183}, archive_total=8778)
+        skips = [
+            SkipRecord(
+                session_id=f"codex-skip-{i}",
+                agent="codex",
+                reason=SkipReason.UNKNOWN_SCHEMA,
+                detail="no parser claimed it",
+            )
+            for i in range(2)
+        ]
+
+        out = _render(reducer, census, skips=skips, limit=175)
+
+        self.assertIn("Both causes are live", out)
+        self.assertIn("`--limit 175` was applied", out)
+        self.assertIn("2 sessions were skipped this run", out)
+        self.assertIn("not guaranteed", out)
+        # The tally is on the page in this branch, so pointing at it resolves.
+        self.assertIn("Skipped by reason", out)
+
+    def test_even_sampling_emits_no_warning_line(self) -> None:
+        # Both at ~1.6%: the table IS comparable, so say nothing.
+        reducer = _reducer_with(claude=100, codex=10)
+        census = AgentCensus(totals={"claude": 6250, "codex": 625}, archive_total=6875)
+
+        out = _render(reducer, census)
+
+        self.assertNotIn("Sampling is uneven", out)
+
+    def test_residual_is_named(self) -> None:
+        reducer = _reducer_with(claude=100)
+        census = AgentCensus(totals={"claude": 8595}, archive_total=8700)
+
+        out = _render(reducer, census)
+
+        self.assertIn("105", out)
+        self.assertIn("belong to no agent", out)
+
+    def test_unavailable_census_says_why_and_renders_unknown(self) -> None:
+        reducer = _reducer_with(claude=100)
+        census = AgentCensus(
+            totals={}, archive_total=0, unavailable_reason="agentsview exited 1: daemon down"
+        )
+
+        out = _render(reducer, census)
+
+        self.assertIn("unknown", out)
+        self.assertIn("daemon down", out)
+        # A dropped column would be the exact sin this ticket closes.
+        self.assertIn("| claude |", out)
+
+    def test_summary_lists_every_agents_sampling_fraction(self) -> None:
+        reducer = _reducer_with(claude=135)
+        census = AgentCensus(totals={"claude": 8595, "cursor": 73}, archive_total=8668)
+
+        out = _render(reducer, census)
+        summary = out.split("## Summary")[1]
+
+        self.assertIn("claude: 135 of 8595", summary)
+        self.assertIn("cursor: 0 of 73", summary)
+
+    def test_total_zero_with_nonzero_scanned_is_not_a_silent_zero(self) -> None:
+        # _agent_census gathers the universe and each agent's total in SEPARATE,
+        # non-atomic agentsview invocations: claude can be seen in the probe listing
+        # with 5 scanned sessions and then report total=0 from the later scoped call.
+        # Printing "0 of 0" over that nonzero `scanned` would tell the reader claude
+        # did nothing, when it actually scanned 5 sessions -- the exact silent zero
+        # this ticket exists to close.
+        reducer = _reducer_with(claude=5)
+        census = AgentCensus(totals={"claude": 0}, archive_total=0)
+
+        out = _render(reducer, census)
+
+        self.assertIn("5 of 0", out)
+        self.assertNotIn("0 of 0", out)
+
+    def test_uneven_sampling_line_fires_on_skip_attrition_with_no_limit(self) -> None:
+        # TB-33 Finding 2: --limit is NOT the only cause. `delta` parsed all 4 of its
+        # discovered sessions; `epsilon` discovered 4 but only PARSED 1 -- 3 were
+        # skipped (non-transcript exports). No --limit was ever passed: a census
+        # whose totals exceed the reducer's `sessions` is exactly what attrition
+        # looks like to the renderer, since `stats.sessions` only counts sessions
+        # that scanned AND parsed.
+        reducer = _reducer_with(delta=4, epsilon=1)
+        census = AgentCensus(totals={"delta": 4, "epsilon": 4}, archive_total=8)
+        skips = [
+            SkipRecord(
+                session_id=f"epsilon-skip-{i}",
+                agent="epsilon",
+                reason=SkipReason.NON_TRANSCRIPT,
+                detail="binary payload",
+            )
+            for i in range(3)
+        ]
+
+        out = render_report(
+            reducer,
+            index_source="agentsview",
+            fallback_reason=None,
+            skips=skips,
+            include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=sum(s.sessions for s in reducer.agents.values()) + len(skips),
+            since_note=None,
+            census=census,
+        )
+
+        self.assertIn("Sampling is uneven", out)
+        self.assertIn("not comparable", out)
+        # The old wording asserted --limit was THE cause and prescribed re-running
+        # without it as THE remedy -- a no-op here, since no --limit was ever passed.
+        # The new line must not repeat that false attribution.
+        self.assertNotIn("Re-run without --limit for a like-for-like table", out)
+        self.assertNotIn("Re-run without `--limit` for a like-for-like table", out)
+        self.assertIn("skip attrition", out.lower())
+        # Names the skip count and points at the tally...
+        self.assertIn("3 sessions were skipped this run", out)
+        self.assertIn('"Skipped by reason" tally below', out)
+        # ...and this time the pointer resolves: the tally really is on the page,
+        # because `skips` is non-empty (`render_report` only renders it `if skips:`).
+        self.assertIn("Skipped by reason", out)
+        self.assertIn("non_transcript: 3", out)
+
+    def test_total_none_for_agent_absent_from_census_names_unknown_denominator(self) -> None:
+        # cursor was scanned (its sessions are all children, say), so the
+        # child-excluded probe listing never saw it: cursor is absent from
+        # census.totals entirely -- which is NOT the same thing as a total of zero,
+        # and must not be rendered as one. The reconciliation `residual` line names
+        # the aggregate discrepancy this causes.
+        reducer = _reducer_with(claude=100, cursor=20)
+        census = AgentCensus(totals={"claude": 8595}, archive_total=8600)
+
+        out = _render(reducer, census)
+
+        self.assertIn("20 of unknown", out)
+        self.assertIn("Reconciliation: 5 archive sessions belong to no agent", out)
