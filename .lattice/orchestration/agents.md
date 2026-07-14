@@ -8,14 +8,25 @@ state. Run 1 + Run 2 delegator history retained under Archived.
 ## Active (Run 3, dispatched 2026-07-14, Phase 1)
 | Role | Ticket | Branch | Worktree isolation | Phase | Spawned at |
 |------|--------|--------|---------------------|-------|------------|
-| delegator (inline-full) | TB-37 | `feat/tb-37-freeze-manifest-census` | Agent-tool worktree | dispatched, awaiting completion | 2026-07-14 (Run 3 Phase 1) |
+| (none — dispatch complete; all four tickets at review, Phase 2 Result Validator next) | | | | | |
 
-## Completed this run (Run 3, awaiting Phase 2 Result Validator)
+## Completed this run (Run 3, dispatch complete 2026-07-14, awaiting Phase 2 Result Validator)
 | Ticket | PR | Status | Notes |
 |--------|----|--------|-------|
 | TB-34 | [#60](https://github.com/mrojas54/tool-benchmarks/pull/60) OPEN, mergeable | review | Additive census disclosure via reused `report._sampling_notes`; SPEC S35 extended in place; 2 new tests; 580 passed/2 skipped/3 subtests. Freeze-replay region (TB-37) untouched. |
 | TB-36 | [#61](https://github.com/mrojas54/tool-benchmarks/pull/61) OPEN, mergeable | review | Option A (structural): `_probe_agentsview` now built via `_list_argv`, argv reproduced byte-for-byte; 1 new test; 579 passed/2 skipped/3 subtests. `_list_argv` and TB-38's functions untouched. |
+| TB-37 | [#63](https://github.com/mrojas54/tool-benchmarks/pull/63) OPEN, mergeable | review | MANIFEST_VERSION -> toolbench-freeze-2; census persisted at freeze time; key-presence-tolerant v1 read (mirrors TB-29 precedent); historical-denominator caveat on v2 replay; SPEC/EVALUATION S37 extended; 7 new tests; 585 passed/2 skipped/3 subtests. TB-34's region untouched. |
 | TB-38 | [#62](https://github.com/mrojas54/tool-benchmarks/pull/62) OPEN, mergeable | review | Operator-confirmed design implemented: `_discover_refs` widened to catch `RuntimeError`/`AgentsViewTimeout` mid-listing (auto only), discards partial refs, rescans raw via one code path; SPEC S10 + EVALUATION updated; 1 test rewritten, 4 new; 582 passed/2 skipped/3 subtests. `sources.py` has zero diff (TB-36 untouched). |
+
+### Cross-PR note for the Result Validator
+All four branches are independently based off `origin/main` (pre-Run-3 tip)
+and each PR is small/disjoint by construction, but none have been merged
+into each other — TB-34/TB-37 both touch `passive.py`, TB-36/TB-38 both touch
+`sources.py`, all in disjoint regions per the delegators' own diffs. A true
+assembled-gate check (all four branches merged together) has NOT been run;
+only each PR's quality gate in isolation. Flag this as a Phase 2 checklist
+item if the validator wants a merged-gate rehearsal before the operator
+merges for real.
 
 ## Archived (run history)
 | Actor | Ticket | Outcome | Notes |
