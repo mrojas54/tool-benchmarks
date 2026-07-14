@@ -119,7 +119,9 @@ rather than silently absent (S38 / TB-24).
   for `<project>/<session-uuid>/subagents/*.jsonl` while keeping the owning project as the
   first path segment (S13). Exports that are not JSONL (e.g. a SQLite dump
   with a NUL in the header) raise `NonTranscriptExport` and are skipped by
-  name (TB-10).
+  name (TB-10). Discovery also gathers an `AgentCensus` (per-agent archive
+  totals under this run's filters) so the report can disclose sampling
+  fractions (S41). Every `agentsview` call is bounded (TB-32 / TB-39).
 - **`hermes.py`** — direct read-only SQLite adapter for Hermes sessions
   (TB-11). Discovery still comes from AgentsView; only the read is redirected
   because `session export` returns the whole default-profile database.
@@ -135,15 +137,17 @@ rather than silently absent (S38 / TB-24).
   call list — never a whole-corpus `list[ToolCall]`. Schema-neutral: it only
   counts tags already stamped at parse time.
 - **`report.py`** — five-section markdown render (S14) plus corpus fingerprint
-  helpers (S36). Sections: agent breakdown (session-grain cache caveats),
-  tool leaderboard (`cache_assisted` as `yes` / `no` / `n/a` / `n/a*`), model
-  breakdown, inefficiency callouts, summary (discovery reconcile, unjoinable
-  records, S39 cache totals).
+  helpers (S36). Sections: agent breakdown (session-grain cache caveats +
+  `sampled` fractions, S41), tool leaderboard (`cache_assisted` as `yes` /
+  `no` / `n/a` / `n/a*`), model breakdown, inefficiency callouts, summary
+  (discovery reconcile, unjoinable records, S39 cache totals).
 - **`freeze.py`** — write-once / replay corpus manifest for `--freeze`
   (S37). Round-trips `SessionRef` (including `is_subagent`) so replay bypasses
   live discovery without an import cycle on `passive`. On replay, a path under
   `…/subagents/…` still counts as a subagent even if a pre-TB-29 manifest stored
-  `"is_subagent": false` — the path is ground truth (TB-29).
+  `"is_subagent": false` — the path is ground truth (TB-29). A freeze replay
+  has no live archive census, so sampling fractions are marked unavailable
+  (S41).
 - **`run_manifest.py`** — JSON reader for `--run-manifest` (S40). Defines a
   run's branch set (`branches` required; empty/missing is refused). Not
   `.lattice/orchestration/agents.md` — that file drops its Branch column when
@@ -156,6 +160,11 @@ rather than silently absent (S38 / TB-24).
   only when the API response is isolable (one `tool_use`, no prose/reasoning —
   S26). Turns are keyed solely by `requestId` (S30); hermes-trace input is
   refused with `NonIsolableTurns`.
+- **`complex.py` / `complex_runner.py`** — locate-then-fix probe library
+  (tokens to a verified outcome across toolset arms). Design lives under
+  `docs/superpowers/specs/2026-07-12-complex-debug-probe-design.md`; not yet
+  an operator CLI entry point (use `passive` / `probe` for day-to-day runs).
+
 ## Probe corpus
 
 Five files are vendored under [`tools/`](tools/) — a log-spaced size spread
@@ -198,17 +207,22 @@ records (**S38** / TB-24), Claude session-grain cache read+creation
 entry-grain by `gitBranch` (**S40** / TB-27). Follow-ons name the
 detached-HEAD attribution blind spot (**TB-28**) and make
 `--exclude-subagents` match the real nested
-`<project>/<session-uuid>/subagents/` layout (**TB-29**). CQ follow-ons
-split passive into `reducer`/`report`, fold probe into `ClaudeParser`
-(`keep_raw_input` / `track_turns`), and stamp inefficiency tags at emit.
-The strict gate (`uv run ruff check .`, `uv run mypy --strict toolbench tests`,
-`uv run pytest -q`) is green — **389** tests passing (2 skipped when the
-live hermes archive / optional live paths are absent). `mypy --strict`
-covers `tests` as well as `toolbench`.
+`<project>/<session-uuid>/subagents/` layout (**TB-29**). AgentsView calls
+are bounded (**TB-32**) with an operator override (**TB-39** /
+`--agentsview-timeout`). Per-agent sampling fractions and uneven-window
+disclosure land beside the Agent Breakdown (**S41** / **TB-33**), with
+truncation vs attrition apportioned from observed signals (**TB-35**). CQ
+follow-ons split passive into `reducer`/`report`, fold probe into
+`ClaudeParser` (`keep_raw_input` / `track_turns`), and stamp inefficiency
+tags at emit. The strict gate (`uv run ruff check .`,
+`uv run mypy --strict toolbench tests`, `uv run pytest -q`) is green —
+**577** tests passing (3 skipped when the live hermes archive / optional
+live paths are absent). `mypy --strict` covers `tests` as well as
+`toolbench`.
 
 Source-of-truth documents:
 
-- [`SPEC.md`](SPEC.md) — 40 numbered acceptance criteria (S1–S40).
+- [`SPEC.md`](SPEC.md) — 41 numbered acceptance criteria (S1–S41).
 - [`EVALUATION.md`](EVALUATION.md) — verification map for every criterion.
 - [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the T1–T6 tickets
   plus post-merge TB/T rows.
@@ -271,11 +285,16 @@ uv sync
 # Passive analyzer — default scope is every agent, every project
 uv run python -m toolbench.passive --agent all --all
 
-# Scope by project / time / index source
+# Scope by project / time / index source / sample size
 uv run python -m toolbench.passive --project my-repo --since 2026-06-01
 uv run python -m toolbench.passive --all --index-source agentsview
 uv run python -m toolbench.passive --all --date-from 2026-06-01 --date-to 2026-06-30
 uv run python -m toolbench.passive --all --exclude-subagents --out reports/2026-07-08-tool-usage.md
+# --limit N caps refs in RECENCY order across the whole archive (not per agent).
+# Read the Agent Breakdown `sampled` column before comparing rows (S41 / TB-33).
+uv run python -m toolbench.passive --agent all --all --limit 200
+# Raise/lower the AgentsView subprocess ceiling when 60s is wrong for your daemon (TB-39).
+uv run python -m toolbench.passive --all --index-source agentsview --agentsview-timeout 120
 
 # Reproducible before/after: freeze the corpus once, then replay it to compare.
 # First run writes the manifest; every later run scans the frozen set and names
@@ -409,6 +428,33 @@ those files; the adapter never writes to them.
 
 ### Reading the report
 
+#### Agent Breakdown — `sampled` (S41 / TB-33 / TB-35)
+
+`--limit` truncates discovery in **recency order across the whole archive**,
+not per agent. Agents produce sessions at different rates, so each row can
+rest on a different fraction of that agent's history — and an agent whose
+work is all older than the window can vanish with `sessions == 0`.
+
+The Agent Breakdown therefore carries a `sampled` column
+(`scanned of archive_total (pct%)`) and notes beside the table:
+
+- **Present, not reached** — archive total > 0, nothing scanned: the window
+  never looked, not "this agent did no work."
+- **Reached, all skipped** — every pulled session failed to parse/export:
+  zeros from attrition, not from absence (see Summary `Skipped by reason`).
+- **Sampling is uneven (Nx spread)** — max/min sampling fraction across
+  agents with ≥1 scanned session exceeds the disclosure threshold. Cross-row
+  ratios (calls/session, tokens/call, error rate) mix sampling depth into the
+  comparison and are **not comparable** until that line is gone.
+- **Apportionment (TB-35)** — when the uneven line fires, each agent's
+  remainder is split from *observed* signals only: `--limit` truncation is
+  named only when discovery saw the listing cut short; skip attrition only
+  when that agent has skips. Passing `--limit` without it biting is not
+  truncation. A freeze replay has no census denominator and says so.
+
+Cross-agent conclusions need a report with **no** uneven-sampling line (or a
+full-archive run without a biting `--limit`).
+
 Inefficiency callouts are written as `N of M calls (P%)` and name the
 worst tool when the count is non-zero, for example:
 
@@ -474,7 +520,11 @@ line means the run headline may understate what the orchestration spent.
 | `cache_assisted` shows `n/a` / `n/a*` for hermes (or hermes-trace) | Per-call usage is absent by schema or dropped by the trace export (S29) | Expected. Do not read `n/a` as "no cache hits". Session-grain cache, when present, appears as an Agent Breakdown caveat (S32), not in this column. |
 | `toolbench.probe` raises `NonIsolableTurns` on a hermes trace file | Trace export has no `requestId`; probe keys turns only by that field (S30) | Score a native Claude Code probe session instead. Trace remains valid input to `passive`. |
 | `cursor` sessions appear only under the `unknown_schema` skip reason | No parser claims cursor's schema yet (`UnknownSchema`, S28) | Expected until a `CursorParser` lands. It must not appear as a healthy zero-call agent; `tally_skips`/`--verbose` surface the count and ids (S34). |
-| Sessions skipped under the `export_timeout` reason | The AgentsView daemon stopped answering **mid-scan**; each `export` is bounded at `AGENTSVIEW_TIMEOUT_S` (TB-32) | Not a bad session — a sick daemon. The probe passed, so the hang began later; the scan degrades to skips rather than dying. Restart AgentsView and re-run, or use `--index-source raw`. A run where *many* sessions carry this reason is not a corpus to trust. |
+| Sessions skipped under the `export_timeout` reason | The AgentsView daemon stopped answering **mid-scan**; each `export` is bounded at `AGENTSVIEW_TIMEOUT_S` (TB-32), overridable via `--agentsview-timeout` (TB-39) | Not a bad session — a sick daemon (or a ceiling too low for a healthy large archive). Restart AgentsView and re-run, raise the timeout, or use `--index-source raw`. A run where *many* sessions carry this reason is not a corpus to trust. |
+| Summary names `AgentsView timeout: …` | Timeout **changed what you see**: ≥1 `export_timeout` skip, or `--agentsview-timeout 0` (unbounded) | Expected disclosure (TB-39). A clean bounded run stays silent. Unbounded + clean is not proof the daemon is healthy — only that nothing hung *this* time. |
+| Agent Breakdown shows `Sampling is uneven (Nx spread)` | `--limit` (or skip attrition / window composition) sampled agents at different fractions of their archives (S41 / TB-33) | Do not compare cross-row rates. Read the apportionment lines (TB-35): re-run without `--limit` only when truncation is the named cause; attrition survives dropping the limit. |
+| `sampled` shows `N of ?` / "Sampling fractions unavailable" | Freeze replay (or a failed census) has no live archive denominator (S41) | Expected on `--freeze` replay. Compare fingerprints / vanished counts instead of sampling fractions. |
+| An agent row is all zeros / "Present in the archive, not reached" | Recency window never pulled that agent's sessions (S41) | Not evidence of idle archive. Raise `--limit`, drop it, or filter to that `--agent` alone. |
 | `cache_assisted` shows `n/a` for every `codex` tool | codex has no per-call usage channel; it bills per turn via `token_count` events (`ABSENT_BY_SCHEMA`, S33) | Expected. Do not read `n/a` as "no cache hits". |
 | `codex` reports 0 errors no matter what failed | codex encodes exit status in the output text and sets `status: completed` even for failed tools (S33) | Expected. `error` is never inferred from output prose. Use `output_chars` / the raw transcript to inspect failures. |
 | `codex` web searches never appear in the leaderboard | `web_search_call` carries no `call_id` and emits no output record, so it cannot be joined (S33 / TB-24) | Expected. They are not joinable calls, so leaderboard/ratio counts exclude them. The count is not lost: the Summary's `Unjoinable tool records (seen, not joined)` line names it as `codex/web_search_call` (S38). |

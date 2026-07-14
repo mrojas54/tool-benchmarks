@@ -63,17 +63,26 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   defect to fix, not one to route around here (TB-11).
 - **S10 — index-source policy.** `--index-source auto` tries AgentsView
   first and falls back to raw scanning (recording the reason) if the CLI is
-  missing or exits nonzero; `agentsview` is strict and errors clearly;
-  `raw` uses the filesystem only.
+  missing, exits nonzero, **or times out**; `agentsview` is strict and errors
+  clearly; `raw` uses the filesystem only. Every `agentsview` subprocess
+  (probe, listing, census, per-session export) is bounded by
+  `AGENTSVIEW_TIMEOUT_S` (default 60s, TB-32). A mid-scan hang is typed
+  `AgentsViewTimeout` → skip reason `export_timeout` so the scan continues
+  rather than blocking forever. `--agentsview-timeout SECONDS` overrides the
+  ceiling (TB-39): `> 0` bounds, `0` is unbounded (`timeout=None`), `< 0` is
+  rejected. The Summary names the timeout only when it changed the corpus
+  (≥1 `export_timeout` skip) or the run was unbounded.
 - **S34 — skips carry a typed reason, not stringified prose.** Every skipped
   session is a `SkipRecord(session_id, agent, reason: SkipReason, detail)`, where
   `SkipReason` is a `StrEnum` — `MISSING_SOURCE` / `UNKNOWN_SCHEMA` /
-  `NON_TRANSCRIPT` / `DECODE_ERROR` / `EXPORT_FAILED`. The reason is decided where
-  the evidence lives, not by regex on the report: `AgentsViewLoader.lines` raises a
-  distinct `MissingSourceExport` (a flat `RuntimeError` sibling of
-  `NonTranscriptExport`, **not** a subclass — a gone file and a binary file are
-  different diagnoses) when export stderr matches `source file not found`; every
-  other non-zero export stays a plain `RuntimeError` → `EXPORT_FAILED`.
+  `NON_TRANSCRIPT` / `DECODE_ERROR` / `EXPORT_FAILED` / `EXPORT_TIMEOUT`. The
+  reason is decided where the evidence lives, not by regex on the report:
+  `AgentsViewLoader.lines` raises a distinct `MissingSourceExport` (a flat
+  `RuntimeError` sibling of `NonTranscriptExport`, **not** a subclass — a gone
+  file and a binary file are different diagnoses) when export stderr matches
+  `source file not found`; a hung export raises `AgentsViewTimeout` →
+  `EXPORT_TIMEOUT` (TB-32); every other non-zero export stays a plain
+  `RuntimeError` → `EXPORT_FAILED`.
   `classify_skip` maps each caught exception type to its `SkipReason` one frame
   after the raise, before the type information is lost; `skip_record_for` stamps it
   with the ref's identity; `tally_skips` answers "how many sessions have no parser?"
@@ -92,16 +101,17 @@ and re-exports the public symbols historical imports expect.
   reducers and report counters live globally (`Reducer` in `reducer.py`).
 - **S12 — CLI.** Flags: `--agent`, `--all | --project`, `--since`,
   `--date-from`, `--date-to`, `--out`, `--limit`, `--exclude-subagents`,
-  `--index-source`, `--verbose`, `--freeze`, `--run-manifest`, `--tickets`;
-  default scope `--agent all --all`.
+  `--index-source`, `--agentsview-timeout`, `--verbose`, `--freeze`,
+  `--run-manifest`, `--tickets`; default scope `--agent all --all`.
 - **S13 — subagents.** Included by default; `--exclude-subagents` drops refs
   with `SessionRef.is_subagent` set at discovery. Raw discovery attributes
   project as the first path segment under the session root and sets the flag
   for `<project>/<session-uuid>/subagents/*.jsonl` — never by stamping `project="subagents"`
   or filtering on a path substring after the fact.
-- **S14 — report sections.** Five, in order: (1) Agent breakdown, (2) Tool
-  leaderboard (per agent+tool), (3) Model breakdown (per agent+model+tool,
-  `model` normalized to `unknown` when absent), (4) Inefficiency callouts
+- **S14 — report sections.** Five, in order: (1) Agent breakdown (includes
+  the `sampled` column and sampling notes from S41), (2) Tool leaderboard
+  (per agent+tool), (3) Model breakdown (per agent+model+tool, `model`
+  normalized to `unknown` when absent), (4) Inefficiency callouts
   (ToolSearch/deferral tax, failures, oversized outputs, subagent fan-out,
   churn), (5) Summary. Each callout (except ToolSearch, which already
   carries a token figure) renders as `N of M calls (P%)` and names the
@@ -219,6 +229,31 @@ and re-exports the public symbols historical imports expect.
   caveat — never a ranking column (S19). `.lattice/orchestration/agents.md` cannot
   serve as the manifest: it discards its Branch column on run completion (TB-27;
   builds on the session-grain sums of S39/TB-26).
+- **S41 — per-agent sampling disclosure.** `--limit` truncates discovery in
+  recency order across the whole archive, so each agent can land at a different
+  fraction of its own history and an agent whose sessions all fall outside the
+  window can vanish with no note. Discovery therefore gathers an `AgentCensus`
+  (per-agent archive totals under **this run's** filters, including
+  `--exclude-subagents`) beside the refs. The Agent Breakdown:
+  - carries a `sampled` column (`scanned of total (pct%)`) for every agent in
+    the census union the reducer — agents present in the archive but never
+    scanned still get a row;
+  - notes agents **present but not reached** vs **reached but all skipped**
+    (zeros from absence vs attrition are not the same claim);
+  - emits an **uneven-sampling** line when max/min sampling fraction among
+    agents with ≥1 scanned session crosses the disclosure threshold, naming
+    causes only from observed signals: `--limit` truncation only when
+    discovery saw the listing cut short, skip attrition only when skips exist
+    (TB-33 Finding 4 — passing `--limit` without it biting is not truncation);
+  - when that line fires, **apportions** each agent's remainder from those
+    same signals (TB-35) — naming both causes is not the same as splitting
+    the spread; a negative remainder (excess vs census) is drift, never
+    blamed on truncation;
+  - on freeze replay (or a failed census) marks fractions **unavailable**
+    rather than inventing denominators.
+  Cross-agent ratios formed from the table are comparable only when no
+  uneven-sampling line appears. Does not change what `--limit` selects —
+  disclosure only (TB-33 / TB-35).
 
 ## Active probes — `toolbench/probe.py` + `protocols/active-probes.md`
 

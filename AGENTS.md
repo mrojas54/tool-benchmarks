@@ -67,11 +67,18 @@ Non-obvious notes for this environment:
 - **Optional external dependencies are not present here and are not needed for the
   gate:** the `agentsview` CLI, real `~/.claude`/Codex transcript roots, and the
   Hermes archive (`~/.hermes` / `$HERMES_HOME`). Fast-suite skips for absent live
-  archives are expected (currently 2 skips when hermes/live paths are missing).
-- **Sampling disclosure (TB-33):** `--limit` caps total refs in RECENCY order across the
-  whole archive, so each agent lands at a different fraction of its own history and an
-  agent whose work is all older than the window vanishes entirely. The Agent Breakdown's
-  `sampled` column carries each agent's denominator; agents present in the archive but
-  never scanned still get a row. Cross-agent ratios are only comparable when the report
-  emits no uneven-sampling line. A frozen corpus (`--freeze`) has no denominator and
+  archives are expected (currently 3 skips when hermes/live paths are missing).
+- **Sampling disclosure (S41 / TB-33 / TB-35):** `--limit` caps total refs in
+  RECENCY order across the whole archive, so each agent lands at a different
+  fraction of its own history and an agent whose work is all older than the
+  window vanishes entirely. The Agent Breakdown's `sampled` column carries each
+  agent's denominator; agents present in the archive but never scanned still get
+  a row. An uneven-sampling line apportions truncation vs attrition from
+  *observed* signals only (passing `--limit` without it biting is not
+  truncation). Cross-agent ratios are only comparable when the report emits no
+  uneven-sampling line. A frozen corpus (`--freeze`) has no denominator and
   says so.
+- **AgentsView hang bound (TB-32 / TB-39):** every `agentsview` subprocess is
+  capped (default 60s); mid-scan hangs become `export_timeout` skips.
+  `--agentsview-timeout` overrides (`0` = unbounded). The Summary discloses the
+  ceiling only when it truncated the corpus or the run was unbounded.
