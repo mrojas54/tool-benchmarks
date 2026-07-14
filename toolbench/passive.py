@@ -27,6 +27,7 @@ from toolbench.reducer import (
 from toolbench.registry import pick_adapter
 from toolbench.report import (
     CorpusFingerprint,
+    _sampling_notes,
     corpus_fingerprint,
     render_report,
     session_signature,
@@ -550,7 +551,21 @@ def main(
             suffix = f" (skipped {len(skips)}: {tally})"
         else:
             suffix = ""
-        print(f"toolbench.passive: no sessions matched the given selection.{suffix}")
+        lines = [f"toolbench.passive: no sessions matched the given selection.{suffix}"]
+        # TB-34: the run already built a full `AgentCensus` before this early return --
+        # `census.totals`/`archive_total`/`residual` are all in hand, and discarding
+        # them here is the exact disclosure gap TB-33 exists to close, just relocated
+        # to the one path TB-33 never reached. `_sampling_notes` already knows how to
+        # render that census (unreached agents, an all-skipped agent, an unenumerated
+        # residual) from these same six arguments -- reused rather than reinvented, so
+        # a narrow window is never silently indistinguishable from a truly empty
+        # archive. Additive only: the "no sessions matched" line above never changes.
+        lines.extend(
+            _sampling_notes(
+                reducer, census, skips, args.limit, limit_truncated, dict(sampled_by_agent)
+            )
+        )
+        print("\n".join(lines))
         return 0
 
     report = render_report(

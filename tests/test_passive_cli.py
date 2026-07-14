@@ -389,6 +389,75 @@ class MainExitContractTests(unittest.TestCase):
         self.assertIn("Malformed lines: 1", report)
 
 
+class ZeroMatchCensusDisclosureTests(unittest.TestCase):
+    """TB-34: by the zero-match early return, `main` has already built a full
+    `AgentCensus` (via `_discover_refs`/`iter_sessions`) -- discarding it there was
+    the one place TB-33's disclosure never reached, leaving a narrow window
+    indistinguishable from a truly empty archive. The disclosure must be additive:
+    the original "no sessions matched" line is never replaced, only extended."""
+
+    def test_never_reached_agent_is_named_even_when_nothing_matched(self) -> None:
+        probe_payload = {
+            "sessions": [{"id": "old-1", "project": "p", "agent": "claude-code"}],
+            "next_cursor": "",
+            "total": 1,
+        }
+        empty_payload = {"sessions": [], "next_cursor": "", "total": 0}
+        runner = FakeRunner(
+            [
+                # Parent probe (sees claude-code), per-agent census (--limit 1) + the
+                # run-scoped archive total, then the full listing -- which this run's
+                # window (e.g. an overly narrow `--since`) reaches with zero refs, so
+                # `reducer.calls_joined` never leaves 0 (TB-31, TB-33).
+                completed(stdout=json.dumps(probe_payload)),
+                completed(stdout=_json_total(42)),
+                completed(stdout=_json_total(42)),
+                completed(stdout=json.dumps(empty_payload)),
+            ]
+        )
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = main(["--index-source", "agentsview"], runner=runner)
+        self.assertEqual(code, 0)
+        message = out.getvalue()
+        # The original message survives byte-for-byte -- the disclosure is additive,
+        # never a replacement.
+        self.assertIn(
+            "toolbench.passive: no sessions matched the given selection.\n", message
+        )
+        self.assertIn(
+            "Present in the archive, not reached by this window: claude-code (42 sessions)",
+            message,
+        )
+
+    def test_unenumerated_archive_residual_is_named_even_when_nothing_matched(self) -> None:
+        empty_payload = {"sessions": [], "next_cursor": "", "total": 0}
+        runner = FakeRunner(
+            [
+                # Parent probe sees no agents at all (every session is a child, invisible
+                # to the child-excluded probe listing), so `_agent_census` makes no
+                # per-agent `_list_total` calls -- only the run-scoped archive total,
+                # which the archive still answers non-zero for. The full listing then
+                # also comes back empty, so nothing is ever absorbed.
+                completed(stdout=json.dumps(empty_payload)),
+                completed(stdout=_json_total(17)),
+                completed(stdout=json.dumps(empty_payload)),
+            ]
+        )
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = main(["--index-source", "agentsview"], runner=runner)
+        self.assertEqual(code, 0)
+        message = out.getvalue()
+        self.assertIn(
+            "toolbench.passive: no sessions matched the given selection.\n", message
+        )
+        self.assertIn(
+            "Reconciliation: 17 archive sessions belong to no agent we enumerated",
+            message,
+        )
+
+
 def _exclude_subagents_population_runner() -> "Runner":
     """A realistic `agentsview` double for scenario (A) of TB-33 Finding 1.
 
