@@ -125,7 +125,14 @@ and re-exports the public symbols historical imports expect.
   root-level skips shown as `(root)`). The empty-selection message likewise reports
   a typed tally `(skipped K: <reason>=<count>, …)` rather than joining every id. A
   report whose skip line its own author could not tally is the defect this closes
-  (TB-21).
+  (TB-21). That same empty-selection return already holds a full `AgentCensus` by
+  the time it prints — discovery built it before the zero-match check ever runs —
+  so it also appends `_sampling_notes`' rendering of it (unreached agents, an
+  agent whose every sampled session was skipped, an uneven-sampling spread, an
+  unenumerated residual — TB-33's per-agent disclosure, reused rather than
+  reinvented) after the base message, never in place of it: a narrow `--since` or
+  `--date-from`/`--date-to` window must not read as indistinguishable from a truly
+  empty archive (TB-34).
 - **S36 — the Summary carries a corpus fingerprint.** The corpus is not stable
   between runs: claude-mem observer transcripts age out of a ~30-day sliding
   window *mid-scan*, so its tail deletes itself at roughly re-run cadence, and the
