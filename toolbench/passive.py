@@ -8,6 +8,7 @@ public symbols tests and docs historically imported from `toolbench.passive`.
 from __future__ import annotations
 
 import argparse
+import functools
 import sys
 from collections import Counter
 from collections.abc import Iterator
@@ -33,15 +34,17 @@ from toolbench.report import (
 )
 from toolbench.run_manifest import MalformedRunManifest, RunManifest, read_run_manifest
 from toolbench.sources import (
+    AGENTSVIEW_TIMEOUT_S,
     AgentCensus,
-    IndexSource,
     AgentsViewTimeout,
+    IndexSource,
     MissingSourceExport,
     NonTranscriptExport,
     Runner,
     SessionRef,
     SkipReason,
     SkipRecord,
+    _run_agentsview,
     iter_sessions,
 )
 from toolbench.transcript import ParseResult
@@ -152,6 +155,7 @@ class CliArgs:
     freeze: str | None
     run_manifest: str | None
     tickets: int | None
+    agentsview_timeout: float
 
 
 def _positive_int(raw: str) -> int:
@@ -160,6 +164,21 @@ def _positive_int(raw: str) -> int:
     value = int(raw)
     if value <= 0:
         raise argparse.ArgumentTypeError("--tickets must be > 0 to normalize per ticket")
+    return value
+
+
+def _nonnegative_float(raw: str) -> float:
+    """`--agentsview-timeout` accepts 0 but not a negative (TB-39).
+
+    0 is meaningful -- it is the unbounded escape hatch, `timeout=None` -- so unlike
+    `_positive_int` it is admitted. A NEGATIVE ceiling is not a policy choice but nonsense,
+    and silently coercing it would leave the operator believing a bound they never got.
+    """
+    value = float(raw)
+    if value < 0:
+        raise argparse.ArgumentTypeError(
+            "--agentsview-timeout must be >= 0 (0 means unbounded; negative is meaningless)"
+        )
     return value
 
 
@@ -194,6 +213,12 @@ def _cli_args_from_namespace(ns: argparse.Namespace) -> CliArgs:
     if not isinstance(verbose, bool):
         raise TypeError(f"--verbose must be bool, got {type(verbose).__name__}")
 
+    agentsview_timeout = ns.agentsview_timeout
+    if not isinstance(agentsview_timeout, float):
+        raise TypeError(
+            f"--agentsview-timeout must be float, got {type(agentsview_timeout).__name__}"
+        )
+
     project = _optional_str(ns.project)
     return CliArgs(
         agent=agent,
@@ -210,6 +235,7 @@ def _cli_args_from_namespace(ns: argparse.Namespace) -> CliArgs:
         freeze=_optional_str(ns.freeze),
         run_manifest=_optional_str(ns.run_manifest),
         tickets=ns.tickets,
+        agentsview_timeout=agentsview_timeout,
     )
 
 
@@ -226,6 +252,17 @@ def parse_args(argv: list[str] | None) -> CliArgs:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--exclude-subagents", action="store_true", default=False)
     parser.add_argument("--index-source", choices=("auto", "agentsview", "raw"), default="auto")
+    parser.add_argument(
+        "--agentsview-timeout",
+        type=_nonnegative_float,
+        default=AGENTSVIEW_TIMEOUT_S,
+        metavar="SECONDS",
+        help=(
+            "Per-call ceiling on every `agentsview` subprocess (probe, listing, census, "
+            f"export). Default {AGENTSVIEW_TIMEOUT_S}s. 0 means unbounded: a hung daemon "
+            "will block the run forever (TB-32), and the report says so."
+        ),
+    )
     parser.add_argument("--verbose", action="store_true", default=False)
     parser.add_argument(
         "--freeze",
@@ -379,6 +416,21 @@ def main(
     freeze_path = args.freeze
     replaying = freeze_path is not None and Path(freeze_path).expanduser().exists()
 
+    # Bind --agentsview-timeout to the DEFAULT runner, once, here (TB-39). This is the sole
+    # place the default is chosen: both consumers (iter_sessions, and AgentsViewLoader via
+    # pick_adapter) fall back to `_run_agentsview` independently when `runner is None`, so
+    # binding it here reaches all four call sites with no new plumbing. `partial` still
+    # satisfies `Runner = Callable[[list[str]], CompletedProcess[str]]`.
+    #
+    # An EXPLICITLY injected runner is never wrapped: the flag configures the default, it
+    # does not override the seam. Every test in this suite injects one, and wrapping those
+    # would quietly change what they exercise.
+    if runner is None:
+        runner = functools.partial(
+            _run_agentsview,
+            timeout=args.agentsview_timeout if args.agentsview_timeout > 0 else None,
+        )
+
     refs: list[SessionRef]
     fallback_reason: str | None
     skips: list[SkipRecord]
@@ -518,6 +570,13 @@ def main(
         limit=args.limit,
         limit_truncated=limit_truncated,
         sampled_by_agent=dict(sampled_by_agent),
+        # `None` = "agentsview was never called, so its timeout is not a fact about this
+        # report" -- a raw-only scan or a freeze replay. Disclosing a ceiling that governed
+        # nothing would be misdirection, so the value is withheld rather than defaulted
+        # (TB-39; same discipline as `limit_truncated`'s earned False, roborev #103).
+        agentsview_timeout=(
+            None if replaying or args.index_source == "raw" else args.agentsview_timeout
+        ),
     )
     if args.out:
         Path(args.out).write_text(report)

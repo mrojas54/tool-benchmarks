@@ -344,6 +344,27 @@ call is bounded by `AGENTSVIEW_TIMEOUT_S` (60s, `sources.py`) and a breach is ra
 - under `--index-source agentsview` → fatal, as any source error is there. No silent
   fallback: the operator asked for AgentsView explicitly.
 
+### `--agentsview-timeout SECONDS`
+
+Overrides that ceiling (TB-39). Default `60.0` — omit the flag and behaviour is exactly
+as above.
+
+| value | meaning |
+|---|---|
+| `> 0` | bound each `agentsview` call at that many seconds |
+| `0` | **unbounded** — `timeout=None`; a hung daemon blocks the run forever |
+| `< 0` | rejected at parse |
+
+Raise it when a large archive makes a *healthy* daemon exceed 60s (otherwise our own
+default truncates the corpus and blames it on `export_timeout` skips); lower it when
+debugging a daemon you already suspect is hung.
+
+The Summary names the timeout **only when it changed what you are looking at** — if it
+truncated the corpus (≥1 `export_timeout` skip), or if the run was unbounded. A clean
+bounded run says nothing. The unbounded case is disclosed precisely because no skip can
+ever record it: an unbounded call never times out, so a clean report from one is not
+evidence of a healthy daemon — it may only be evidence of luck.
+
 `--agent` filters AgentsView listing only. Under `--index-source raw` the
 discovery root is Claude Code sessions, so `--agent` is a no-op there.
 

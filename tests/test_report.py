@@ -1434,3 +1434,55 @@ class ExcessRemainderTests(unittest.TestCase):
         self.assertNotIn("truncated nothing", out)
         # The excess is still not truncation's doing -- it must not be filed as a pulled gap.
         self.assertNotIn("never pulled", out)
+
+
+# -- TB-39: the timeout is disclosed only when it changed what the reader sees ---------
+
+
+class AgentsViewTimeoutDisclosureTests(unittest.TestCase):
+    def _render(self, **overrides: object) -> str:
+        reducer = Reducer()
+        reducer.absorb("claude-code", ParseResult(calls=[make_call()], malformed=0))
+        kwargs: dict[str, object] = {
+            "index_source": "auto",
+            "fallback_reason": None,
+            "skips": [],
+            "include_subagents": True,
+            "subagents_found": 0,
+            "sessions_discovered": 1,
+            "since_note": None,
+            "census": AgentCensus(totals={}, archive_total=0),
+        }
+        kwargs.update(overrides)
+        return render_report(reducer, **kwargs)  # type: ignore[arg-type]
+
+    def test_clean_bounded_run_says_nothing(self) -> None:
+        """The common case must stay noise-free; a knob at its default is not news."""
+        self.assertNotIn("AgentsView timeout", self._render(agentsview_timeout=60.0))
+
+    def test_a_timeout_that_truncated_the_corpus_is_named(self) -> None:
+        """TB-21/TB-33's rule: the report must never let a reader attribute to the archive
+        a gap that OUR ceiling caused."""
+        report = self._render(
+            agentsview_timeout=5.0,
+            skips=[
+                SkipRecord("s1", "claude", SkipReason.EXPORT_TIMEOUT, "timed out"),
+                SkipRecord("s2", "claude", SkipReason.EXPORT_TIMEOUT, "timed out"),
+            ],
+        )
+        self.assertIn("AgentsView timeout", report)
+        self.assertIn("5.0", report)
+        self.assertIn("2", report)  # the count of what it cost
+
+    def test_an_unbounded_run_is_named_even_though_nothing_timed_out(self) -> None:
+        """An unbounded run can never produce an export_timeout skip -- so if disclosure
+        keyed on skips alone, the ONE config that can hang forever would be the only one
+        the report never mentions."""
+        report = self._render(agentsview_timeout=0.0, skips=[])
+        self.assertIn("AgentsView timeout", report)
+        self.assertIn("unbounded", report)
+
+    def test_not_applicable_when_agentsview_was_never_used(self) -> None:
+        """`--index-source raw` (or a freeze replay) never calls agentsview, so the value
+        of the flag is irrelevant and disclosing it would be misdirection."""
+        self.assertNotIn("AgentsView timeout", self._render(agentsview_timeout=None))

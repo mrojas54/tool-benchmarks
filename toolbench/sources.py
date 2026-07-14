@@ -206,7 +206,7 @@ AGENTSVIEW_TIMEOUT_S = 60.0
 
 
 def _run_agentsview(
-    argv: list[str], timeout: float = AGENTSVIEW_TIMEOUT_S
+    argv: list[str], timeout: float | None = AGENTSVIEW_TIMEOUT_S
 ) -> subprocess.CompletedProcess[str]:
     # errors="replace": a session export carrying a stray non-UTF-8 byte must not
     # raise out of communicate() and abort the whole corpus scan (S9).
@@ -215,6 +215,11 @@ def _run_agentsview(
     # bound this call blocks forever and S10's fallback never fires (TB-32). Re-typed to
     # AgentsViewTimeout because a raw subprocess.TimeoutExpired escapes every guard in
     # passive.main -- see the class docstring.
+    #
+    # `None` is subprocess.run's native "block forever" and is reachable only via
+    # `--agentsview-timeout 0` (TB-39) -- an operator who knows their daemon is merely slow
+    # rather than sick. It re-arms the TB-32 hang on purpose, so the report discloses the
+    # unbounded run rather than letting a clean report pass for a healthy daemon.
     try:
         return subprocess.run(
             argv,
