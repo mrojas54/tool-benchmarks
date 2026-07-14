@@ -1,0 +1,69 @@
+{
+  "assigned_to": null,
+  "branch_links": [
+    {
+      "branch": "fix/tb-33-agent-sampling-disclosure",
+      "linked_at": "2026-07-14T03:46:06Z",
+      "linked_by": {
+        "agent_type": "triage",
+        "base_name": "Scribe",
+        "framework": "claude-code",
+        "model": "claude-opus-4-8",
+        "name": "Scribe-1",
+        "serial": 1,
+        "session": "sess_01KXEJ2C3JK579PEPHCEW7WFH2"
+      },
+      "repo": null
+    }
+  ],
+  "comment_count": 3,
+  "complexity": "medium",
+  "created_at": "2026-07-13T20:18:27Z",
+  "created_by": {
+    "agent_type": "triage",
+    "base_name": "Scribe",
+    "framework": "claude-code",
+    "model": "claude-opus-4-8",
+    "name": "Scribe-1",
+    "serial": 1,
+    "session": "sess_01KXEJ2C3JK579PEPHCEW7WFH2"
+  },
+  "custom_fields": {},
+  "description": "WHERE: toolbench/report.py:132-181 (`_sampling_notes`, uneven-sampling branch); `tally_skips` at report.py:256; the `--limit` truncation site at passive.py:267-270.\n\nSUPERSEDED SCOPE -- READ FIRST. This ticket was originally built around a blocker that does not exist, and carried two findings that are now fixed. All three claims are struck:\n\n- STRUCK: \"`tally_skips` collapses `list[SkipRecord]` into `dict[SkipReason, int]`, destroying agent identity at aggregation time.\" That is true of `tally_skips`, but irrelevant here -- `_sampling_notes` receives the RAW `list[SkipRecord]` and never calls `tally_skips`. `tally_skips` only feeds the rendered \"Skipped by reason\" table. The comment now at report.py:102-104 says so explicitly.\n- STRUCK: \"`SkipRecord` would need to carry the agent, which means the discovery path must stamp it on the ref before the skip is recorded.\" `SkipRecord` has carried `agent` since TB-23 (sources.py:98-101). Per-agent skip counts need no discovery-path work: `Counter(s.agent for s in skips)` already does it, and shipped at report.py:105.\n- STRUCK: the two roborev findings deferred into this ticket by the 2026-07-13 comment -- job #95 (false `--limit` attribution) and job #66 finding 2 (all-skipped agents mislabelled \"not reached\") -- were FIXED in 24d9c0f. They were never blocked on any re-keying. Both roborev reviews are still OPEN and should be closed against that commit.\n\nWHAT REMAINS: quantitative apportionment. When the spread crosses SPREAD_THRESHOLD and both causes are live, the note (report.py:155-162) can only report that both are live -- \"`--limit N` was applied AND 40 sessions were skipped.\" It cannot say how much of the spread each cause owns, per agent. The sentence it still cannot write is the load-bearing one: \"agent X lost 38 of its 40 candidate sessions to attrition, which accounts for the spread; the limit accounts for the rest.\"\n\nWHY THIS IS STILL REAL WORK. Apportionment needs two numbers per agent, and they cost very different amounts:\n\n(1) The ATTRITION half needs the skip tally re-keyed to `(agent, reason)`. This is cheap and local to the report layer -- the raw records already carry both fields, so it is `Counter((s.agent, s.reason) for s in skips)`, NOT a data-model change. `reason` must stay in the key, because the remedy differs by reason and that is the entire point of apportioning: UNKNOWN_SCHEMA attrition is fixable (write a parser and the spread closes), MISSING_SOURCE attrition is permanent (the transcripts are gone; the spread never closes). \"Agent X lost 38 sessions\" without the reason cannot tell the reader which of those two worlds they are in.\n\n(2) The TRUNCATION half has NO counter at all, and must not be faked by subtraction. passive.py:267-270 `break`s out of `refs_iter` the moment the limit is hit, so the sessions the limit cut are never enumerated -- nobody counts them. The tempting shortcut is `census.totals[X] - reached(X) - skipped_by_agent[X]`, but that residual is \"unaccounted\", not \"truncated\": the report already names other channels that land in the same bucket (a `--since` cutoff, drift between discovery and the census -- see report.py:176-181). Labelling it \"limit truncation\" would reintroduce the EXACT anti-pattern 24d9c0f removed from this function -- inferring one cause from the absence of the others. Every claim in this note fires on its own signal, and apportionment must hold that line.\n\nOPEN DESIGN QUESTION (settle before implementing): where does the truncation count come from?\n  (a) RECOMMENDED -- count it at the source. Keep draining `refs_iter` past the limit, counting only (discovery-grain metadata, no exports), so per-agent truncation becomes an OBSERVED number. The only option that gives apportionment a real signal, and the drain is cheap.\n  (b) Render the third bucket as \"unaccounted\" and refuse to name it. Honest and cheaper, but delivers no apportionment -- i.e. abandons this ticket's remaining value.\n  (c) Subtract and call it truncation. REJECTED -- see (2).\n\nDONE WHEN: with both causes live, the uneven-sampling note apportions the spread per agent, every number rests on its own observed signal, and the note names no cause it did not measure.",
+  "done_at": null,
+  "evidence_refs": [],
+  "id": "task_01KXEJ32RBP5XB6X69DXK069CM",
+  "last_event_id": "ev_01KXFBQ75MGHBTGRA8V58F2VG7",
+  "last_status_changed_at": "2026-07-14T03:46:21Z",
+  "priority": "medium",
+  "relationships_out": [
+    {
+      "created_at": "2026-07-13T20:18:59Z",
+      "created_by": {
+        "agent_type": "triage",
+        "base_name": "Scribe",
+        "framework": "claude-code",
+        "model": "claude-opus-4-8",
+        "name": "Scribe-1",
+        "serial": 1,
+        "session": "sess_01KXEJ2C3JK579PEPHCEW7WFH2"
+      },
+      "note": "TB-33 review follow-up: surfaced while reviewing the agent-sampling disclosure work",
+      "target_task_id": "task_01KXE75Q3YPSWNJ3GN82QNV7X2",
+      "type": "related_to"
+    }
+  ],
+  "reopened_count": 0,
+  "schema_version": 1,
+  "short_id": "TB-35",
+  "status": "review",
+  "tags": [
+    "tb-33-followup",
+    "disclosure",
+    "report"
+  ],
+  "title": "Uneven-sampling warning names its causes but cannot apportion the spread across them per agent",
+  "type": "task",
+  "updated_at": "2026-07-14T03:46:21Z",
+  "urgency": null
+}
