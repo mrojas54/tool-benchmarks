@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -360,6 +361,13 @@ def main(
     if args.exclude_subagents:
         refs = filter_subagents(refs)
 
+    # AFTER the filter, unlike the two provenance counts above (TB-35). The census's
+    # `includes` track the POST-filter population (TB-33 Finding 1), so a pre-filter count
+    # here would put parents-plus-children over a parents-only denominator and re-open the
+    # very bug that finding closed. `census.totals[a] - sampled_by_agent[a]` is then the
+    # number of a's sessions `--limit` never pulled: both sides observed, neither inferred.
+    sampled_by_agent = Counter(ref.agent for ref in refs)
+
     run: RunManifest | None = None
     if args.run_manifest is not None:
         try:
@@ -442,6 +450,7 @@ def main(
         freeze_note=freeze_note,
         run_tickets=args.tickets,
         limit=args.limit,
+        sampled_by_agent=dict(sampled_by_agent),
     )
     if args.out:
         Path(args.out).write_text(report)

@@ -72,11 +72,83 @@ def _sampling_spread(reducer: Reducer, census: AgentCensus) -> float | None:
     return max(fractions) / min(fractions)
 
 
+def _apportionment(
+    reducer: Reducer,
+    census: AgentCensus,
+    skips: list[SkipRecord],
+    sampled_by_agent: dict[str, int],
+    limit: int | None,
+) -> list[str]:
+    """Split each agent's archive into pulled, never-pulled, and lost-in-the-parser (TB-35).
+
+    Naming both causes is not apportioning between them. "`--limit` was applied AND 40
+    sessions were skipped" leaves the reader unable to act: is codex's 21.9% an artifact of
+    the limit, or did its archive mostly die in the parser? Those have different remedies,
+    and only a per-agent split can tell them apart.
+
+    Every number rests on its OWN observed signal -- `census.totals` (a scoped `--limit 1`
+    count read) for the archive, the POST-`filter_subagents` ref count for what this run
+    pulled, `SkipRecord` for attrition. In particular the remainder is `total - sampled`,
+    never `total - reached - skipped`: a ref that parses to zero calls produces neither a
+    reducer session nor a `SkipRecord`, so that second form would quietly bill real sessions
+    to truncation. A ref was either pulled or it was not, and that is what we count.
+
+    The remainder is named as `--limit` truncation ONLY when a limit was actually passed.
+    Without one, `_agentsview_pages` drains its cursor to exhaustion, so a remainder cannot
+    BE truncation -- it is drift between the census call and the listing. Calling it
+    truncation there would be the same inference-from-absence this module keeps deleting.
+
+    Keyed by (agent, reason), not by reason alone: the remedy differs by reason.
+    UNKNOWN_SCHEMA attrition closes the day someone writes a parser; MISSING_SOURCE
+    attrition never closes, because the transcripts are gone. `tally_skips` collapses that
+    distinction away, which is exactly why it is not used here.
+    """
+    by_agent_reason: Counter[tuple[str, SkipReason]] = Counter((s.agent, s.reason) for s in skips)
+    lines = [
+        "  - Apportionment (each number observed on its own signal; none inferred from the "
+        "absence of another):"
+    ]
+    for agent in sorted(census.totals):
+        total = census.totals[agent]
+        if total <= 0:
+            continue
+        sampled = sampled_by_agent.get(agent, 0)
+        remainder = total - sampled
+        if limit is not None and remainder > 0:
+            pulled = f"{sampled} sampled, so {remainder} never pulled (`--limit {limit}` truncation)"
+        elif remainder != 0:
+            # No limit, or a NEGATIVE remainder (the listing outran the census). Either way
+            # truncation is ruled out by its own signal, so the gap is named, not blamed.
+            pulled = (
+                f"{sampled} sampled, {abs(remainder)} unaccounted (drift between the census "
+                "call and the listing, NOT truncation"
+                + ("" if limit is not None else " -- no `--limit` was applied")
+                + ")"
+            )
+        else:
+            pulled = f"{sampled} sampled, none lost to the window"
+        clauses = [f"{agent}: {total} in archive; {pulled}"]
+
+        reasons = [(r, n) for (a, r), n in by_agent_reason.items() if a == agent]
+        if reasons:
+            named = ", ".join(
+                f"{n} {r.value}" for r, n in sorted(reasons, key=lambda kv: (-kv[1], kv[0].value))
+            )
+            lost = sum(n for _, n in reasons)
+            clauses.append(f"of the {sampled} sampled, {lost} lost to attrition ({named})")
+
+        reached = reducer.agents.get(agent, AgentStats()).sessions
+        clauses.append(f"{reached} reached the table")
+        lines.append("    - " + "; ".join(clauses) + ".")
+    return lines
+
+
 def _sampling_notes(
     reducer: Reducer,
     census: AgentCensus,
     skips: list[SkipRecord],
     limit: int | None,
+    sampled_by_agent: dict[str, int] | None = None,
 ) -> list[str]:
     """Disclosure that belongs BESIDE the table, not forty lines below it (TB-33).
 
@@ -179,6 +251,12 @@ def _sampling_notes(
                 "agent's archive (a `--since` cutoff, say, or drift between discovery and "
                 "the census). There is no flag to drop; the unevenness is real."
             )
+        # Naming the causes is not splitting the spread between them (TB-35). `None` is the
+        # typed ABSENCE of per-agent ref counts -- a caller that did not record them gets no
+        # apportionment rather than one reconstructed from reached+skipped, which would bill
+        # every zero-call session to truncation.
+        if sampled_by_agent is not None:
+            notes.extend(_apportionment(reducer, census, skips, sampled_by_agent, limit))
 
     if census.residual > 0:
         notes.append(
@@ -298,8 +376,16 @@ def render_report(
     freeze_note: str | None = None,
     run_tickets: int | None = None,
     limit: int | None = None,
+    sampled_by_agent: dict[str, int] | None = None,
 ) -> str:
-    """Render the five-section report (S14) with provenance (S15)."""
+    """Render the five-section report (S14) with provenance (S15).
+
+    `sampled_by_agent` counts the refs this run actually pulled, per agent, taken AFTER
+    `filter_subagents` so it describes the same population the census's `includes` do
+    (TB-33 Finding 1). It is what lets the uneven-sampling note apportion a spread between
+    truncation and attrition (TB-35); `None` means the caller did not record it, and the
+    apportionment is then withheld rather than reconstructed.
+    """
     lines: list[str] = ["# Tool Usage Report", ""]
 
     lines.append("## Agent Breakdown")
@@ -329,7 +415,7 @@ def render_report(
                 "(S32: session grain only — not attributable to individual tool calls)."
             )
     lines.extend(cache_caveats)
-    lines.extend(_sampling_notes(reducer, census, skips, limit))
+    lines.extend(_sampling_notes(reducer, census, skips, limit, sampled_by_agent))
     lines.append("")
 
     lines.append("## Tool Leaderboard")
