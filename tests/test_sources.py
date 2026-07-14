@@ -878,19 +878,32 @@ class AgentsViewTimeoutTests(unittest.TestCase):
             refs, _reason, _census = iter_sessions(index_source="agentsview", runner=runner)
             list(refs)
 
-    def test_mid_discovery_timeout_is_fatal_like_any_other_source_error(self) -> None:
+    def test_mid_discovery_timeout_still_escapes_iter_sessions_raw_but_passive_now_recovers(
+        self,
+    ) -> None:
         """Scope boundary, asserted so it stays a decision rather than an accident.
 
-        `auto`'s fallback covers the PROBE, not the pagination that follows it. A daemon
-        that answers the probe and then dies mid-listing is fatal (passive.main reports
-        "fatal source error" and exits 1) -- and that is PRE-EXISTING behaviour for a
-        nonzero exit, on main, untouched by TB-32. This test pins the timeout to the SAME
-        behaviour, because the alternative is incoherent: hangs falling back to raw while
-        an equally-broken daemon that exits 1 stays fatal.
+        `iter_sessions` itself makes the fallback call ONCE, at the PROBE
+        (`_probe_agentsview`, `--limit 1`): a daemon that answers that check and then
+        dies somewhere in the pagination that follows -- inside `discover_agentsview`'s
+        eager parent-probe pass (TB-31), which runs as part of THIS call, or lazily
+        while the caller drains the returned iterator -- still raises out of
+        `iter_sessions`, RAW, uncaught, for both a timeout (TB-32) and a plain nonzero
+        exit (pre-existing, untouched by TB-32). That is deliberate, not a gap left
+        open at this layer: `iter_sessions` has no `--limit`-driven notion of "refs
+        already spent" to protect, so it is the wrong place to decide whether a
+        partial agentsview listing may be discarded and re-drawn from raw.
 
-        Widening `auto` to re-discover from raw after a partial listing is a real S10 gap,
-        but it belongs to all three failure modes at once, not to the timeout alone -- so
-        it is TB-38, not this ticket.
+        Before TB-38, nothing upstream caught either exception either, so BOTH escaped
+        all the way to `passive.main`'s `except (FileNotFoundError, RuntimeError)`
+        guard -- fatal, exit 1, despite the raw filesystem being right there and
+        `--index-source auto` promising exactly this degrade (S10). TB-38 closed that
+        gap one layer up: `toolbench.passive._discover_refs` now catches both
+        exceptions when `index_source == "auto"`, discards whatever partial listing
+        this attempt collected, and rescans wholesale from raw -- see
+        `tests/test_passive_cli.py::MidListingAutoFallbackTests` for the direct,
+        end-to-end pin of that recovery. This test's job is narrower and unchanged:
+        confirm `iter_sessions` still hands `_discover_refs` something to catch.
         """
         ok = completed(stdout=_total_page(0))
         with self.assertRaises(AgentsViewTimeout):
@@ -900,7 +913,7 @@ class AgentsViewTimeoutTests(unittest.TestCase):
                 runner=FakeRunner([ok, AgentsViewTimeout("agentsview timed out after 60.0s")]),
             )
             list(refs)
-        # The pre-existing sibling, for contrast: same shape, same fatality.
+        # The pre-existing sibling, for contrast: same shape, same escape.
         with self.assertRaises(RuntimeError):
             refs, _reason, _census = iter_sessions(
                 index_source="auto",
