@@ -59,6 +59,40 @@ catalog's most recent maintained copy, re-verified still applicable
 - **Master Validator:** OFF — 4-ticket wave with disjoint touch surfaces per
   worktree; Result Validator alone is sufficient insurance at this scale.
 
+## Run 3 decision log (append-only)
+- 2026-07-14 [autonomy: Moderate] Scope (all four tickets) and TB-38's fallback
+  design (discard partial refs, rescan raw, one code path for RuntimeError and
+  AgentsViewTimeout) surfaced to operator via AskUserQuestion and confirmed
+  before dispatch — the two genuinely architectural calls this run required.
+- 2026-07-14 [autonomy: Moderate] Dispatch complete: TB-34 → PR #60, TB-36 →
+  PR #61, TB-37 → PR #63, TB-38 → PR #62. All four open, mergeable, quality
+  gate clean in isolation (580/579/585/582 passed respectively against a 578
+  baseline). Board synced to `review` for all four with PR/branch evidence in
+  each ticket's comments. Delegators did not touch `.lattice/`; all board
+  mutations are orchestrator-owned commits (d94b75f, 2e83ebf, 7ab756f, c07609a).
+- 2026-07-14 [autonomy: Moderate] Phase 2 Result Validator (fresh session, no
+  prior dispatch context) ran independently: re-read SPEC/EVALUATION/BUILDPLAN
+  cold, re-diffed all four PRs against their tickets (not the delegator
+  recaps), re-ran each isolated gate, and additionally performed the
+  assembled-gate rehearsal flagged as missing in the dispatch record (merged
+  all four onto `origin/main` in a throwaway, unpushed worktree). Verdict: all
+  four PASS; assembled gate PASS at 592 passed (578 + 2 + 1 + 7 + 4, confirming
+  no test lost/duplicated across merges). One real finding: TB-37 and TB-38
+  both append a name to the same `tests/test_passive_cli.py` import statement
+  — a genuine (if trivial) merge conflict a real GitHub merge will hit on
+  whichever of the two merges second; not a design conflict, single-line fix.
+  One drift note: TB-38's fix lives entirely in `passive.py`, not `sources.py`
+  as the dispatch prompt's shared-file framing implied — disjointness with
+  TB-36 holds trivially, just a framing correction, not a defect.
+  Full report: `validation-report.md`. **None of the four PRs merged** —
+  merge policy stays leave-at-review; merge order/timing is the operator's
+  call, with the known import-line conflict named for whoever merges second.
+- 2026-07-14 [autonomy: Moderate] Out-of-band note (not this run's scope): a
+  `PostToolUse:Bash` hook surfaced during Phase 2 that `main` carries 4 open
+  failed roborev reviews. The validator correctly did not act on it (outside
+  its mandate — no merges/pushes/changes to `main` were in scope). Routed to
+  the operator for separate triage, not folded into Run 3's closeout.
+
 ## Configuration
 - **Autonomy:** Moderate (operator-confirmed 2026-07-10, Phase 0 config dialogue)
 - **N (max concurrent delegators):** 2

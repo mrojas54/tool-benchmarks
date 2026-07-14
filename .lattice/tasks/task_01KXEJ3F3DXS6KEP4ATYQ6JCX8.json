@@ -1,7 +1,22 @@
 {
   "assigned_to": null,
-  "branch_links": [],
-  "comment_count": 0,
+  "branch_links": [
+    {
+      "branch": "chore/tb-36-probe-argv-sole-builder",
+      "linked_at": "2026-07-14T14:01:52Z",
+      "linked_by": {
+        "agent_type": "orchestrator",
+        "base_name": "Orchestrator",
+        "framework": "claude-code",
+        "model": "claude-sonnet-5",
+        "name": "Orchestrator-1",
+        "serial": 1,
+        "session": "sess_01KXFYJZ3BMPT2JKA6MBSH2ABQ"
+      },
+      "repo": null
+    }
+  ],
+  "comment_count": 1,
   "complexity": "low",
   "created_at": "2026-07-13T20:18:39Z",
   "created_by": {
@@ -18,8 +33,8 @@
   "done_at": null,
   "evidence_refs": [],
   "id": "task_01KXEJ3F3DXS6KEP4ATYQ6JCX8",
-  "last_event_id": "ev_01KXFYKAATJQSTNT529JWC9NFM",
-  "last_status_changed_at": "2026-07-14T09:16:16Z",
+  "last_event_id": "ev_01KXGEY9AD4H508CBGEB6ZK6DJ",
+  "last_status_changed_at": "2026-07-14T14:01:53Z",
   "priority": "low",
   "relationships_out": [
     {
@@ -41,7 +56,7 @@
   "reopened_count": 0,
   "schema_version": 1,
   "short_id": "TB-36",
-  "status": "in_planning",
+  "status": "review",
   "tags": [
     "tb-33-followup",
     "invariant",
@@ -49,6 +64,6 @@
   ],
   "title": "_probe_agentsview hand-assembles a session-list argv outside _list_argv(), the sole-builder invariant TB-33 established",
   "type": "chore",
-  "updated_at": "2026-07-14T09:16:16Z",
+  "updated_at": "2026-07-14T14:01:53Z",
   "urgency": null
 }

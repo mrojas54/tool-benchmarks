@@ -138,7 +138,14 @@ and re-exports the public symbols historical imports expect.
   root-level skips shown as `(root)`). The empty-selection message likewise reports
   a typed tally `(skipped K: <reason>=<count>, …)` rather than joining every id. A
   report whose skip line its own author could not tally is the defect this closes
-  (TB-21).
+  (TB-21). That same empty-selection return already holds a full `AgentCensus` by
+  the time it prints — discovery built it before the zero-match check ever runs —
+  so it also appends `_sampling_notes`' rendering of it (unreached agents, an
+  agent whose every sampled session was skipped, an uneven-sampling spread, an
+  unenumerated residual — TB-33's per-agent disclosure, reused rather than
+  reinvented) after the base message, never in place of it: a narrow `--since` or
+  `--date-from`/`--date-to` window must not read as indistinguishable from a truly
+  empty archive (TB-34).
 - **S36 — the Summary carries a corpus fingerprint.** The corpus is not stable
   between runs: claude-mem observer transcripts age out of a ~30-day sliding
   window *mid-scan*, so its tail deletes itself at roughly re-run cadence, and the
@@ -173,6 +180,29 @@ and re-exports the public symbols historical imports expect.
   skip detail. Over an unchanged corpus a replay is byte-identical (the fingerprint
   line included); when the tail has moved, the vanished count names the mechanism
   rather than letting the delta pass as code (TB-22).
+  - **TB-37 — manifest format v2 persists the freeze-time census.** `MANIFEST_VERSION`
+    bumped `toolbench-freeze-1` -> `toolbench-freeze-2`. A freeze pins the REF LIST,
+    not the archive it was drawn from, so TB-22/TB-33 shipped replay with a
+    deliberately STATED absence — `unavailable_reason` naming that no denominator
+    exists — rather than a silent zero (persisting one was a manifest FORMAT change out
+    of TB-22's scope). v2 closes that gap: `write_manifest` accepts an optional
+    `AgentCensus` (`totals`, `archive_total`; `residual` is a derived property and is
+    never itself stored) and, when given one, writes it under an optional `census` key.
+    `read_manifest` branches on **key presence, not the version string** — a v1
+    manifest (no such key ever existed) and a v2 manifest deliberately written without
+    one (e.g. the freeze run's own census attempt failed) both yield
+    `CorpusManifest.census = None`, and `passive.py`'s replay branch degrades both to
+    the same `unavailable_reason`, now naming the manifest's `version` specifically
+    rather than "freezing" in general, so a future v3 gap is never mistaken for this
+    one. A freeze-time census that was itself unavailable (`unavailable_reason` set at
+    write time) round-trips and propagates that reason on replay rather than being
+    laundered into the generic no-census text — attempted-and-failed is a different
+    fact from never-attempted. When a v2 manifest carries a REAL census, replay renders
+    real per-agent fractions instead of "unavailable" — but they are a **historical**
+    denominator (the archive as measured at freeze time, not today's), and the report
+    says so explicitly beside the fractions it qualifies (`frozen_census_note`,
+    `render_report`), on the same "state it, don't imply it" footing TB-33 established:
+    a v2 census must never read as current.
 - **S38 — unjoinable tool records are counted and surfaced, not dropped.** A tool
   record a parser RECOGNIZES as a real call but structurally CANNOT join — no join
   key and no output record — is neither a joined call nor a malformed line. It is

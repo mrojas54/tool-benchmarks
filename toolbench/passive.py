@@ -27,6 +27,7 @@ from toolbench.reducer import (
 from toolbench.registry import pick_adapter
 from toolbench.report import (
     CorpusFingerprint,
+    _sampling_notes,
     corpus_fingerprint,
     render_report,
     session_signature,
@@ -501,22 +502,59 @@ def main(
     # `False` (not `None`) is the earned value: replay TRULY truncates nothing, whereas
     # `None` would claim a probe was attempted and could not answer (roborev #103).
     limit_truncated: bool | None = False
+    # Set only on a v2 replay whose manifest carried a real census (TB-37): the caveat
+    # that the fractions below are HISTORICAL, not live. `render_report` renders it
+    # right beside the sampling notes it qualifies -- never left implicit alongside a
+    # number that could otherwise read as "current" (see the else-branch comment below
+    # for why a v1/censusless replay does not set this).
+    frozen_census_note: str | None = None
     if replaying:
         assert freeze_path is not None
         manifest = read_manifest(freeze_path)
         refs, fallback_reason, skips = manifest.refs, None, []
-        # A freeze pins the REF LIST, not the archive it was drawn from (TB-22), so no
-        # denominator exists on replay. Persisting one into the manifest would be a
-        # format change this ticket does not own -- and an unstated "unknown" is exactly
-        # the silence TB-33 exists to break, so it is stated instead.
-        census = AgentCensus(
-            totals={},
-            archive_total=0,
-            unavailable_reason=(
-                f"frozen corpus replay ({freeze_path}): no denominator was recorded at "
-                "freeze time"
-            ),
-        )
+        if manifest.census is None:
+            # A freeze pins the REF LIST, not the archive it was drawn from (TB-22): a v1
+            # manifest never had a census to lose, and a v2 manifest can still be written
+            # without one (e.g. discovery's own census attempt failed at freeze time, see
+            # below). Named by the MANIFEST VERSION specifically, not by "freezing" in
+            # general (TB-37), so a future format gap reads as its own gap and not this
+            # one's.
+            census = AgentCensus(
+                totals={},
+                archive_total=0,
+                unavailable_reason=(
+                    f"frozen corpus replay ({freeze_path}): manifest format "
+                    f"{manifest.version} recorded no archive census; no denominator was "
+                    "recorded at freeze time"
+                ),
+            )
+        elif manifest.census.unavailable_reason is not None:
+            # The census itself failed AT FREEZE TIME (e.g. discovery's own census call
+            # errored). Propagated, not laundered into the generic "no denominator" text
+            # above -- that would misname a measurement that was ATTEMPTED AND FAILED as
+            # one that was never attempted.
+            census = AgentCensus(
+                totals={},
+                archive_total=0,
+                unavailable_reason=(
+                    f"frozen corpus replay ({freeze_path}): the census recorded at "
+                    f"freeze time was itself unavailable: {manifest.census.unavailable_reason}"
+                ),
+            )
+        else:
+            # A real census survived the freeze (TB-37): the fractions below are REAL,
+            # but HISTORICAL -- the archive size as of freeze time, not today's. That
+            # caveat is wired through `frozen_census_note` to `render_report`, which
+            # renders it beside the sampling notes it qualifies, so a v2 census can never
+            # read as "current" the way a v1 replay's silent absence used to (TB-33's
+            # honesty floor, raised).
+            census = manifest.census
+            frozen_census_note = (
+                "- **Historical denominator**: the archive census above was recorded at "
+                f"freeze time ({freeze_path}), not re-measured for this replay. The live "
+                "archive has almost certainly changed size since -- these fractions "
+                "describe the corpus as it was WHEN FROZEN, not the archive today."
+            )
     else:
         try:
             refs, fallback_reason, skips, census, limit_truncated = _discover_refs(
@@ -527,7 +565,10 @@ def main(
             return 1
         if freeze_path is not None:
             write_manifest(
-                freeze_path, refs, corpus_fingerprint(r.session_id for r in refs).digest
+                freeze_path,
+                refs,
+                corpus_fingerprint(r.session_id for r in refs).digest,
+                census=census,
             )
 
     # Counted before the filter runs, on both the discovery and the replay path -- these
@@ -610,7 +651,21 @@ def main(
             suffix = f" (skipped {len(skips)}: {tally})"
         else:
             suffix = ""
-        print(f"toolbench.passive: no sessions matched the given selection.{suffix}")
+        lines = [f"toolbench.passive: no sessions matched the given selection.{suffix}"]
+        # TB-34: the run already built a full `AgentCensus` before this early return --
+        # `census.totals`/`archive_total`/`residual` are all in hand, and discarding
+        # them here is the exact disclosure gap TB-33 exists to close, just relocated
+        # to the one path TB-33 never reached. `_sampling_notes` already knows how to
+        # render that census (unreached agents, an all-skipped agent, an unenumerated
+        # residual) from these same six arguments -- reused rather than reinvented, so
+        # a narrow window is never silently indistinguishable from a truly empty
+        # archive. Additive only: the "no sessions matched" line above never changes.
+        lines.extend(
+            _sampling_notes(
+                reducer, census, skips, args.limit, limit_truncated, dict(sampled_by_agent)
+            )
+        )
+        print("\n".join(lines))
         return 0
 
     report = render_report(
@@ -626,6 +681,7 @@ def main(
         verbose=args.verbose,
         fingerprint=fingerprint,
         freeze_note=freeze_note,
+        frozen_census_note=frozen_census_note,
         run_tickets=args.tickets,
         limit=args.limit,
         limit_truncated=limit_truncated,
