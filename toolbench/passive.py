@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections import Counter
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -231,9 +232,48 @@ def parse_args(argv: list[str] | None) -> CliArgs:
     return _cli_args_from_namespace(parser.parse_args(argv))
 
 
+def _probe_truncation(refs_iter: Iterator[SessionRef], *, exclude_subagents: bool) -> bool | None:
+    """Did the limit leave a REPORTED session behind? True / False / cannot say (roborev #103).
+
+    Asked only once the ref loop has already broken on `--limit`, so everything this run
+    was asked for is in hand and this call is pure diagnostic. Two things follow from that,
+    and both are the whole point of the function.
+
+    IT ASKS ABOUT THE RIGHT POPULATION. The listing always yields children -- they must be
+    discovered before `filter_subagents` can drop them (`_ALL_INCLUDES`, sources.py) -- so
+    under `--exclude-subagents` the ref just past the limit may be one the report never
+    counts. Stopping at it would blame `--limit` for cutting a population it did not cut,
+    which is the inference-from-absence TB-33 exists to delete, wearing a new hat. So the
+    probe skips exactly what the report skips and walks on to the first ref that COUNTS.
+    Cost is one ref in the ordinary case; the pathological case (every remaining ref a
+    child) walks the tail, and that is the price of an answer about the real population.
+
+    IT CANNOT BE FATAL. A fresh page may fail -- a dead daemon, a source that vanished --
+    and a run that already holds all of its refs must not die on, or be rewritten by, its
+    own diagnostic. Previously a `RuntimeError` here killed a complete run outright, and a
+    `FileNotFoundError` was caught by the guard meant for a source vanishing DURING
+    discovery, which fabricated a MISSING_SOURCE skip and zeroed the census of a sample
+    that was never in doubt. A failed probe returns `None`: not truncated, not un-truncated,
+    NOT OBSERVED. `False` would be a measurement nobody took, and the report renders it as
+    "`--limit N` truncated nothing".
+    """
+    try:
+        for ref in refs_iter:
+            if exclude_subagents and ref.is_subagent:
+                continue
+            return True
+        return False
+    except (OSError, RuntimeError, ValueError):
+        # Exactly what the discovery layer raises when a page cannot be read: OSError
+        # (FileNotFoundError, a vanished root), RuntimeError (agentsview exited non-zero),
+        # ValueError (json.JSONDecodeError on a garbled page). Scoped to the probe -- a
+        # failure DURING ref collection still raises, because that sample is incomplete.
+        return None
+
+
 def _discover_refs(
     args: CliArgs, root: str, runner: Runner | None
-) -> tuple[list[SessionRef], str | None, list[SkipRecord], AgentCensus, bool]:
+) -> tuple[list[SessionRef], str | None, list[SkipRecord], AgentCensus, bool | None]:
     """Resolve the index-source policy into a bounded list of refs (S10, S23).
 
     The `iter_sessions(...)` CALL itself now belongs inside the try block, not just
@@ -253,7 +293,7 @@ def _discover_refs(
     refs: list[SessionRef] = []
     skips: list[SkipRecord] = []
     fallback_reason: str | None = None
-    limit_truncated = False
+    limit_truncated: bool | None = False
     census: AgentCensus
     try:
         refs_iter, fallback_reason, census = iter_sessions(
@@ -272,11 +312,13 @@ def _discover_refs(
                 # Truncation is OBSERVED here, never inferred from the flag (roborev
                 # #98/#101). `--limit 9000` over an 8778-session archive stops the loop and
                 # cuts nothing, so `args.limit is not None` cannot license the report to
-                # blame the limit for anything. Asking the iterator for one more ref
-                # settles it: a ref that exists is a session this run left behind. It costs
-                # at most one more page, not the full drain -- and the ref is discarded
-                # because it is beyond the limit by definition.
-                limit_truncated = next(refs_iter, None) is not None
+                # blame the limit for anything. Asking the listing for one more ref that the
+                # report would COUNT settles it -- see `_probe_truncation`, which owns both
+                # the population question and the promise that this diagnostic can never
+                # take down the complete run it is describing (roborev #103).
+                limit_truncated = _probe_truncation(
+                    refs_iter, exclude_subagents=args.exclude_subagents
+                )
                 break
     except FileNotFoundError as exc:
         if args.index_source == "auto":
@@ -337,7 +379,9 @@ def main(
     # A replay pulls its refs from the manifest, not from a limited listing, so nothing was
     # truncated by a limit on this path. It has no census either, which suppresses the
     # sampling notes outright -- but the flag is set honestly rather than left to a default.
-    limit_truncated = False
+    # `False` (not `None`) is the earned value: replay TRULY truncates nothing, whereas
+    # `None` would claim a probe was attempted and could not answer (roborev #103).
+    limit_truncated: bool | None = False
     if replaying:
         assert freeze_path is not None
         manifest = read_manifest(freeze_path)

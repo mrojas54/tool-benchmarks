@@ -802,7 +802,7 @@ def _render(
     *,
     skips: list[SkipRecord] | None = None,
     limit: int | None = None,
-    truncated: bool = False,
+    truncated: bool | None = False,
     sampled: dict[str, int] | None = None,
 ) -> str:
     # `skips` and `limit` default to the two "no signal" values on purpose: an unadorned
@@ -1308,3 +1308,67 @@ class SamplingDisclosureTests(unittest.TestCase):
 
         self.assertIn("20 of unknown", out)
         self.assertIn("Reconciliation: 5 archive sessions belong to no agent", out)
+
+
+class UnobservedTruncationTests(unittest.TestCase):
+    """A truncation check that FAILED is not a truncation check that said no (roborev #103).
+
+    Discovery's probe can come back with three answers, not two: the limit bit, the limit
+    bit nothing, or the source could not say (a dead page at the limit boundary, after the
+    run already held every ref it asked for). The third one is `None`, and it must not
+    decay into `False` -- `False` is what licenses the report to print "`--limit N`
+    truncated nothing", a measurement nobody took.
+    """
+
+    def test_an_unobserved_limit_is_never_reported_as_having_truncated_nothing(self) -> None:
+        # Same 13.9x spread as the observed cases. The report may still say the spread is
+        # real and may still rule attrition in or out on the skip list -- but on truncation
+        # it must say only that it could not look.
+        reducer = _reducer_with(claude=135, codex=40)
+        census = AgentCensus(totals={"claude": 8595, "codex": 183}, archive_total=8778)
+
+        out = _render(reducer, census, limit=175, truncated=None)
+
+        self.assertIn("Sampling is uneven", out)
+        # The limit is named ONLY inside the hedge -- the phrase may appear, the CLAIM may not.
+        self.assertIn("Whether `--limit 175` cut the listing short could not be observed", out)
+        # Neither cause may be asserted: not truncation...
+        self.assertNotIn("the spread comes from that limit", out)
+        self.assertNotIn("Both causes are live", out)
+        # ...and not its negation, which is the one this fix exists to stop. `False` used to
+        # buy both of these lines outright, on the strength of a probe that never returned.
+        self.assertNotIn("truncated nothing", out)
+        self.assertNotIn("rules out limit truncation", out)
+
+    def test_an_unobserved_limit_still_names_attrition_it_did_observe(self) -> None:
+        # One signal failing does not blind the other. The skip list is a direct
+        # observation and is reported as such; only truncation is left open.
+        reducer = _reducer_with(claude=135, codex=40)
+        census = AgentCensus(totals={"claude": 8595, "codex": 183}, archive_total=8778)
+        skips = [
+            SkipRecord(
+                session_id="s", agent="codex", reason=SkipReason.UNKNOWN_SCHEMA, detail="no adapter"
+            )
+        ]
+
+        out = _render(reducer, census, skips=skips, limit=175, truncated=None)
+
+        self.assertIn("could not be observed", out)
+        self.assertIn("attrition is one live cause", out)
+        self.assertNotIn("truncated nothing", out)
+
+    def test_apportionment_leaves_an_unobserved_gap_unattributed(self) -> None:
+        # The per-agent split is where the false claim did the most damage: it would have
+        # billed codex's 143 missing sessions to "drift ... NOT truncation" on the strength
+        # of a probe that never returned. The gap is stated; its cause is not invented.
+        reducer = _reducer_with(claude=135, codex=40)
+        census = AgentCensus(totals={"claude": 8595, "codex": 183}, archive_total=8778)
+
+        out = _render(
+            reducer, census, limit=175, truncated=None, sampled={"claude": 135, "codex": 40}
+        )
+
+        self.assertIn("143 unattributed", out)
+        self.assertIn("cannot say whether the limit cut the listing short", out)
+        self.assertNotIn("NOT truncation", out)
+        self.assertNotIn("`--limit 175` truncation", out)

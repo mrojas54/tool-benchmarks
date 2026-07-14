@@ -50,14 +50,33 @@ bucket "limit truncation" reintroduces the exact anti-pattern `24d9c0f` removed 
 inferring one cause from the absence of the others. Every claim in this note fires on its own signal,
 and apportionment must hold that line.
 
-### Open design question — settle before implementing
+### Design question — SETTLED (implemented in `d16c4a3`, `1af2a7e`; refined per roborev #103)
 
-- **(a) Count it at the source. RECOMMENDED.** Keep draining `refs_iter` past the limit, counting
-  only (discovery-grain metadata, no exports), so per-agent truncation becomes an *observed* number.
-  The only option that gives apportionment a real signal, and the drain is cheap.
-- **(b) Render a third "unaccounted" bucket and refuse to name it.** Honest and cheaper, but delivers
-  no apportionment — it abandons this ticket's remaining value.
-- **(c) Subtract and call it truncation.** Rejected; see above.
+The options weighed were: **(a)** drain `refs_iter` past the limit and count what it yields;
+**(b)** render an unnamed "unaccounted" bucket and apportion nothing; **(c)** subtract and call the
+residual truncation. **(c)** was rejected outright (see above). **(a)** was withdrawn: a full drain
+buys a per-agent truncation *count* nobody needs, since the per-agent remainder is already available
+without it. **(b)** gives up the ticket.
+
+**Adopted — (d): remainder from the census, truncation from a boundary probe.**
+
+- **Per-agent remainder** is `census.totals[agent] - sampled_by_agent[agent]`, where `sampled_by_agent`
+  is counted AFTER `filter_subagents` so numerator and denominator describe one population (the TB-33
+  Finding 1 invariant). Never `total - reached - skipped`: a ref that parses to zero calls yields
+  neither a reducer session nor a `SkipRecord`, so that form silently bills real sessions to
+  truncation (off by 30 in the live archive).
+- **Whether the limit truncated at all** is OBSERVED, never read off the flag: when the ref loop
+  breaks on the limit, discovery asks the listing for one more ref. `limit is not None` is not the
+  signal — `--limit 9000` over an 8778-session archive passes the flag and cuts nothing, and blaming
+  it would be the same inference-from-absence this ticket exists to delete (roborev #98/#101).
+- **The probe asks about the reported population, and cannot be fatal** (roborev #103). It skips refs
+  `--exclude-subagents` would drop, since the listing always yields children (`_ALL_INCLUDES`) and a
+  left-behind child is not a session the report counts. And because it runs only after the run holds
+  every ref it asked for, a failed page returns `None` — *unobserved* — rather than crashing the run,
+  fabricating a `MISSING_SOURCE` skip, or decaying to `False`, which would print "the limit truncated
+  nothing" off a measurement nobody took.
+- Without a truncation bite, the remainder is named as drift between the census call and the listing —
+  never as truncation.
 
 ## Done when
 

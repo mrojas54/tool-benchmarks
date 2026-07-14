@@ -25,7 +25,9 @@ from toolbench.sources import AgentCensus, SkipReason, SkipRecord
 # impossible. Both causes are real, and each has its OWN observable signal, so
 # `_sampling_notes` is handed both and names only what it can see (TB-33 Finding 4):
 # `skips` is non-empty iff attrition happened, and `limit_truncated` is true iff discovery
-# WATCHED the limit cut the listing short. Not `limit is not None` -- that says a flag was
+# WATCHED the limit cut the listing short -- false iff it watched and saw it cut nothing,
+# and None iff it looked and the source could not tell it (roborev #103; a failed check is
+# not a negative result). Not `limit is not None` -- that says a flag was
 # passed, not that it bit, and `--limit 9000` over an 8778-session archive bites nothing
 # (roborev #98/#101). That is a 2x2, not a 1x2. Deriving the limit from `skips` alone
 # -- "no skips, therefore --limit" -- was a false cause AND a false remedy in the case
@@ -80,7 +82,7 @@ def _apportionment(
     skips: list[SkipRecord],
     sampled_by_agent: dict[str, int],
     limit: int | None,
-    limit_truncated: bool,
+    limit_truncated: bool | None,
 ) -> list[str]:
     """Split each agent's archive into pulled, never-pulled, and lost-in-the-parser (TB-35).
 
@@ -103,6 +105,11 @@ def _apportionment(
     cannot BE truncation: it is drift between the census call and the listing. Calling it
     truncation would be the same inference-from-absence this module keeps deleting.
 
+    `limit_truncated is None` is the third answer: discovery ASKED and the source could not
+    tell it (roborev #103). That is not `False`. `False` licenses "the limit truncated
+    nothing" -- a claim resting on a measurement nobody managed to take -- so a `None` gap
+    is left unattributed and the missing check is named instead.
+
     Keyed by (agent, reason), not by reason alone: the remedy differs by reason.
     UNKNOWN_SCHEMA attrition closes the day someone writes a parser; MISSING_SOURCE
     attrition never closes, because the transcripts are gone. `tally_skips` collapses that
@@ -119,7 +126,16 @@ def _apportionment(
             continue
         sampled = sampled_by_agent.get(agent, 0)
         remainder = total - sampled
-        if limit_truncated and remainder > 0:
+        if limit_truncated is None and remainder != 0:
+            # Discovery asked whether the limit left a session behind and the source failed
+            # to answer. The gap is real and stated; what caused it is the one thing this
+            # run may not name -- not even to rule truncation OUT.
+            pulled = (
+                f"{sampled} sampled, {abs(remainder)} unattributed (the check for a session "
+                f"beyond `--limit {limit}` failed, so this run cannot say whether the limit "
+                "cut the listing short)"
+            )
+        elif limit_truncated and remainder > 0:
             pulled = f"{sampled} sampled, so {remainder} never pulled (`--limit {limit}` truncation)"
         elif remainder != 0:
             # The limit never bit (or none was passed), or the remainder is NEGATIVE and the
@@ -157,7 +173,7 @@ def _sampling_notes(
     census: AgentCensus,
     skips: list[SkipRecord],
     limit: int | None,
-    limit_truncated: bool = False,
+    limit_truncated: bool | None = False,
     sampled_by_agent: dict[str, int] | None = None,
 ) -> list[str]:
     """Disclosure that belongs BESIDE the table, not forty lines below it (TB-33).
@@ -238,7 +254,26 @@ def _sampling_notes(
             else f"`--limit {limit}` was applied but truncated nothing (the corpus was "
             "smaller than the limit)"
         )
-        if limit_truncated and not skips:
+        if limit_truncated is None:
+            # Discovery ASKED whether the limit cut the listing short and the source could
+            # not answer (roborev #103). A check that failed is not a check that said no, so
+            # neither "the limit bit" nor `no_truncation` is available -- and this branch
+            # exists precisely so the `elif skips:` and `else:` arms below, both of which
+            # assert `no_truncation`, can never be reached on an unobserved signal.
+            attrition = (
+                f"{were.capitalize()} this run ({tally}), so attrition is one live cause; "
+                "whether the limit is a second, this run cannot say."
+                if skips
+                else "No sessions were skipped this run, which rules attrition out -- but "
+                "the one remaining cause this report can name is exactly the one it could "
+                "not check."
+            )
+            notes.append(
+                preamble + f" Whether `--limit {limit}` cut the listing short could not be "
+                f"observed: the check for a session beyond the limit failed. {attrition} "
+                "Re-run without `--limit` for a table that needs no such check."
+            )
+        elif limit_truncated and not skips:
             # Attrition ruled out by the empty skip list, truncation confirmed by a ref the
             # limit left behind. Both halves observed, so the remedy is real: drop the limit.
             notes.append(
@@ -403,7 +438,7 @@ def render_report(
     freeze_note: str | None = None,
     run_tickets: int | None = None,
     limit: int | None = None,
-    limit_truncated: bool = False,
+    limit_truncated: bool | None = False,
     sampled_by_agent: dict[str, int] | None = None,
 ) -> str:
     """Render the five-section report (S14) with provenance (S15).
