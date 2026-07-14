@@ -18,8 +18,8 @@
   "done_at": null,
   "evidence_refs": [],
   "id": "task_01KXEJ3X2TAXR0H54FZQRHSJCX",
-  "last_event_id": "ev_01KXEJ42N4RBHN3KWD53EY9XDD",
-  "last_status_changed_at": "2026-07-13T20:18:54Z",
+  "last_event_id": "ev_01KXFYKAEVHDHAHAPTGVR1B3J6",
+  "last_status_changed_at": "2026-07-14T09:16:16Z",
   "priority": "medium",
   "relationships_out": [
     {
@@ -41,7 +41,7 @@
   "reopened_count": 0,
   "schema_version": 1,
   "short_id": "TB-37",
-  "status": "backlog",
+  "status": "in_planning",
   "tags": [
     "tb-33-followup",
     "disclosure",
@@ -50,6 +50,6 @@
   ],
   "title": "Freeze replay has no denominator: the manifest persists no census, so every Agent Breakdown row on --freeze replay is unqualified",
   "type": "task",
-  "updated_at": "2026-07-13T20:18:59Z",
+  "updated_at": "2026-07-14T09:16:16Z",
   "urgency": null
 }

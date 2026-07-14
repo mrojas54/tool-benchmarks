@@ -1,0 +1,13 @@
+{
+  "agent_type": "orchestrator",
+  "base_name": "Orchestrator",
+  "framework": "claude-code",
+  "last_active": "2026-07-14T09:16:16Z",
+  "model": "claude-sonnet-5",
+  "name": "Orchestrator-1",
+  "prompt": "lattice-orchestrator",
+  "serial": 1,
+  "session": "sess_01KXFYJZ3BMPT2JKA6MBSH2ABQ",
+  "started_at": "2026-07-14T09:16:05Z",
+  "status": "active"
+}

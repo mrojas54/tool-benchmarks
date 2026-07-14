@@ -1,8 +1,63 @@
-# Run State — tool-benchmarks Run 2 (TB-19 · TB-18 remainder · TB-20)
+# Run State — tool-benchmarks Run 3 (TB-34 · TB-36 · TB-37 · TB-38)
 
 Run 1 (TB-2…TB-7, closed 2026-07-08) is archived under [`run-1/`](run-1/);
-its CLOSEOUT and validation report live there. Its footgun catalog is carried
-forward below — every entry re-verified still applicable on 2026-07-10.
+its CLOSEOUT and validation report live there. Run 2 (TB-19/TB-18/TB-20) and
+the intervening TB-21…23, TB-32, TB-39 waves closed without a matching
+run-state rewrite (tracked instead via `run-tb21-23.json` and Lattice ticket
+comments) — this file's Run 2 section below is retained as the footgun
+catalog's most recent maintained copy, re-verified still applicable
+2026-07-14. Run 3 config follows.
+
+## Run 3 configuration (2026-07-14, Phase 0)
+- **Scope:** TB-34, TB-36, TB-37, TB-38 — all four are review follow-ups
+  (TB-34/36/37 from TB-33's review, TB-38 from TB-32's review), operator-
+  confirmed "all four" over the AskUserQuestion scope check.
+- **TB-38 design question (operator-confirmed):** `--index-source auto`,
+  on a RuntimeError/AgentsViewTimeout raised *during* mid-listing pagination
+  (not just at the probe), falls back to raw — discarding any agentsview
+  refs already yielded — rather than staying fatal or splicing partial
+  agentsview refs onto a raw rescan. Applies uniformly to all three failure
+  modes named in the ticket (nonzero exit, timeout, and the existing
+  FileNotFoundError-at-probe path stays as-is, already correct).
+- **Autonomy:** Moderate (inherited from Run 2's operator-confirmed default;
+  the two architectural decisions above — scope and TB-38's design — were
+  surfaced for approval per that level; routine ticketing/dispatch calls
+  below are decide-and-log).
+- **Delegator harness:** Agent tool (parallel sub-sessions in this session),
+  each in an isolated git worktree — not c11 panes. c11 is available
+  (`C11_SHELL_INTEGRATION=1`) but the Run 2 footgun catalog documents a real
+  PTY-allocator wedge risk under repeated spawns; four independent worktree
+  agents avoid that class of failure entirely and need no pane geometry.
+- **N (max concurrent delegators):** 4 (all dispatched together; no code
+  dependency between tickets — see SHARED-FILE note below).
+- **Workflow modes:** TB-36 fast-track (small, low-priority, two-option fix
+  already sketched); TB-34, TB-37, TB-38 inline-full (each touches
+  disclosure/format logic with test-suite implications).
+- **PR merge policy:** leave at terminal pre-merge status (`review`); no
+  auto-merge (unchanged from Run 2).
+- **Git remote (re-verified 2026-07-14):** `origin` → git@github.com:mrojas54/tool-benchmarks.git.
+- **Quality-gate baseline (re-verified 2026-07-14, pre-dispatch):**
+  `uv run ruff check .` clean; `uv run mypy --strict toolbench tests` clean
+  (0 errors — the Run 2-era 38-error baseline has since been fully retired,
+  do not resurrect it as a tolerance); `uv run pytest -q` → 578 passed, 2
+  skipped, 3 subtests passed. Delegators diff against these, not zero-minus-38.
+- **SHARED-FILE flags (soft; no hard `depends_on` — loose deps kill
+  parallelism, and worktree isolation makes true conflicts impossible until
+  merge time, which is the operator's job under the leave-at-review policy):**
+  - `toolbench/passive.py`: TB-34 (zero-match early-return, ~line 544) and
+    TB-37 (replay branch + freeze-manifest wiring, ~lines 417-470) — disjoint
+    regions. Both PR bodies must name the overlap.
+  - `toolbench/sources.py`: TB-36 (`_probe_agentsview`, ~line 606, vs.
+    `_list_argv`, ~line 262) and TB-38 (`discover_agentsview` /
+    `_probe_pass` / `_agentsview_pages`, ~lines 289-442) — disjoint
+    functions. Both PR bodies must name the overlap.
+- **Line-number drift note (pinned into every boot prompt):** all four
+  ticket descriptions cite line numbers from before TB-39 merged (which
+  shifted `passive.py` and `sources.py`). Delegators locate targets by
+  function/variable name, not by the cited line numbers.
+- **Result Validator:** ON, fresh session, no prior context (Phase 2).
+- **Master Validator:** OFF — 4-ticket wave with disjoint touch surfaces per
+  worktree; Result Validator alone is sufficient insurance at this scale.
 
 ## Configuration
 - **Autonomy:** Moderate (operator-confirmed 2026-07-10, Phase 0 config dialogue)

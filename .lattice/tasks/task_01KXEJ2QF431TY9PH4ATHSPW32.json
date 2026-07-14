@@ -18,8 +18,8 @@
   "done_at": null,
   "evidence_refs": [],
   "id": "task_01KXEJ2QF431TY9PH4ATHSPW32",
-  "last_event_id": "ev_01KXEJ422513T21T8DVW92XZKK",
-  "last_status_changed_at": "2026-07-13T20:18:15Z",
+  "last_event_id": "ev_01KXFYKA5VPGY9CZNGQW6E4FGB",
+  "last_status_changed_at": "2026-07-14T09:16:16Z",
   "priority": "medium",
   "relationships_out": [
     {
@@ -41,7 +41,7 @@
   "reopened_count": 0,
   "schema_version": 1,
   "short_id": "TB-34",
-  "status": "backlog",
+  "status": "in_planning",
   "tags": [
     "tb-33-followup",
     "disclosure",
@@ -49,6 +49,6 @@
   ],
   "title": "calls_joined == 0 early-return discards the census: 'no sessions matched' throws away a denominator it already computed",
   "type": "bug",
-  "updated_at": "2026-07-13T20:18:59Z",
+  "updated_at": "2026-07-14T09:16:16Z",
   "urgency": null
 }
