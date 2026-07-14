@@ -802,6 +802,7 @@ def _render(
     *,
     skips: list[SkipRecord] | None = None,
     limit: int | None = None,
+    truncated: bool = False,
     sampled: dict[str, int] | None = None,
 ) -> str:
     # `skips` and `limit` default to the two "no signal" values on purpose: an unadorned
@@ -821,6 +822,7 @@ def _render(
         since_note=None,
         census=census,
         limit=limit,
+        limit_truncated=truncated,
         sampled_by_agent=sampled,
     )
 
@@ -883,12 +885,15 @@ class SamplingDisclosureTests(unittest.TestCase):
         reducer = _reducer_with(claude=135, codex=40)
         census = AgentCensus(totals={"claude": 8595, "codex": 183}, archive_total=8778)
 
-        out = _render(reducer, census, limit=175)
+        out = _render(reducer, census, limit=175, truncated=True)
 
         self.assertIn("Sampling is uneven", out)
         self.assertIn("not comparable", out)
         self.assertIn("rules out skip attrition", out)
-        self.assertIn("`--limit 175` was applied", out)
+        # "cut the listing short", not "was applied": the flag being passed is not the
+        # signal -- discovery watching it drop a ref is (roborev #98/#101).
+        self.assertIn("`--limit 175` cut the listing short", out)
+        self.assertNotIn("`--limit 175` was applied", out)
         self.assertIn("Re-run without `--limit` for a like-for-like table", out)
         # The dangling pointer: nothing in this report renders a "Skipped by reason"
         # tally when skips is empty, so the line must not send the reader looking for
@@ -931,10 +936,10 @@ class SamplingDisclosureTests(unittest.TestCase):
             for i in range(2)
         ]
 
-        out = _render(reducer, census, skips=skips, limit=175)
+        out = _render(reducer, census, skips=skips, limit=175, truncated=True)
 
         self.assertIn("Both causes are live", out)
-        self.assertIn("`--limit 175` was applied", out)
+        self.assertIn("`--limit 175` cut the listing short", out)
         self.assertIn("2 sessions were skipped this run", out)
         self.assertIn("not guaranteed", out)
         # The tally is on the page in this branch, so pointing at it resolves.
@@ -967,7 +972,12 @@ class SamplingDisclosureTests(unittest.TestCase):
         ]
 
         out = _render(
-            reducer, census, skips=skips, limit=195, sampled={"claude": 150, "codex": 45}
+            reducer,
+            census,
+            skips=skips,
+            limit=195,
+            truncated=True,
+            sampled={"claude": 150, "codex": 45},
         )
 
         self.assertIn("Apportionment", out)
@@ -1016,7 +1026,12 @@ class SamplingDisclosureTests(unittest.TestCase):
         ]
 
         out = _render(
-            reducer, census, skips=skips, limit=195, sampled={"claude": 136, "codex": 45}
+            reducer,
+            census,
+            skips=skips,
+            limit=195,
+            truncated=True,
+            sampled={"claude": 136, "codex": 45},
         )
 
         # codex's five losses split by reason, ordered by count. Three are recoverable,
@@ -1051,7 +1066,12 @@ class SamplingDisclosureTests(unittest.TestCase):
         ]
 
         out = _render(
-            reducer, census, skips=skips, limit=195, sampled={"claude": 150, "codex": 45}
+            reducer,
+            census,
+            skips=skips,
+            limit=195,
+            truncated=True,
+            sampled={"claude": 150, "codex": 45},
         )
 
         self.assertIn("8445 never pulled", out)
@@ -1066,7 +1086,7 @@ class SamplingDisclosureTests(unittest.TestCase):
         reducer = _reducer_with(claude=135, codex=40)
         census = AgentCensus(totals={"claude": 8595, "codex": 183}, archive_total=8778)
 
-        out = _render(reducer, census, limit=195, sampled=None)
+        out = _render(reducer, census, limit=195, truncated=True, sampled=None)
 
         self.assertIn("Sampling is uneven", out)
         self.assertNotIn("Apportionment", out)
@@ -1102,6 +1122,75 @@ class SamplingDisclosureTests(unittest.TestCase):
         self.assertIn("drift", out)
         # Truncation is never named on a run that could not have truncated.
         self.assertNotIn("never pulled", out)
+
+    def test_a_limit_that_truncated_nothing_is_not_named_as_a_cause(self) -> None:
+        # roborev #98/#101. The 2x2 dispatch keyed truncation on `limit is not None` -- the
+        # presence of the FLAG, not evidence it bit. `--limit 9000` over an 8778-session
+        # archive stops nothing, yet the report would still pin the spread on it and tell
+        # the reader to re-run without it. Same inference-from-absence 24d9c0f deleted, one
+        # level up: there, no-skips implied the limit; here, a-limit-was-passed implies it.
+        reducer = _reducer_with(claude=135, codex=40)
+        census = AgentCensus(totals={"claude": 8595, "codex": 183}, archive_total=8778)
+
+        out = _render(reducer, census, limit=9000, truncated=False)
+
+        self.assertIn("Sampling is uneven", out)
+        self.assertIn("truncated nothing", out)
+        # The remedy is the tell: dropping a flag that cut nothing changes nothing.
+        self.assertNotIn("Re-run without `--limit` for a like-for-like table", out)
+
+    def test_apportionment_without_truncation_does_not_blame_the_limit(self) -> None:
+        # Same signal, the other renderer. A remainder under a non-biting limit is drift,
+        # not truncation, and must not be filed as "never pulled".
+        reducer = _reducer_with(claude=135, codex=40)
+        census = AgentCensus(totals={"claude": 8595, "codex": 183}, archive_total=8778)
+
+        out = _render(
+            reducer,
+            census,
+            limit=9000,
+            truncated=False,
+            sampled={"claude": 8590, "codex": 183},
+        )
+
+        self.assertIn("unaccounted", out)
+        self.assertIn("`--limit 9000` truncated nothing", out)
+        self.assertNotIn("never pulled", out)
+
+    def test_summary_does_not_call_an_all_skipped_agent_unreached(self) -> None:
+        # roborev #98/#101. TB-33 Finding 2 removed this false claim from the sampling
+        # notes but left it standing in the Summary tail, which still keyed off
+        # `scanned == 0` alone. So one report said BOTH "reached, but every session was
+        # skipped" (notes) and "not reached by this window" (Summary) about gemini. The
+        # contradiction is the bug: a reader who scrolls believes the second one.
+        reducer = _reducer_with(claude=135)
+        census = AgentCensus(totals={"claude": 8595, "gemini": 12}, archive_total=8607)
+        skips = [
+            SkipRecord(
+                session_id=f"gemini-{i}",
+                agent="gemini",
+                reason=SkipReason.NON_TRANSCRIPT,
+                detail="binary payload",
+            )
+            for i in range(4)
+        ]
+
+        out = _render(reducer, census, skips=skips)
+
+        self.assertIn("gemini: 0 of 12", out)
+        self.assertNotIn("gemini: 0 of 12 (0.0%) — not reached by this window", out)
+        self.assertIn("all 4 sampled sessions were skipped", out)
+
+    def test_summary_still_calls_a_genuinely_unreached_agent_unreached(self) -> None:
+        # The other half: cursor really was never looked at, and the Summary must keep
+        # saying so. Suppressing the tail for everyone would trade one false claim for a
+        # silence -- the exact failure TB-33 exists to prevent.
+        reducer = _reducer_with(claude=135)
+        census = AgentCensus(totals={"claude": 8595, "cursor": 73}, archive_total=8668)
+
+        out = _render(reducer, census)
+
+        self.assertIn("cursor: 0 of 73 (0.0%) — not reached by this window", out)
 
     def test_even_sampling_emits_no_warning_line(self) -> None:
         # Both at ~1.6%: the table IS comparable, so say nothing.

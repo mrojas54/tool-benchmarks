@@ -24,8 +24,10 @@ from toolbench.sources import AgentCensus, SkipReason, SkipRecord
 # child/parent ratio skewing the denominator) -- it does not make attrition
 # impossible. Both causes are real, and each has its OWN observable signal, so
 # `_sampling_notes` is handed both and names only what it can see (TB-33 Finding 4):
-# `skips` is non-empty iff attrition happened, and `limit` is not None iff a `--limit`
-# was actually applied. That is a 2x2, not a 1x2. Deriving the limit from `skips` alone
+# `skips` is non-empty iff attrition happened, and `limit_truncated` is true iff discovery
+# WATCHED the limit cut the listing short. Not `limit is not None` -- that says a flag was
+# passed, not that it bit, and `--limit 9000` over an 8778-session archive bites nothing
+# (roborev #98/#101). That is a 2x2, not a 1x2. Deriving the limit from `skips` alone
 # -- "no skips, therefore --limit" -- was a false cause AND a false remedy in the case
 # that matters most: an `--all` run (no limit, no skips) with a spread was told to
 # "re-run without `--limit`", i.e. to remove a flag it never passed. A cause is only
@@ -78,6 +80,7 @@ def _apportionment(
     skips: list[SkipRecord],
     sampled_by_agent: dict[str, int],
     limit: int | None,
+    limit_truncated: bool,
 ) -> list[str]:
     """Split each agent's archive into pulled, never-pulled, and lost-in-the-parser (TB-35).
 
@@ -93,10 +96,12 @@ def _apportionment(
     reducer session nor a `SkipRecord`, so that second form would quietly bill real sessions
     to truncation. A ref was either pulled or it was not, and that is what we count.
 
-    The remainder is named as `--limit` truncation ONLY when a limit was actually passed.
-    Without one, `_agentsview_pages` drains its cursor to exhaustion, so a remainder cannot
-    BE truncation -- it is drift between the census call and the listing. Calling it
-    truncation there would be the same inference-from-absence this module keeps deleting.
+    The remainder is named as `--limit` truncation ONLY when discovery OBSERVED the limit
+    cutting the listing short (`limit_truncated`) -- never merely because a limit was passed
+    (roborev #98/#101). `--limit 9000` over an 8778-session archive stops nothing, and
+    without a bite `_agentsview_pages` drains its cursor to exhaustion, so a remainder there
+    cannot BE truncation: it is drift between the census call and the listing. Calling it
+    truncation would be the same inference-from-absence this module keeps deleting.
 
     Keyed by (agent, reason), not by reason alone: the remedy differs by reason.
     UNKNOWN_SCHEMA attrition closes the day someone writes a parser; MISSING_SOURCE
@@ -114,16 +119,20 @@ def _apportionment(
             continue
         sampled = sampled_by_agent.get(agent, 0)
         remainder = total - sampled
-        if limit is not None and remainder > 0:
+        if limit_truncated and remainder > 0:
             pulled = f"{sampled} sampled, so {remainder} never pulled (`--limit {limit}` truncation)"
         elif remainder != 0:
-            # No limit, or a NEGATIVE remainder (the listing outran the census). Either way
-            # truncation is ruled out by its own signal, so the gap is named, not blamed.
+            # The limit never bit (or none was passed), or the remainder is NEGATIVE and the
+            # listing outran the census. Truncation is ruled out by its own signal in every
+            # one of those, so the gap is named rather than blamed on the nearest flag.
+            why = (
+                " -- no `--limit` was applied"
+                if limit is None
+                else f" -- `--limit {limit}` truncated nothing"
+            )
             pulled = (
                 f"{sampled} sampled, {abs(remainder)} unaccounted (drift between the census "
-                "call and the listing, NOT truncation"
-                + ("" if limit is not None else " -- no `--limit` was applied")
-                + ")"
+                f"call and the listing, NOT truncation{why})"
             )
         else:
             pulled = f"{sampled} sampled, none lost to the window"
@@ -148,6 +157,7 @@ def _sampling_notes(
     census: AgentCensus,
     skips: list[SkipRecord],
     limit: int | None,
+    limit_truncated: bool = False,
     sampled_by_agent: dict[str, int] | None = None,
 ) -> list[str]:
     """Disclosure that belongs BESIDE the table, not forty lines below it (TB-33).
@@ -209,35 +219,50 @@ def _sampling_notes(
             "(calls/session, tokens/call, error rate) mixes sampling depth into the "
             "comparison and is not comparable."
         )
-        # Each cause is named ONLY on its own signal: `limit is not None` for truncation,
-        # a non-empty `skips` for attrition. Four cases, and the report earns every word
-        # of each (TB-33 Finding 4).
+        # Each cause is named ONLY on its own signal: `limit_truncated` -- OBSERVED at
+        # discovery, not read off the flag -- for truncation, a non-empty `skips` for
+        # attrition. Four cases, and the report earns every word of each (TB-33 Finding 4).
+        #
+        # `limit is not None` is NOT that signal (roborev #98/#101). It says a flag was
+        # passed, not that it cut anything: `--limit 9000` over an 8778-session archive
+        # truncates nothing, and blaming it would be the same inference-from-absence this
+        # function keeps deleting, one level up.
         n = len(skips)
         were = f"{n} session{'s' if n != 1 else ''} {'were' if n != 1 else 'was'} skipped"
         tally = 'see the Summary\'s "Skipped by reason" tally below'
-        if limit is not None and not skips:
-            # Attrition ruled out by the empty skip list, truncation confirmed by the
-            # flag itself. Both halves observed, so the remedy is real: drop the limit.
+        # Why truncation is off the table, when it is -- said out loud, so the reader can
+        # see the signal rather than a silence where a cause should be.
+        no_truncation = (
+            "no `--limit` was applied"
+            if limit is None
+            else f"`--limit {limit}` was applied but truncated nothing (the corpus was "
+            "smaller than the limit)"
+        )
+        if limit_truncated and not skips:
+            # Attrition ruled out by the empty skip list, truncation confirmed by a ref the
+            # limit left behind. Both halves observed, so the remedy is real: drop the limit.
             notes.append(
                 preamble + f" No sessions were skipped this run, which rules out skip "
-                f"attrition, and `--limit {limit}` was applied: the spread comes from that "
-                "limit truncating the corpus unevenly across agents. Re-run without "
-                "`--limit` for a like-for-like table."
+                f"attrition, and `--limit {limit}` cut the listing short: the spread comes "
+                "from that limit truncating the corpus unevenly across agents. Re-run "
+                "without `--limit` for a like-for-like table."
             )
-        elif limit is not None:
+        elif limit_truncated:
             # Both signals fire. Name both, promise neither remedy alone -- dropping the
             # limit would not budge the attrition half.
             notes.append(
-                preamble + f" Both causes are live: `--limit {limit}` was applied AND {were} "
-                f"this run ({tally}). Re-running without `--limit` is not guaranteed to give "
-                "a like-for-like table, since the attrition would survive it."
+                preamble + f" Both causes are live: `--limit {limit}` cut the listing short "
+                f"AND {were} this run ({tally}). Re-running without `--limit` is not "
+                "guaranteed to give a like-for-like table, since the attrition would "
+                "survive it."
             )
         elif skips:
-            # No limit was passed, so truncation is ruled out by its own signal rather
-            # than assumed away. Attrition is what is left, and it is observed.
+            # Truncation ruled out by its own signal rather than assumed away -- either no
+            # limit was passed, or one was and it never bit. Attrition is what is left.
             notes.append(
-                preamble + f" No `--limit` was applied, which rules out limit truncation, and "
-                f"{were} this run: the spread comes from per-agent skip attrition ({tally})."
+                preamble + f" {no_truncation.capitalize()}, which rules out limit truncation, "
+                f"and {were} this run: the spread comes from per-agent skip attrition "
+                f"({tally})."
             )
         else:
             # Neither signal fired, so neither named cause is available -- and the honest
@@ -245,8 +270,8 @@ def _sampling_notes(
             # This is the case the old one-armed branch got wrong: it reached here with an
             # empty skip list and told an `--all` run to "re-run without `--limit`".
             notes.append(
-                preamble + " Neither of the causes this report can name explains it: no "
-                "`--limit` was applied and no sessions were skipped. The spread is in the "
+                preamble + f" Neither of the causes this report can name explains it: "
+                f"{no_truncation} and no sessions were skipped. The spread is in the "
                 "window itself -- the sessions it reached are a different fraction of each "
                 "agent's archive (a `--since` cutoff, say, or drift between discovery and "
                 "the census). There is no flag to drop; the unevenness is real."
@@ -256,7 +281,9 @@ def _sampling_notes(
         # apportionment rather than one reconstructed from reached+skipped, which would bill
         # every zero-call session to truncation.
         if sampled_by_agent is not None:
-            notes.extend(_apportionment(reducer, census, skips, sampled_by_agent, limit))
+            notes.extend(
+                _apportionment(reducer, census, skips, sampled_by_agent, limit, limit_truncated)
+            )
 
     if census.residual > 0:
         notes.append(
@@ -376,6 +403,7 @@ def render_report(
     freeze_note: str | None = None,
     run_tickets: int | None = None,
     limit: int | None = None,
+    limit_truncated: bool = False,
     sampled_by_agent: dict[str, int] | None = None,
 ) -> str:
     """Render the five-section report (S14) with provenance (S15).
@@ -415,7 +443,9 @@ def render_report(
                 "(S32: session grain only — not attributable to individual tool calls)."
             )
     lines.extend(cache_caveats)
-    lines.extend(_sampling_notes(reducer, census, skips, limit, sampled_by_agent))
+    lines.extend(
+        _sampling_notes(reducer, census, skips, limit, limit_truncated, sampled_by_agent)
+    )
     lines.append("")
 
     lines.append("## Tool Leaderboard")
@@ -500,11 +530,25 @@ def render_report(
     )
     if census.unavailable_reason is None and census.totals:
         lines.append("- Sampling (scanned of each agent's own archive):")
+        # The same split the sampling notes make, because the Summary was still making the
+        # claim they stopped making (roborev #98/#101). `scanned == 0` has two stories, and
+        # keying the tail on the zero alone told only one of them -- so a report could say
+        # "reached, but every session was skipped" beside the table and "not reached by this
+        # window" in the Summary, about the same agent. A reader who scrolls believes the
+        # second. One report, one story: an agent with skips WAS reached (TB-33 Finding 2).
+        summary_skips = Counter(s.agent for s in skips)
         for agent in sorted(census.totals):
             agent_total = census.totals[agent]
             scanned_agent = reducer.agents.get(agent, AgentStats()).sessions
             pct = f"{scanned_agent / agent_total * 100:.1f}%" if agent_total else "n/a"
-            tail = " — not reached by this window" if scanned_agent == 0 else ""
+            if scanned_agent == 0 and summary_skips[agent]:
+                tail = (
+                    f" — reached, but all {summary_skips[agent]} sampled sessions were skipped"
+                )
+            elif scanned_agent == 0:
+                tail = " — not reached by this window"
+            else:
+                tail = ""
             lines.append(f"  - {agent}: {scanned_agent} of {agent_total} ({pct}){tail}")
     if fingerprint is not None:
         # Identity of the set that produced the numbers above: two reports whose

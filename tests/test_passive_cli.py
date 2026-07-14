@@ -729,7 +729,9 @@ def test_discover_refs_records_a_missing_root_as_a_typed_skip() -> None:
     # FileNotFoundError becomes a typed SkipRecord rather than a bare string.
     args = parse_args(["--index-source", "auto"])
     runner = FakeRunner([FileNotFoundError("no agentsview")])
-    _refs, _fallback, skips, census = _discover_refs(args, "/definitely/not/a/real/root", runner)
+    _refs, _fallback, skips, census, _truncated = _discover_refs(
+        args, "/definitely/not/a/real/root", runner
+    )
     assert skips, "a missing raw root must be recorded as a skip"
     assert all(isinstance(s, SkipRecord) for s in skips)
     assert skips[0].reason is SkipReason.MISSING_SOURCE
@@ -1088,3 +1090,46 @@ class SubagentExclusionAcrossIndexSourcesTests(unittest.TestCase):
             "Subagents included: no (1 of 2 discovered excluded)",
             self._run(["--exclude-subagents"], exports=1),
         )
+
+
+class LimitTruncationSignalTests(unittest.TestCase):
+    """Passing `--limit` is not evidence that it CUT anything (roborev #98/#101, TB-35).
+
+    The report may only name `--limit` as the cause of an uneven spread when the limit
+    actually truncated the corpus. The flag's presence cannot establish that: `--limit
+    9000` over an 8778-session archive stops nothing. So truncation is OBSERVED at
+    discovery -- when the ref loop stops on the limit, we ask the iterator for one more
+    ref, and only a ref that exists proves sessions were left behind.
+    """
+
+    def _root_with(self, n: int) -> str:
+        tmp = Path(tempfile.mkdtemp())
+        project = tmp / "proj-a"
+        project.mkdir()
+        for i in range(n):
+            (project / f"sess-{i}.jsonl").write_text("{}\n")
+        self.addCleanup(shutil.rmtree, tmp)
+        return str(tmp)
+
+    def test_limit_below_corpus_size_observes_truncation(self) -> None:
+        args = parse_args(["--index-source", "raw", "--limit", "2"])
+        refs, _, _, _, truncated = _discover_refs(args, self._root_with(5), None)
+
+        self.assertEqual(len(refs), 2)
+        self.assertTrue(truncated)
+
+    def test_limit_equal_to_corpus_size_truncates_nothing(self) -> None:
+        # THE case the flag alone cannot see, and the reason this signal exists. The loop
+        # DOES break on the limit -- `len(refs) >= args.limit` is true -- but there was no
+        # sixth session to pull. Nothing was cut, so nothing may be blamed on the limit.
+        args = parse_args(["--index-source", "raw", "--limit", "5"])
+        refs, _, _, _, truncated = _discover_refs(args, self._root_with(5), None)
+
+        self.assertEqual(len(refs), 5)
+        self.assertFalse(truncated)
+
+    def test_no_limit_never_truncates(self) -> None:
+        args = parse_args(["--index-source", "raw"])
+        _, _, _, _, truncated = _discover_refs(args, self._root_with(5), None)
+
+        self.assertFalse(truncated)

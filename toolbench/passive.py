@@ -233,7 +233,7 @@ def parse_args(argv: list[str] | None) -> CliArgs:
 
 def _discover_refs(
     args: CliArgs, root: str, runner: Runner | None
-) -> tuple[list[SessionRef], str | None, list[SkipRecord], AgentCensus]:
+) -> tuple[list[SessionRef], str | None, list[SkipRecord], AgentCensus, bool]:
     """Resolve the index-source policy into a bounded list of refs (S10, S23).
 
     The `iter_sessions(...)` CALL itself now belongs inside the try block, not just
@@ -253,6 +253,7 @@ def _discover_refs(
     refs: list[SessionRef] = []
     skips: list[SkipRecord] = []
     fallback_reason: str | None = None
+    limit_truncated = False
     census: AgentCensus
     try:
         refs_iter, fallback_reason, census = iter_sessions(
@@ -268,6 +269,14 @@ def _discover_refs(
         for ref in refs_iter:
             refs.append(ref)
             if args.limit is not None and len(refs) >= args.limit:
+                # Truncation is OBSERVED here, never inferred from the flag (roborev
+                # #98/#101). `--limit 9000` over an 8778-session archive stops the loop and
+                # cuts nothing, so `args.limit is not None` cannot license the report to
+                # blame the limit for anything. Asking the iterator for one more ref
+                # settles it: a ref that exists is a session this run left behind. It costs
+                # at most one more page, not the full drain -- and the ref is discarded
+                # because it is beyond the limit by definition.
+                limit_truncated = next(refs_iter, None) is not None
                 break
     except FileNotFoundError as exc:
         if args.index_source == "auto":
@@ -292,7 +301,7 @@ def _discover_refs(
             )
         else:
             raise
-    return refs, fallback_reason, skips, census
+    return refs, fallback_reason, skips, census, limit_truncated
 
 
 def _parse_ref(ref: SessionRef, runner: Runner | None) -> ParseResult:
@@ -325,6 +334,10 @@ def main(
     fallback_reason: str | None
     skips: list[SkipRecord]
     census: AgentCensus
+    # A replay pulls its refs from the manifest, not from a limited listing, so nothing was
+    # truncated by a limit on this path. It has no census either, which suppresses the
+    # sampling notes outright -- but the flag is set honestly rather than left to a default.
+    limit_truncated = False
     if replaying:
         assert freeze_path is not None
         manifest = read_manifest(freeze_path)
@@ -343,7 +356,9 @@ def main(
         )
     else:
         try:
-            refs, fallback_reason, skips, census = _discover_refs(args, root, runner)
+            refs, fallback_reason, skips, census, limit_truncated = _discover_refs(
+                args, root, runner
+            )
         except (FileNotFoundError, RuntimeError) as exc:
             print(f"toolbench.passive: fatal source error: {exc}", file=sys.stderr)
             return 1
@@ -450,6 +465,7 @@ def main(
         freeze_note=freeze_note,
         run_tickets=args.tickets,
         limit=args.limit,
+        limit_truncated=limit_truncated,
         sampled_by_agent=dict(sampled_by_agent),
     )
     if args.out:
