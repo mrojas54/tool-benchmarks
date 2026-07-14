@@ -441,6 +441,7 @@ def main(
         fingerprint=fingerprint,
         freeze_note=freeze_note,
         run_tickets=args.tickets,
+        limit=args.limit,
     )
     if args.out:
         Path(args.out).write_text(report)

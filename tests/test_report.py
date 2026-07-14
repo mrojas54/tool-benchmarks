@@ -796,17 +796,28 @@ def _reducer_with(**sessions_by_agent: int) -> Reducer:
     return r
 
 
-def _render(reducer: Reducer, census: AgentCensus) -> str:
+def _render(
+    reducer: Reducer,
+    census: AgentCensus,
+    *,
+    skips: list[SkipRecord] | None = None,
+    limit: int | None = None,
+) -> str:
+    # `skips` and `limit` default to the two "no signal" values on purpose: an unadorned
+    # `_render` is an `--all` run that lost nothing, which is precisely the case the
+    # uneven-sampling line used to misreport as `--limit` truncation (TB-33 Finding 4).
+    skips = skips or []
     return render_report(
         reducer,
         index_source="agentsview",
         fallback_reason=None,
-        skips=[],
+        skips=skips,
         include_subagents=True,
         subagents_found=0,
-        sessions_discovered=sum(s.sessions for s in reducer.agents.values()),
+        sessions_discovered=sum(s.sessions for s in reducer.agents.values()) + len(skips),
         since_note=None,
         census=census,
+        limit=limit,
     )
 
 
@@ -827,26 +838,103 @@ class SamplingDisclosureTests(unittest.TestCase):
         # Absence is STATED, never inferred from a zero.
         self.assertIn("not reached", out.lower())
 
-    def test_uneven_sampling_line_fires_above_threshold(self) -> None:
-        # codex 40/183 = 21.9%; claude 135/8595 = 1.6%. Spread ~13.9x. `_render` passes
-        # skips=[], so this is also the pure-`--limit` case (TB-33 Finding 3): zero
-        # skips rules attrition out, and the line must say so decisively instead of
-        # pointing at a "Skipped by reason" tally the report never renders when there
-        # is nothing to tally.
+    def test_agent_whose_every_sampled_session_was_skipped_is_not_called_unreached(self) -> None:
+        # TB-33 Finding 2. `sessions == 0` is arrived at by TWO different stories, and the
+        # old line told only one of them: cursor was never looked at, while gemini WAS
+        # looked at and every session opened failed to parse. Both land at zero sessions.
+        # Filing gemini under "not reached ... because we did not look" is flatly false --
+        # we looked, and everything we opened broke, which is a parser bug the reader
+        # needs to see, not an absence to shrug at. `SkipRecord.agent` tells them apart.
+        reducer = _reducer_with(claude=135)
+        census = AgentCensus(
+            totals={"claude": 8595, "cursor": 73, "gemini": 12}, archive_total=8680
+        )
+        skips = [
+            SkipRecord(
+                session_id=f"gemini-{i}",
+                agent="gemini",
+                reason=SkipReason.NON_TRANSCRIPT,
+                detail="binary payload",
+            )
+            for i in range(4)
+        ]
+
+        out = _render(reducer, census, skips=skips)
+
+        # cursor: genuinely never sampled. The original line, still correct, still fires.
+        self.assertIn("not reached by this window: cursor (73 sessions)", out)
+        # gemini: sampled, and every one died in the parser. Must NOT be filed under
+        # "we did not look" -- and must say what actually happened instead.
+        self.assertIn("Reached, but every session sampled from them was skipped", out)
+        self.assertIn("gemini (4 skipped of 12 in archive)", out)
+        self.assertNotIn("gemini (12 sessions)", out)
+        # The tally this line points at really is on the page (`skips` is non-empty).
+        self.assertIn("Skipped by reason", out)
+
+    def test_uneven_sampling_with_limit_and_no_skips_names_limit(self) -> None:
+        # codex 40/183 = 21.9%; claude 135/8595 = 1.6%. Spread ~13.9x. A `--limit` WAS
+        # passed and nothing was skipped, so both halves of the claim are observed: the
+        # empty skip list rules attrition out, the flag itself confirms truncation, and
+        # only here is "re-run without --limit" an honest remedy (TB-33 Finding 4).
         reducer = _reducer_with(claude=135, codex=40)
         census = AgentCensus(totals={"claude": 8595, "codex": 183}, archive_total=8778)
 
-        out = _render(reducer, census)
+        out = _render(reducer, census, limit=175)
 
         self.assertIn("Sampling is uneven", out)
         self.assertIn("not comparable", out)
         self.assertIn("rules out skip attrition", out)
+        self.assertIn("`--limit 175` was applied", out)
         self.assertIn("Re-run without `--limit` for a like-for-like table", out)
         # The dangling pointer: nothing in this report renders a "Skipped by reason"
         # tally when skips is empty, so the line must not send the reader looking for
         # one -- and the section itself must be verifiably absent, not just unnamed.
         self.assertNotIn("Skipped by reason", out)
-        self.assertNotIn("Check whether `--limit` was passed", out)
+
+    def test_uneven_sampling_with_no_limit_and_no_skips_blames_neither_cause(self) -> None:
+        # THE REGRESSION (TB-33 Finding 4). Same spread, but this is an `--all` run: no
+        # `--limit`, no skips. The old code reached its zero-skip branch, concluded
+        # "therefore --limit", and told the reader to re-run without a flag they never
+        # passed -- a false cause AND a false remedy, which is the exact species of
+        # unearned claim TB-33 exists to delete. With neither signal firing, the line
+        # must name neither cause and must not prescribe dropping a flag.
+        reducer = _reducer_with(claude=135, codex=40)
+        census = AgentCensus(totals={"claude": 8595, "codex": 183}, archive_total=8778)
+
+        out = _render(reducer, census, limit=None)
+
+        self.assertIn("Sampling is uneven", out)
+        self.assertIn("not comparable", out)
+        self.assertIn("Neither of the causes this report can name explains it", out)
+        self.assertIn("no `--limit` was applied and no sessions were skipped", out)
+        self.assertIn("the unevenness is real", out)
+        # No false remedy, and no pointer at a tally this report does not render.
+        self.assertNotIn("Re-run without `--limit` for a like-for-like table", out)
+        self.assertNotIn("Skipped by reason", out)
+
+    def test_uneven_sampling_with_both_limit_and_skips_names_both(self) -> None:
+        # Both signals fire, so both causes are named -- and dropping the limit is NOT
+        # promised as a fix, because the attrition half would survive it.
+        reducer = _reducer_with(claude=135, codex=40)
+        census = AgentCensus(totals={"claude": 8595, "codex": 183}, archive_total=8778)
+        skips = [
+            SkipRecord(
+                session_id=f"codex-skip-{i}",
+                agent="codex",
+                reason=SkipReason.UNKNOWN_SCHEMA,
+                detail="no parser claimed it",
+            )
+            for i in range(2)
+        ]
+
+        out = _render(reducer, census, skips=skips, limit=175)
+
+        self.assertIn("Both causes are live", out)
+        self.assertIn("`--limit 175` was applied", out)
+        self.assertIn("2 sessions were skipped this run", out)
+        self.assertIn("not guaranteed", out)
+        # The tally is on the page in this branch, so pointing at it resolves.
+        self.assertIn("Skipped by reason", out)
 
     def test_even_sampling_emits_no_warning_line(self) -> None:
         # Both at ~1.6%: the table IS comparable, so say nothing.
