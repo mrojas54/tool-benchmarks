@@ -8,7 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from toolbench.freeze import MANIFEST_VERSION, read_manifest, write_manifest
-from toolbench.sources import SessionRef
+from toolbench.sources import AgentCensus, SessionRef
 
 
 def _refs() -> list[SessionRef]:
@@ -122,6 +122,56 @@ def test_stale_false_flag_does_not_survive_replay() -> None:
         )
         m = read_manifest(str(path))
         assert m.refs[0].is_subagent is True
+
+
+def test_write_manifest_without_census_round_trips_none() -> None:
+    """`census` is optional at write time (TB-37): omitting it writes a valid v2
+    manifest with no `census` key, and `read_manifest` reports that as `None` --
+    the same value it reports for a genuinely pre-TB-37 manifest."""
+    with TemporaryDirectory() as d:
+        path = str(Path(d) / "corpus.manifest")
+        write_manifest(path, _refs(), "abc123")
+        m = read_manifest(path)
+        assert m.census is None
+        assert m.version == MANIFEST_VERSION
+        raw = json.loads(Path(path).read_text())
+        assert "census" not in raw
+
+
+def test_write_manifest_persists_census_totals_and_archive_total() -> None:
+    census = AgentCensus(totals={"claude": 12, "codex": 3}, archive_total=15)
+    with TemporaryDirectory() as d:
+        path = str(Path(d) / "corpus.manifest")
+        write_manifest(path, _refs(), "abc123", census=census)
+        m = read_manifest(path)
+        assert m.census is not None
+        assert m.census.totals == {"claude": 12, "codex": 3}
+        assert m.census.archive_total == 15
+        assert m.census.unavailable_reason is None
+        # `residual` is derived, not stored, and must reconstruct correctly.
+        assert m.census.residual == 0
+
+
+def test_write_manifest_persists_an_unavailable_census() -> None:
+    """A census that itself failed at freeze time round-trips its `unavailable_reason`
+    intact, not silently dropped to an empty census or a `None` census -- those are
+    three different facts (real, absent, attempted-and-failed) and TB-37 keeps them
+    distinguishable through the manifest."""
+    census = AgentCensus(totals={}, archive_total=0, unavailable_reason="boom")
+    with TemporaryDirectory() as d:
+        path = str(Path(d) / "corpus.manifest")
+        write_manifest(path, _refs(), "abc123", census=census)
+        m = read_manifest(path)
+        assert m.census is not None
+        assert m.census.totals == {}
+        assert m.census.archive_total == 0
+        assert m.census.unavailable_reason == "boom"
+
+
+def test_manifest_version_is_v2() -> None:
+    """TB-37 bumps the format so a reader can tell whether a census block is even
+    possible on this manifest without inspecting its keys."""
+    assert MANIFEST_VERSION == "toolbench-freeze-2"
 
 
 def test_explicit_false_is_honoured_for_a_genuine_non_subagent() -> None:

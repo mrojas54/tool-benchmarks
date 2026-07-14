@@ -499,6 +499,7 @@ def render_report(
     verbose: bool = False,
     fingerprint: CorpusFingerprint | None = None,
     freeze_note: str | None = None,
+    frozen_census_note: str | None = None,
     run_tickets: int | None = None,
     limit: int | None = None,
     limit_truncated: bool | None = False,
@@ -512,6 +513,11 @@ def render_report(
     (TB-33 Finding 1). It is what lets the uneven-sampling note apportion a spread between
     truncation and attrition (TB-35); `None` means the caller did not record it, and the
     apportionment is then withheld rather than reconstructed.
+
+    `frozen_census_note` (TB-37) is set by the caller only for a `--freeze` replay whose
+    manifest carried a real (v2) census -- the disclosure that the fractions above are
+    historical, not live. `render_report` does not derive this itself; it only renders
+    what `passive.py` hands it, the same division of labor as `freeze_note`.
     """
     lines: list[str] = ["# Tool Usage Report", ""]
 
@@ -545,6 +551,12 @@ def render_report(
     lines.extend(
         _sampling_notes(reducer, census, skips, limit, limit_truncated, sampled_by_agent)
     )
+    if frozen_census_note is not None:
+        # TB-37: a v2 freeze replay's fractions are real but HISTORICAL (archive size as
+        # of freeze time, not today). Rendered right beside the fractions it qualifies --
+        # same placement rationale as `_sampling_notes` itself (a reader comparing two
+        # rows never scrolls to the Summary) -- so it can never read as "current".
+        lines.append(frozen_census_note)
     lines.append("")
 
     lines.append("## Tool Leaderboard")
