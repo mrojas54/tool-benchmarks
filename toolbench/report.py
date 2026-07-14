@@ -110,6 +110,16 @@ def _apportionment(
     nothing" -- a claim resting on a measurement nobody managed to take -- so a `None` gap
     is left unattributed and the missing check is named instead.
 
+    The probe only ever speaks to a POSITIVE remainder, though, and the sign is checked first
+    (roborev #106). Truncation removes refs from the listing, so it shrinks `sampled` and can
+    only push `total - sampled` UP; a NEGATIVE remainder -- an excess, more refs held than the
+    census counted -- is therefore something truncation cannot produce, whatever the probe
+    said or failed to say. Excesses are drift, full stop, and are reported without any claim
+    about whether the limit bit. Both directions of that claim were wrong: a stale, low census
+    can pair an excess with a truncation the run really did OBSERVE (the drift wording used to
+    deny it outright), and a failed probe cannot be pressed into the same denial from the
+    other side.
+
     Keyed by (agent, reason), not by reason alone: the remedy differs by reason.
     UNKNOWN_SCHEMA attrition closes the day someone writes a parser; MISSING_SOURCE
     attrition never closes, because the transcripts are gone. `tally_skips` collapses that
@@ -126,7 +136,24 @@ def _apportionment(
             continue
         sampled = sampled_by_agent.get(agent, 0)
         remainder = total - sampled
-        if limit_truncated is None and remainder != 0:
+        if remainder < 0:
+            # An EXCESS, not a gap: the listing outran the census and we hold MORE refs than
+            # the archive count. Truncation only ever REMOVES refs from the listing, which
+            # shrinks `sampled` and so can only push this number UP -- it cannot ADD the refs
+            # an excess is made of. So truncation is ruled out here by ARITHMETIC, before any
+            # probe is consulted, and the probe's answer is immaterial (roborev #106).
+            #
+            # Which is why this branch says NOTHING about whether the limit bit. It does not
+            # need to, and it has not earned it: a stale, low census can put a real, PROBED
+            # truncation on the same line as an excess (this branch used to answer that by
+            # printing "`--limit N` truncated nothing" -- denying a signal the run measured),
+            # while a FAILED probe cannot be talked into that same claim from the other side.
+            pulled = (
+                f"{sampled} sampled, {abs(remainder)} more than the census counted (drift "
+                "between the census call and the listing; truncation removes refs and so "
+                "cannot produce an excess)"
+            )
+        elif limit_truncated is None and remainder > 0:
             # Discovery asked whether the limit left a session behind and the source failed
             # to answer. The gap is real and stated; what caused it is the one thing this
             # run may not name -- not even to rule truncation OUT.
@@ -137,10 +164,11 @@ def _apportionment(
             )
         elif limit_truncated and remainder > 0:
             pulled = f"{sampled} sampled, so {remainder} never pulled (`--limit {limit}` truncation)"
-        elif remainder != 0:
-            # The limit never bit (or none was passed), or the remainder is NEGATIVE and the
-            # listing outran the census. Truncation is ruled out by its own signal in every
-            # one of those, so the gap is named rather than blamed on the nearest flag.
+        elif remainder > 0:
+            # A real gap under a limit that was OBSERVED not to bite (or no limit at all).
+            # Truncation is ruled out by its own signal, so the gap is named as the drift it
+            # is rather than blamed on the nearest flag. Both halves of `why` are licensed:
+            # `False` is a measurement that came back, not one that went missing.
             why = (
                 " -- no `--limit` was applied"
                 if limit is None

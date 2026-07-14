@@ -1372,3 +1372,65 @@ class UnobservedTruncationTests(unittest.TestCase):
         self.assertIn("cannot say whether the limit cut the listing short", out)
         self.assertNotIn("NOT truncation", out)
         self.assertNotIn("`--limit 175` truncation", out)
+
+
+class ExcessRemainderTests(unittest.TestCase):
+    """An EXCESS is not a gap, and truncation cannot produce one (roborev #106).
+
+    `remainder = total - sampled`. Truncation only ever REMOVES refs from the listing, which
+    shrinks `sampled`, which can only push the remainder UP. So a NEGATIVE remainder -- we
+    hold more refs than the census counted -- is arithmetically incapable of being caused by
+    truncation, and the probe's answer is immaterial to it. The listing simply outran the
+    census between the two calls.
+
+    That cuts both ways, and the two tests here are the two edges. The unobserved probe
+    (`None`) must not hedge about a limit that provably did not cause the excess -- but it
+    must ALSO not be talked into the opposite claim, because the naive fix for that (send
+    `None` down the drift branch) prints "`--limit N` truncated nothing", which is the exact
+    unmade measurement 505708e existed to delete. And an OBSERVED truncation (`True`) must
+    not be contradicted: a stale, low census can put a real, probed truncation on the same
+    line as an excess, and the report used to answer that by denying the truncation.
+
+    The resolution is that an excess makes NO claim about whether the limit bit. It does not
+    need one, and it has not earned one.
+    """
+
+    def test_an_excess_is_not_blamed_on_an_unobserved_limit(self) -> None:
+        # The probe failed, so the run cannot say whether the limit bit. It does not need to:
+        # codex's listing outran its census by 4, and no truncation of any size could have
+        # ADDED those refs. Hedging here would launder a failed check into a real gap's cause.
+        reducer = _reducer_with(claude=135, codex=40)
+        census = AgentCensus(totals={"claude": 8595, "codex": 183}, archive_total=8778)
+
+        out = _render(
+            reducer, census, limit=175, truncated=None, sampled={"claude": 8595, "codex": 187}
+        )
+
+        self.assertIn("codex: 183 in archive; 187 sampled, 4 more than the census counted", out)
+        self.assertIn("drift", out)
+        # The hedge belongs to gaps, not excesses -- truncation is ruled out by ARITHMETIC
+        # here, not by a probe, so the failed probe buys no uncertainty.
+        self.assertNotIn("cannot say whether the limit cut the listing short", out)
+        self.assertNotIn("unattributed", out)
+        # ...and the trap on the other side: the drift branch's stock wording would assert a
+        # negative the probe never returned. An excess licenses NEITHER claim about the limit.
+        self.assertNotIn("truncated nothing", out)
+
+    def test_an_excess_does_not_contradict_an_observed_truncation(self) -> None:
+        # The census is stale and LOW (183) while the archive really holds ~190; `--limit 185`
+        # bit, and discovery OBSERVED it bite. Both things are true at once: the limit
+        # truncated, and we still hold more refs than the census counted. The report may not
+        # resolve that by denying the signal it went and measured.
+        reducer = _reducer_with(claude=135, codex=40)
+        census = AgentCensus(totals={"claude": 8595, "codex": 183}, archive_total=8778)
+
+        out = _render(
+            reducer, census, limit=185, truncated=True, sampled={"claude": 8595, "codex": 187}
+        )
+
+        self.assertIn("codex: 183 in archive; 187 sampled, 4 more than the census counted", out)
+        self.assertIn("drift", out)
+        # The bug: an observed truncation, flatly denied, because the remainder went negative.
+        self.assertNotIn("truncated nothing", out)
+        # The excess is still not truncation's doing -- it must not be filed as a pulled gap.
+        self.assertNotIn("never pulled", out)
