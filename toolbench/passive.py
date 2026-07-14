@@ -315,21 +315,60 @@ def _probe_truncation(refs_iter: Iterator[SessionRef], *, exclude_subagents: boo
         return None
 
 
+def _collect_refs(
+    refs_iter: Iterator[SessionRef], limit: int | None, exclude_subagents: bool
+) -> tuple[list[SessionRef], bool | None]:
+    """Drain `refs_iter` into a list, observing `--limit` truncation (S23, roborev #103).
+
+    Its own local `refs` list is the mechanism, not an incidental detail: if `refs_iter`
+    raises partway through, this function never returns, so whatever the caller had
+    assigned before the call is left untouched rather than half-updated. `_discover_refs`
+    leans on exactly that to discard a partial agentsview listing on a mid-listing
+    failure (TB-38) without writing a separate reset.
+    """
+    refs: list[SessionRef] = []
+    limit_truncated: bool | None = False
+    for ref in refs_iter:
+        refs.append(ref)
+        if limit is not None and len(refs) >= limit:
+            # Truncation is OBSERVED here, never inferred from the flag (roborev
+            # #98/#101). `--limit 9000` over an 8778-session archive stops the loop and
+            # cuts nothing, so `limit is not None` cannot license the report to blame
+            # the limit for anything. Asking the listing for one more ref that the
+            # report would COUNT settles it -- see `_probe_truncation`, which owns both
+            # the population question and the promise that this diagnostic can never
+            # take down the complete run it is describing (roborev #103).
+            limit_truncated = _probe_truncation(refs_iter, exclude_subagents=exclude_subagents)
+            break
+    return refs, limit_truncated
+
+
 def _discover_refs(
     args: CliArgs, root: str, runner: Runner | None
 ) -> tuple[list[SessionRef], str | None, list[SkipRecord], AgentCensus, bool | None]:
-    """Resolve the index-source policy into a bounded list of refs (S10, S23).
+    """Resolve the index-source policy into a bounded list of refs (S10, S23, TB-38).
 
-    The `iter_sessions(...)` CALL itself now belongs inside the try block, not just
-    the ref-iteration loop that follows it. `discover_agentsview` (TB-33) runs its
+    The `iter_sessions(...)` CALL itself belongs inside the try block, not just the
+    ref-iteration loop that follows it. `discover_agentsview` (TB-33) runs its
     parent-probe pass and per-agent census EAGERLY -- before it hands back a single
     ref -- because the caller can break out of the ref loop early on `--limit`, and a
     lazily-gathered census would then be missing exactly when it is needed. That
-    eagerness means a `FileNotFoundError` from a mid-run agentsview disappearance can
-    now surface from the `iter_sessions(...)` call itself, not only from iterating its
-    result. If that call sat outside this guard, `auto` mode would lose its graceful
-    degrade to a `MISSING_SOURCE` skip and `main` would treat a transient agentsview
-    vanish as a fatal source error instead of exit 0.
+    eagerness means a source failure from a mid-run agentsview disappearance can
+    surface from the `iter_sessions(...)` call itself, not only from iterating its
+    result -- both `except` clauses below cover the call and the loop together for
+    exactly that reason.
+
+    `FileNotFoundError` (the source vanished outright -- binary removed, root gone)
+    and `RuntimeError`/`AgentsViewTimeout` (the daemon answered `_probe_agentsview`'s
+    health check and then broke -- nonzero exit or a hang -- somewhere in the
+    pagination that followed, TB-38) get different treatment on purpose: a vanished
+    source has no raw root to fall back to any more reliably than agentsview itself,
+    so it degrades to a named `MISSING_SOURCE` skip with no denominator. A daemon that
+    was merely unhealthy mid-listing has no such excuse -- the raw filesystem is still
+    right there -- so `auto` mode discards whatever partial agentsview refs this
+    attempt collected (TB-22: a spliced partial listing has no coherent identity) and
+    rescans wholesale from `raw`, via the very `index_source="raw"` semantics
+    `iter_sessions` already implements, rather than a second hand-rolled raw path.
     """
     project = None if args.all_projects else args.project
     page_limit = args.limit if args.limit is not None else 500
@@ -350,20 +389,7 @@ def _discover_refs(
             runner=runner,
             include_subagents=not args.exclude_subagents,
         )
-        for ref in refs_iter:
-            refs.append(ref)
-            if args.limit is not None and len(refs) >= args.limit:
-                # Truncation is OBSERVED here, never inferred from the flag (roborev
-                # #98/#101). `--limit 9000` over an 8778-session archive stops the loop and
-                # cuts nothing, so `args.limit is not None` cannot license the report to
-                # blame the limit for anything. Asking the listing for one more ref that the
-                # report would COUNT settles it -- see `_probe_truncation`, which owns both
-                # the population question and the promise that this diagnostic can never
-                # take down the complete run it is describing (roborev #103).
-                limit_truncated = _probe_truncation(
-                    refs_iter, exclude_subagents=args.exclude_subagents
-                )
-                break
+        refs, limit_truncated = _collect_refs(refs_iter, args.limit, args.exclude_subagents)
     except FileNotFoundError as exc:
         if args.index_source == "auto":
             # A root-level failure has no per-session ref; the absent raw fallback
@@ -387,6 +413,40 @@ def _discover_refs(
             )
         else:
             raise
+    except RuntimeError as exc:
+        if args.index_source != "auto":
+            # An explicit `--index-source agentsview` is a demand, not a preference
+            # (mirrors `test_explicit_agentsview_does_not_swallow_a_timeout`): the
+            # failure must surface, for `main`'s outer guard to report fatally.
+            raise
+        # TB-38: the probe passed but the daemon broke somewhere in the pagination
+        # that followed -- inside `discover_agentsview`'s eager parent-probe pass
+        # (part of the `iter_sessions(...)` call above) or lazily while `_yield_refs`
+        # was iterated (part of the loop `_collect_refs` just ran). Either way this
+        # attempt's refs are discarded (see `_collect_refs`'s docstring) and typed
+        # with the real cause -- `classify_skip` already maps `AgentsViewTimeout` to
+        # `EXPORT_TIMEOUT` and a bare nonzero-exit `RuntimeError` to `EXPORT_FAILED`,
+        # never the `MISSING_SOURCE` a vanished source gets above.
+        skips.append(
+            SkipRecord(
+                session_id="",
+                agent=args.agent,
+                reason=classify_skip(exc),
+                detail=str(exc),
+            )
+        )
+        raw_refs_iter, _raw_reason, census = iter_sessions(
+            index_source="raw",
+            agent=args.agent,
+            project=project,
+            since=args.since,
+            limit=page_limit,
+            root=root,
+            runner=runner,
+            include_subagents=not args.exclude_subagents,
+        )
+        refs, limit_truncated = _collect_refs(raw_refs_iter, args.limit, args.exclude_subagents)
+        fallback_reason = f"agentsview failed mid-listing, degraded to raw: {exc}"
     return refs, fallback_reason, skips, census, limit_truncated
 
 

@@ -29,6 +29,7 @@ from toolbench.passive import (
 )
 from toolbench.sources import (
     AGENTSVIEW_TIMEOUT_S,
+    AgentsViewTimeout,
     MissingSourceExport,
     NonTranscriptExport,
     Runner,
@@ -1251,15 +1252,132 @@ class LimitTruncationProbeFailureTests(unittest.TestCase):
         self.assertIsNone(census.unavailable_reason)
 
     def test_a_mid_listing_failure_before_the_limit_still_raises(self) -> None:
-        # The guard is scoped to the PROBE, not widened to the whole loop. A listing that
-        # dies while refs are still being collected leaves an INCOMPLETE sample, and that
-        # is a real discovery failure -- it must keep raising rather than be downgraded to
-        # a shrug about truncation.
+        # The guard is scoped to `auto`; an EXPLICIT `--index-source agentsview` is a
+        # demand, not a preference (TB-38 keeps this untouched -- see
+        # `MidListingAutoFallbackTests.test_explicit_agentsview_mode_still_raises`
+        # below for the direct pin). A listing that dies while refs are still being
+        # collected under an explicit `agentsview` request leaves an INCOMPLETE
+        # sample with nowhere sanctioned to fall back to, and that is a real
+        # discovery failure -- it must keep raising rather than be downgraded to a
+        # shrug about truncation.
         args = parse_args(["--index-source", "agentsview", "--limit", "9"])
         runner = self._script(completed(returncode=1, stderr="daemon down"))
 
         with self.assertRaises(RuntimeError):
             _discover_refs(args, "/nonexistent", runner)
+
+
+class MidListingAutoFallbackTests(unittest.TestCase):
+    """TB-38: `auto` must degrade to raw not only when the S10 probe itself fails, but
+    when AgentsView answers that probe and then breaks somewhere in the pagination that
+    follows it -- inside `discover_agentsview`'s eager parent-probe pass (TB-31), which
+    runs as part of the `iter_sessions(...)` call in `_discover_refs`, or lazily while
+    the full listing (`_yield_refs`) is drained by the `for ref in refs_iter` loop.
+
+    Before this ticket, both a nonzero exit and an `AgentsViewTimeout` (TB-32) escaped
+    uncaught into `main`'s `except (FileNotFoundError, RuntimeError)` guard -- a fatal
+    exit 1, even though the raw filesystem was right there and `--index-source auto`
+    promises exactly this degrade (S10). `tests/test_sources.py`'s
+    `test_mid_discovery_timeout_is_fatal_like_any_other_source_error` pinned that as a
+    known, deliberately out-of-scope gap for TB-32 and named this ticket as the one that
+    would close it; it has been rewritten to match.
+    """
+
+    def _root_with_one_session(self) -> str:
+        tmp = Path(tempfile.mkdtemp())
+        project = tmp / "proj-a"
+        project.mkdir()
+        (project / "raw-sess.jsonl").write_text("{}\n")
+        self.addCleanup(shutil.rmtree, tmp)
+        return str(tmp)
+
+    def _probe_ok(self) -> subprocess.CompletedProcess[str]:
+        # `_probe_agentsview`'s `--limit 1` health check (S10): answered, healthy.
+        return completed(stdout=json.dumps({"sessions": [], "next_cursor": "", "total": 0}))
+
+    def test_nonzero_exit_mid_listing_falls_back_to_raw(self) -> None:
+        """The pre-existing failure mode (unrelated to TB-32's timeout work): a daemon
+        that answers the probe and then exits nonzero during the parent-probe pass."""
+        args = parse_args(["--index-source", "auto"])
+        runner = FakeRunner([self._probe_ok(), completed(returncode=1, stderr="daemon down")])
+
+        refs, fallback_reason, skips, census, truncated = _discover_refs(
+            args, self._root_with_one_session(), runner
+        )
+
+        self.assertEqual([r.source for r in refs], ["raw"])
+        assert fallback_reason is not None
+        self.assertIn("mid-listing", fallback_reason)
+        self.assertIn("daemon down", fallback_reason)
+        self.assertEqual(len(skips), 1)
+        self.assertIs(skips[0].reason, SkipReason.EXPORT_FAILED)
+        self.assertEqual(census.totals, {"claude-code": 1})
+        self.assertIsNone(census.unavailable_reason)
+        # No `--limit` was passed, so the raw rescan's own `_collect_refs` observes
+        # nothing to truncate -- an earned `False`, not the `None` a failed truncation
+        # PROBE would leave (roborev #103; that is a different signal entirely).
+        self.assertFalse(truncated)
+
+    def test_timeout_mid_listing_falls_back_to_raw(self) -> None:
+        """TB-32's failure mode, now given the same recovery as a nonzero exit rather
+        than the fatal exit it shared with it before this ticket."""
+        args = parse_args(["--index-source", "auto"])
+        runner = FakeRunner(
+            [self._probe_ok(), AgentsViewTimeout("agentsview timed out after 60.0s")]
+        )
+
+        refs, fallback_reason, skips, census, truncated = _discover_refs(
+            args, self._root_with_one_session(), runner
+        )
+
+        self.assertEqual([r.source for r in refs], ["raw"])
+        assert fallback_reason is not None
+        self.assertIn("mid-listing", fallback_reason)
+        self.assertIn("timed out", fallback_reason)
+        self.assertEqual(len(skips), 1)
+        self.assertIs(skips[0].reason, SkipReason.EXPORT_TIMEOUT)
+        self.assertEqual(census.totals, {"claude-code": 1})
+        self.assertIsNone(census.unavailable_reason)
+        self.assertFalse(truncated)
+
+    def test_explicit_agentsview_mode_still_raises(self) -> None:
+        """Scope check: the widened `except RuntimeError` is gated on `auto`. An
+        explicit `--index-source agentsview` demand must still surface the failure
+        raw, unchanged from TB-32 (`test_explicit_agentsview_does_not_swallow_a_timeout`,
+        tests/test_sources.py)."""
+        args = parse_args(["--index-source", "agentsview"])
+        runner = FakeRunner([AgentsViewTimeout("agentsview timed out after 60.0s")])
+
+        with self.assertRaises(AgentsViewTimeout):
+            _discover_refs(args, "/nonexistent", runner)
+
+    def test_source_vanishing_after_a_healthy_probe_is_unaffected(self) -> None:
+        """`FileNotFoundError` gets its own, separate, deliberately-untouched branch in
+        `_discover_refs` (TB-33): the daemon answers `_probe_agentsview`'s `--limit 1`
+        health check, then the binary itself disappears during the eager parent-probe
+        pass that follows. That degrades to an empty, `unavailable_reason`-carrying
+        census -- no raw rescan -- because a vanished binary is not evidence the raw
+        root is any healthier. TB-38 widens the sibling `RuntimeError`/
+        `AgentsViewTimeout` case to rescan raw; this pins that `FileNotFoundError`
+        keeps its original, narrower handling.
+
+        (The S10 probe FAILING outright -- `_probe_agentsview` catching
+        `FileNotFoundError` on the very first call -- is a third, even earlier branch:
+        it is resolved entirely inside `iter_sessions` via the `reason` string and
+        never reaches `_discover_refs`'s `except` at all, so it has no counterpart
+        here.)
+        """
+        args = parse_args(["--index-source", "auto"])
+        runner = FakeRunner([self._probe_ok(), FileNotFoundError("agentsview vanished")])
+
+        refs, _fallback_reason, skips, census, _truncated = _discover_refs(
+            args, self._root_with_one_session(), runner
+        )
+
+        self.assertEqual(refs, [])
+        self.assertEqual(len(skips), 1)
+        self.assertIs(skips[0].reason, SkipReason.MISSING_SOURCE)
+        self.assertIsNotNone(census.unavailable_reason)
 
 
 # -- TB-39: --agentsview-timeout ------------------------------------------------------

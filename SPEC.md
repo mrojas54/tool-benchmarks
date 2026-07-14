@@ -64,7 +64,20 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 - **S10 — index-source policy.** `--index-source auto` tries AgentsView
   first and falls back to raw scanning (recording the reason) if the CLI is
   missing or exits nonzero; `agentsview` is strict and errors clearly;
-  `raw` uses the filesystem only.
+  `raw` uses the filesystem only. The fallback is not limited to what a single
+  `--limit 1` health probe can see: a daemon that answers the probe and then
+  breaks during the pagination that follows -- a nonzero exit or a hang
+  (`AgentsViewTimeout`, TB-32) -- also degrades `auto` to raw, discarding
+  whatever partial agentsview listing that attempt had collected and rescanning
+  the corpus wholesale from the filesystem rather than splicing the two
+  (TB-38; TB-22's identity/fingerprint precedent is why nothing is spliced). A
+  source that vanishes outright mid-discovery (`FileNotFoundError` — the binary
+  itself disappears) keeps its narrower, pre-existing handling: a named
+  `MISSING_SOURCE` skip and an unavailable census, no raw rescan, since a
+  vanished binary is not evidence the raw root is any healthier. An explicit
+  `--index-source agentsview` request is unaffected by any of this: any of the
+  three failure modes there still raises, because a strict demand for AgentsView
+  is not a request to be answered by something else.
 - **S34 — skips carry a typed reason, not stringified prose.** Every skipped
   session is a `SkipRecord(session_id, agent, reason: SkipReason, detail)`, where
   `SkipReason` is a `StrEnum` — `MISSING_SOURCE` / `UNKNOWN_SCHEMA` /
