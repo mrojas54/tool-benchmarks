@@ -330,6 +330,20 @@ uv run pytest -q
 - `agentsview` — AgentsView only; a source error is fatal.
 - `raw` — raw local transcript roots only; a source error is fatal.
 
+"Failure" means any of three things, not two (TB-32). AgentsView can be **absent**
+(binary not on `PATH`), **broken** (nonzero exit), or **hung** — a daemon that accepts
+the connection and never answers signals neither of the first two, so every `agentsview`
+call is bounded by `AGENTSVIEW_TIMEOUT_S` (60s, `sources.py`) and a breach is raised as
+`AgentsViewTimeout`. Where that surfaces depends on when the daemon stops answering:
+
+- at the `auto` probe → fallback to raw, reason named in the Summary
+  (`agentsview timed out after 60.0s and was killed: …`);
+- mid-scan, on a per-session `export` → that session is skipped under the
+  `export_timeout` reason and the scan continues (a sick daemon costs sessions, not
+  the whole run);
+- under `--index-source agentsview` → fatal, as any source error is there. No silent
+  fallback: the operator asked for AgentsView explicitly.
+
 `--agent` filters AgentsView listing only. Under `--index-source raw` the
 discovery root is Claude Code sessions, so `--agent` is a no-op there.
 
@@ -439,6 +453,7 @@ line means the run headline may understate what the orchestration spent.
 | `cache_assisted` shows `n/a` / `n/a*` for hermes (or hermes-trace) | Per-call usage is absent by schema or dropped by the trace export (S29) | Expected. Do not read `n/a` as "no cache hits". Session-grain cache, when present, appears as an Agent Breakdown caveat (S32), not in this column. |
 | `toolbench.probe` raises `NonIsolableTurns` on a hermes trace file | Trace export has no `requestId`; probe keys turns only by that field (S30) | Score a native Claude Code probe session instead. Trace remains valid input to `passive`. |
 | `cursor` sessions appear only under the `unknown_schema` skip reason | No parser claims cursor's schema yet (`UnknownSchema`, S28) | Expected until a `CursorParser` lands. It must not appear as a healthy zero-call agent; `tally_skips`/`--verbose` surface the count and ids (S34). |
+| Sessions skipped under the `export_timeout` reason | The AgentsView daemon stopped answering **mid-scan**; each `export` is bounded at `AGENTSVIEW_TIMEOUT_S` (TB-32) | Not a bad session — a sick daemon. The probe passed, so the hang began later; the scan degrades to skips rather than dying. Restart AgentsView and re-run, or use `--index-source raw`. A run where *many* sessions carry this reason is not a corpus to trust. |
 | `cache_assisted` shows `n/a` for every `codex` tool | codex has no per-call usage channel; it bills per turn via `token_count` events (`ABSENT_BY_SCHEMA`, S33) | Expected. Do not read `n/a` as "no cache hits". |
 | `codex` reports 0 errors no matter what failed | codex encodes exit status in the output text and sets `status: completed` even for failed tools (S33) | Expected. `error` is never inferred from output prose. Use `output_chars` / the raw transcript to inspect failures. |
 | `codex` web searches never appear in the leaderboard | `web_search_call` carries no `call_id` and emits no output record, so it cannot be joined (S33 / TB-24) | Expected. They are not joinable calls, so leaderboard/ratio counts exclude them. The count is not lost: the Summary's `Unjoinable tool records (seen, not joined)` line names it as `codex/web_search_call` (S38). |

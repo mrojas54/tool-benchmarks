@@ -18,14 +18,14 @@
   "done_at": null,
   "evidence_refs": [],
   "id": "task_01KXE4CPM8PES5YY7DXPTETTJN",
-  "last_event_id": "ev_01KXE4CPME4Q5QWQBW3Q5F79HD",
-  "last_status_changed_at": "2026-07-13T16:19:02Z",
+  "last_event_id": "ev_01KXFHEJ5K811RFJENYTSHKM2N",
+  "last_status_changed_at": "2026-07-14T05:26:29Z",
   "priority": "medium",
   "relationships_out": [],
   "reopened_count": 0,
   "schema_version": 1,
   "short_id": "TB-32",
-  "status": "backlog",
+  "status": "in_progress",
   "tags": [
     "index-source",
     "s10",
@@ -34,6 +34,6 @@
   ],
   "title": "passive hangs forever if the AgentsView daemon hangs: _run_agentsview has no subprocess timeout, so S10 fallback never fires",
   "type": "bug",
-  "updated_at": "2026-07-13T16:19:02Z",
+  "updated_at": "2026-07-14T05:26:29Z",
   "urgency": "normal"
 }

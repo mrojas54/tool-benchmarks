@@ -1,3 +1,4 @@
+import inspect
 import json
 import os
 import subprocess
@@ -10,11 +11,13 @@ from tempfile import TemporaryDirectory
 import pytest
 
 from tests.fakes import FakeRunner, completed
-from toolbench.passive import filter_subagents
+from toolbench.passive import classify_skip, filter_subagents
 from toolbench.sources import (
+    AGENTSVIEW_TIMEOUT_S,
     AgentCensus,
     AgentsViewExclusionWarning,
     AgentsViewLoader,
+    AgentsViewTimeout,
     MissingSourceExport,
     NonTranscriptExport,
     RawFileLoader,
@@ -799,6 +802,105 @@ def test_skip_record_carries_a_typed_reason() -> None:
     assert rec.reason is SkipReason.UNKNOWN_SCHEMA
     assert rec.session_id == "c:1"
     assert rec.detail == "no parser"
+
+
+# -- TB-32: a hung AgentsView daemon must never block a scan --------------------------
+#
+# S10 names two failure modes (binary missing, nonzero exit). The third -- the daemon
+# accepts the connection and never answers -- produces NEITHER signal, and an unbounded
+# subprocess.run() blocks forever. Every other test in this suite injects a FakeRunner
+# that returns instantly, so the hang lives in the real `_run_agentsview` default that
+# no fixture can reach; the first test here drives a REAL child process that really
+# hangs, which is the only way to prove the bound is actually on the production path.
+
+
+class AgentsViewTimeoutTests(unittest.TestCase):
+    def test_run_agentsview_raises_typed_timeout_on_a_real_hang(self) -> None:
+        # A real child that sleeps far past the bound. `timeout` is passed explicitly so
+        # the test costs 0.2s instead of AGENTSVIEW_TIMEOUT_S; the DEFAULT is asserted
+        # separately below, so the production path stays covered without a slow test.
+        with self.assertRaises(AgentsViewTimeout) as caught:
+            _run_agentsview([sys.executable, "-c", "import time; time.sleep(30)"], timeout=0.2)
+        self.assertIn("timed out", str(caught.exception))
+
+    def test_default_timeout_is_bounded(self) -> None:
+        """The regression that matters: shipping `timeout=None` re-opens TB-32."""
+        default = inspect.signature(_run_agentsview).parameters["timeout"].default
+        self.assertIsNotNone(default)
+        self.assertEqual(default, AGENTSVIEW_TIMEOUT_S)
+        self.assertGreater(AGENTSVIEW_TIMEOUT_S, 0)
+
+    def test_agentsview_timeout_is_a_runtimeerror(self) -> None:
+        """Load-bearing, not cosmetic. subprocess.TimeoutExpired subclasses
+        SubprocessError, so it escapes BOTH of passive.main's guards -- the
+        (FileNotFoundError, RuntimeError) around ref collection and the
+        (OSError, RuntimeError, UnicodeDecodeError) around each session. Re-typing the
+        timeout as a RuntimeError is what routes it into the handling that exists."""
+        self.assertTrue(issubclass(AgentsViewTimeout, RuntimeError))
+        self.assertFalse(issubclass(AgentsViewTimeout, subprocess.SubprocessError))
+
+    def test_auto_falls_back_to_raw_when_the_probe_times_out(self) -> None:
+        """S10's intent: an unhealthy AgentsView degrades the scan, never blocks it."""
+        runner = FakeRunner([AgentsViewTimeout("agentsview timed out after 60.0s")])
+        with TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "proj"
+            proj.mkdir()
+            (proj / "s1.jsonl").write_text("{}\n")
+            refs, reason, _census = iter_sessions(index_source="auto", root=tmp, runner=runner)
+            ref_list = list(refs)
+        self.assertIsNotNone(reason)
+        assert reason is not None  # narrow for mypy
+        self.assertIn("timed out", reason)
+        self.assertEqual([r.source for r in ref_list], ["raw"])
+
+    def test_explicit_agentsview_does_not_swallow_a_timeout(self) -> None:
+        """`--index-source agentsview` is an explicit demand: falling back to raw here
+        would answer a question the operator did not ask. It must surface instead --
+        as a RuntimeError, which passive.main reports as a fatal source error."""
+        runner = FakeRunner([AgentsViewTimeout("agentsview timed out after 60.0s")])
+        with self.assertRaises(AgentsViewTimeout):
+            refs, _reason, _census = iter_sessions(index_source="agentsview", runner=runner)
+            list(refs)
+
+    def test_mid_discovery_timeout_is_fatal_like_any_other_source_error(self) -> None:
+        """Scope boundary, asserted so it stays a decision rather than an accident.
+
+        `auto`'s fallback covers the PROBE, not the pagination that follows it. A daemon
+        that answers the probe and then dies mid-listing is fatal (passive.main reports
+        "fatal source error" and exits 1) -- and that is PRE-EXISTING behaviour for a
+        nonzero exit, on main, untouched by TB-32. This test pins the timeout to the SAME
+        behaviour, because the alternative is incoherent: hangs falling back to raw while
+        an equally-broken daemon that exits 1 stays fatal.
+
+        Widening `auto` to re-discover from raw after a partial listing is a real S10 gap,
+        but it belongs to all three failure modes at once, not to the timeout alone -- so
+        it is TB-38, not this ticket.
+        """
+        ok = completed(stdout=_total_page(0))
+        with self.assertRaises(AgentsViewTimeout):
+            refs, _reason, _census = iter_sessions(
+                index_source="auto",
+                root="/tmp",
+                runner=FakeRunner([ok, AgentsViewTimeout("agentsview timed out after 60.0s")]),
+            )
+            list(refs)
+        # The pre-existing sibling, for contrast: same shape, same fatality.
+        with self.assertRaises(RuntimeError):
+            refs, _reason, _census = iter_sessions(
+                index_source="auto",
+                root="/tmp",
+                runner=FakeRunner([ok, completed(stderr="boom", returncode=1)]),
+            )
+            list(refs)
+
+    def test_export_timeout_is_classified_as_its_own_skip_reason(self) -> None:
+        """A daemon healthy at probe time can hang later, on export #4000 of 8591. That
+        must cost one session, not the whole scan -- and TB-23's rule is to type the
+        absence rather than fold it into the generic EXPORT_FAILED bucket."""
+        self.assertIs(
+            classify_skip(AgentsViewTimeout("agentsview timed out after 60.0s")),
+            SkipReason.EXPORT_TIMEOUT,
+        )
 
 
 if __name__ == "__main__":

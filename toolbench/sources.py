@@ -72,6 +72,23 @@ class MissingSourceExport(RuntimeError):
     """
 
 
+class AgentsViewTimeout(RuntimeError):
+    """An `agentsview` call exceeded `AGENTSVIEW_TIMEOUT_S` and was killed (TB-32).
+
+    S10's third failure mode: the daemon accepts the connection and never answers, so it
+    signals neither a missing binary (FileNotFoundError) nor a nonzero exit -- the two
+    conditions `_probe_agentsview` was written to detect.
+
+    Subclasses RuntimeError, and that is the whole point rather than a formality.
+    `subprocess.TimeoutExpired` subclasses `SubprocessError`, so it is caught by NEITHER
+    guard in `passive.main`: not the `(FileNotFoundError, RuntimeError)` around ref
+    collection, and not the `(OSError, RuntimeError, UnicodeDecodeError)` around each
+    session. Raising it raw would have swapped TB-32's hang for a crash mid-scan, losing
+    every session already scanned. Re-typing here routes the timeout into the error
+    handling this module already has, at all four call sites, with no new plumbing.
+    """
+
+
 class SkipReason(StrEnum):
     """Why a discovered session never reached the reducer (TB-23).
 
@@ -85,6 +102,7 @@ class SkipReason(StrEnum):
     NON_TRANSCRIPT = "non_transcript"  # NUL-sniff rejected a binary/SQLite export (TB-10)
     DECODE_ERROR = "decode_error"      # a strict-decode runner hit invalid UTF-8
     EXPORT_FAILED = "export_failed"    # `export` returned non-zero for some other reason
+    EXPORT_TIMEOUT = "export_timeout"  # the daemon hung mid-scan and the call was killed (TB-32)
 
 
 @dataclass(frozen=True)
@@ -178,10 +196,38 @@ def _project_and_subagent(root: Path, path: Path) -> tuple[str, bool]:
     return project, is_subagent
 
 
-def _run_agentsview(argv: list[str]) -> subprocess.CompletedProcess[str]:
+# One bound for all four `agentsview` call sites (probe, paginated list, census, export).
+# Deliberately NOT per-site: `Runner` is `Callable[[list[str]], CompletedProcess[str]]`, so
+# a per-site timeout would have to widen that signature and break every injected fake in
+# the suite. A single value is sound because no single call is unbounded work -- the probe
+# and census are `--limit 1`, the listing is one page, the export is one session. 60s is
+# generous for the largest of those against a healthy daemon, and finite against a hung one.
+AGENTSVIEW_TIMEOUT_S = 60.0
+
+
+def _run_agentsview(
+    argv: list[str], timeout: float = AGENTSVIEW_TIMEOUT_S
+) -> subprocess.CompletedProcess[str]:
     # errors="replace": a session export carrying a stray non-UTF-8 byte must not
     # raise out of communicate() and abort the whole corpus scan (S9).
-    return subprocess.run(argv, capture_output=True, text=True, errors="replace", check=False)
+    #
+    # timeout: a hung daemon exits neither successfully nor unsuccessfully, so without a
+    # bound this call blocks forever and S10's fallback never fires (TB-32). Re-typed to
+    # AgentsViewTimeout because a raw subprocess.TimeoutExpired escapes every guard in
+    # passive.main -- see the class docstring.
+    try:
+        return subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AgentsViewTimeout(
+            f"agentsview timed out after {timeout}s and was killed: {' '.join(argv)}"
+        ) from exc
 
 
 def iter_session_files(
@@ -553,11 +599,19 @@ class AgentsViewLoader(SessionLoader):
 
 
 def _probe_agentsview(runner: Runner) -> str | None:
-    """Return a fallback reason if AgentsView is unavailable, else None (S10)."""
+    """Return a fallback reason if AgentsView is unavailable, else None (S10).
+
+    Three ways to be unavailable, not two: absent (FileNotFoundError), broken (nonzero
+    exit), and hung (AgentsViewTimeout, TB-32). All three land here as a named reason so
+    the scan degrades to raw and the report says why -- an unhealthy AgentsView must
+    never block a scan, which is the whole of S10's intent.
+    """
     try:
         result = runner(["agentsview", "session", "list", "--json", "--limit", "1"])
     except FileNotFoundError as exc:
         return f"agentsview binary not found: {exc}"
+    except AgentsViewTimeout as exc:
+        return str(exc)
     if result.returncode != 0:
         return f"agentsview exited {result.returncode}: {result.stderr.strip()}"
     return None

@@ -1,0 +1,13 @@
+{
+  "agent_type": "advance",
+  "base_name": "Vulcan",
+  "framework": "claude-code",
+  "last_active": "2026-07-14T05:39:49Z",
+  "model": "claude-opus-4-8",
+  "name": "Vulcan-2",
+  "prompt": "TB-32 subprocess timeout fix",
+  "serial": 2,
+  "session": "sess_01KXFH7HF6DJ3AVNXKKTGJZ9MS",
+  "started_at": "2026-07-14T05:22:39Z",
+  "status": "active"
+}

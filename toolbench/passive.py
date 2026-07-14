@@ -35,6 +35,7 @@ from toolbench.run_manifest import MalformedRunManifest, RunManifest, read_run_m
 from toolbench.sources import (
     AgentCensus,
     IndexSource,
+    AgentsViewTimeout,
     MissingSourceExport,
     NonTranscriptExport,
     Runner,
@@ -112,6 +113,12 @@ def classify_skip(exc: BaseException) -> SkipReason:
         return SkipReason.UNKNOWN_SCHEMA
     if isinstance(exc, NonTranscriptExport):
         return SkipReason.NON_TRANSCRIPT
+    if isinstance(exc, AgentsViewTimeout):
+        # A daemon healthy at probe time can still hang on export #4000 of 8591. Typed
+        # apart from EXPORT_FAILED because the remedy differs: a nonzero exit is a bad
+        # session, a timeout is a sick daemon, and folding them together would hide a
+        # scan-wide fault inside a per-session bucket (TB-32).
+        return SkipReason.EXPORT_TIMEOUT
     if isinstance(exc, UnicodeDecodeError):
         return SkipReason.DECODE_ERROR
     return SkipReason.EXPORT_FAILED
