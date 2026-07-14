@@ -13,7 +13,7 @@ import pytest
 
 from tests.fakes import FakeRunner, completed, make_call
 from toolbench.adapters import UnknownSchema
-from toolbench.freeze import read_manifest, write_manifest
+from toolbench.freeze import MANIFEST_VERSION, read_manifest, write_manifest
 from toolbench.passive import (
     Reducer,
     _apply_date_range,
@@ -29,6 +29,7 @@ from toolbench.passive import (
 )
 from toolbench.sources import (
     AGENTSVIEW_TIMEOUT_S,
+    AgentCensus,
     MissingSourceExport,
     NonTranscriptExport,
     Runner,
@@ -1081,9 +1082,14 @@ class CorpusFreezeMainTests(unittest.TestCase):
 
 
 class FreezeReplayCensusTests(unittest.TestCase):
-    """A frozen corpus bypasses discovery, so it has no denominator -- say so (TB-33)."""
+    """TB-22/TB-33 pinned the ref list without a denominator, deliberately: persisting a
+    census was a manifest FORMAT change out of that ticket's scope, so the gap was
+    STATED rather than silently read as zero. TB-37 closes it: a v2 manifest persists
+    the census taken at freeze time, so replay can disclose REAL fractions -- but they
+    are HISTORICAL (archive size as of freeze time, not today), and that caveat must be
+    on the page, not just true in principle."""
 
-    def test_replay_discloses_that_sampling_is_unknown(self) -> None:
+    def test_v2_replay_discloses_real_historical_fractions(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp) / "projects" / "proj"
             root.mkdir(parents=True)
@@ -1091,16 +1097,119 @@ class FreezeReplayCensusTests(unittest.TestCase):
             manifest = str(Path(tmp) / "freeze.json")
 
             argv = ["--index-source", "raw", "--all", "--freeze", manifest]
-            # First run discovers and writes the manifest.
+            # First run discovers, writes the manifest AND (TB-37) the census it saw.
             main(argv, root=str(Path(tmp) / "projects"))
-            # Second run replays it -- discovery, and therefore the census, is bypassed.
+            m = read_manifest(manifest)
+            assert m.census is not None
+            self.assertIsNone(m.census.unavailable_reason)
+            self.assertEqual(m.census.archive_total, 1)
+
+            # Second run replays it -- discovery is bypassed, but the PERSISTED census
+            # is not, so real fractions render instead of "unavailable".
+            out = io.StringIO()
+            with redirect_stdout(out):
+                main(argv, root=str(Path(tmp) / "projects"))
+
+            report = out.getvalue()
+            self.assertNotIn("Sampling fractions unavailable", report)
+            self.assertIn("1 of 1 (100.0%)", report)
+            # The historical-denominator caveat is required, not optional (TB-37): a v2
+            # census must never read as "current".
+            self.assertIn("Historical denominator", report)
+            self.assertIn("freeze time", report)
+            self.assertIn("frozen corpus", report)
+
+    def test_v1_manifest_replay_degrades_gracefully_named_by_version(self) -> None:
+        """A manifest frozen before TB-37 has no `census` key at all -- replay must not
+        crash, and the disclosure names the MANIFEST VERSION specifically, not
+        "freezing" in general, so a future format's own gap is never confused with
+        this one (fix sketch item 3)."""
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "projects" / "proj"
+            root.mkdir(parents=True)
+            shutil.copy(FIXTURES / "sample.jsonl", root / "s1.jsonl")
+            manifest = Path(tmp) / "freeze.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "version": "toolbench-freeze-1",
+                        "fingerprint": "x",
+                        "count": 1,
+                        "refs": [
+                            {
+                                "agent": "claude-code",
+                                "source": "raw",
+                                "project": "proj",
+                                "session_id": "s1",
+                                "path": str(root / "s1.jsonl"),
+                                "is_subagent": False,
+                            }
+                        ],
+                    }
+                )
+            )
+            argv = ["--index-source", "raw", "--all", "--freeze", str(manifest)]
             out = io.StringIO()
             with redirect_stdout(out):
                 main(argv, root=str(Path(tmp) / "projects"))
 
             report = out.getvalue()
             self.assertIn("Sampling fractions unavailable", report)
-            self.assertIn("frozen corpus", report)
+            self.assertIn("toolbench-freeze-1", report)
+            self.assertNotIn("Historical denominator", report)
+
+    def test_v2_manifest_with_no_census_degrades_same_as_v1(self) -> None:
+        """A v2-format manifest can still be written without a census (e.g. the freeze
+        run's own discovery census failed) -- `read_manifest` treats KEY ABSENCE the
+        same regardless of the version string stamped on the file."""
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "projects" / "proj"
+            root.mkdir(parents=True)
+            shutil.copy(FIXTURES / "sample.jsonl", root / "s1.jsonl")
+            manifest = str(Path(tmp) / "freeze.json")
+            argv = ["--index-source", "raw", "--all", "--freeze", manifest]
+            main(argv, root=str(Path(tmp) / "projects"))  # real v2 manifest + census
+
+            # Rewrite with the SAME refs, no census -- simulates a v2 freeze whose own
+            # census attempt failed at freeze time.
+            m = read_manifest(manifest)
+            write_manifest(manifest, m.refs, m.fingerprint, census=None)
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                main(argv, root=str(Path(tmp) / "projects"))
+
+            report = out.getvalue()
+            self.assertIn("Sampling fractions unavailable", report)
+            self.assertIn(MANIFEST_VERSION, report)
+
+    def test_v2_replay_propagates_a_freeze_time_census_failure(self) -> None:
+        """The census can itself be UNAVAILABLE at freeze time (e.g. discovery's own
+        census call errored). TB-37 persists and propagates that reason on replay
+        rather than laundering it into the generic "no denominator" text -- a
+        measurement that was ATTEMPTED AND FAILED is not the same fact as one that was
+        never attempted."""
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "projects" / "proj"
+            root.mkdir(parents=True)
+            shutil.copy(FIXTURES / "sample.jsonl", root / "s1.jsonl")
+            manifest = str(Path(tmp) / "freeze.json")
+            argv = ["--index-source", "raw", "--all", "--freeze", manifest]
+            main(argv, root=str(Path(tmp) / "projects"))
+
+            m = read_manifest(manifest)
+            failed_census = AgentCensus(
+                totals={}, archive_total=0, unavailable_reason="boom: census call failed"
+            )
+            write_manifest(manifest, m.refs, m.fingerprint, census=failed_census)
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                main(argv, root=str(Path(tmp) / "projects"))
+
+            report = out.getvalue()
+            self.assertIn("Sampling fractions unavailable", report)
+            self.assertIn("boom: census call failed", report)
 
 
 class SubagentExclusionAcrossIndexSourcesTests(unittest.TestCase):
