@@ -2,7 +2,7 @@
   "agent_type": "advance",
   "base_name": "Vulcan",
   "framework": "claude-code",
-  "last_active": "2026-07-14T05:39:49Z",
+  "last_active": "2026-07-14T05:41:26Z",
   "model": "claude-opus-4-8",
   "name": "Vulcan-2",
   "prompt": "TB-32 subprocess timeout fix",

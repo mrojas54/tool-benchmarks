@@ -1,0 +1,29 @@
+{
+  "created_at": "2026-07-14T05:41:26Z",
+  "created_by": {
+    "agent_type": "advance",
+    "base_name": "Vulcan",
+    "framework": "claude-code",
+    "model": "claude-opus-4-8",
+    "name": "Vulcan-2",
+    "serial": 2,
+    "session": "sess_01KXFH7HF6DJ3AVNXKKTGJZ9MS"
+  },
+  "custom_fields": {
+    "url": "https://github.com/mrojas54/tool-benchmarks/pull/57"
+  },
+  "id": "art_01KXFJ9Y3SGTPR0TYNX6RBZBZR",
+  "model": null,
+  "payload": {
+    "content_type": null,
+    "file": null,
+    "size_bytes": null
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": null,
+  "tags": [],
+  "title": "https://github.com/mrojas54/tool-benchmarks/pull/57",
+  "token_usage": null,
+  "type": "reference"
+}
