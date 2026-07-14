@@ -16,7 +16,7 @@
       "repo": null
     }
   ],
-  "comment_count": 1,
+  "comment_count": 2,
   "complexity": "low",
   "created_at": "2026-07-13T20:18:15Z",
   "created_by": {
@@ -33,7 +33,7 @@
   "done_at": "2026-07-14T17:33:44Z",
   "evidence_refs": [],
   "id": "task_01KXEJ2QF431TY9PH4ATHSPW32",
-  "last_event_id": "ev_01KXGV26A8CA7S8KB3A9JT7N19",
+  "last_event_id": "ev_01KXH4BECGHTK49QPMAE6KQFRV",
   "last_status_changed_at": "2026-07-14T17:33:44Z",
   "priority": "medium",
   "relationships_out": [
@@ -64,6 +64,6 @@
   ],
   "title": "calls_joined == 0 early-return discards the census: 'no sessions matched' throws away a denominator it already computed",
   "type": "bug",
-  "updated_at": "2026-07-14T17:33:44Z",
+  "updated_at": "2026-07-14T20:16:04Z",
   "urgency": null
 }

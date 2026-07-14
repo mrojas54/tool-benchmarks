@@ -16,7 +16,7 @@
       "repo": null
     }
   ],
-  "comment_count": 1,
+  "comment_count": 2,
   "complexity": null,
   "created_at": "2026-07-14T05:39:49Z",
   "created_by": {
@@ -33,7 +33,7 @@
   "done_at": "2026-07-14T17:33:44Z",
   "evidence_refs": [],
   "id": "task_01KXFJ702B2QM8HZJ3CNKWYCCV",
-  "last_event_id": "ev_01KXGV26KMGS3J5EN1T7K1ASR2",
+  "last_event_id": "ev_01KXH4BEPCBG0BQ6S7N9QDVDYH",
   "last_status_changed_at": "2026-07-14T17:33:44Z",
   "priority": "medium",
   "relationships_out": [],
@@ -44,6 +44,6 @@
   "tags": null,
   "title": "auto fallback covers only the AgentsView probe: a daemon that dies mid-listing is fatal, so --index-source auto silently forfeits its fallback promise",
   "type": "bug",
-  "updated_at": "2026-07-14T17:33:44Z",
+  "updated_at": "2026-07-14T20:16:04Z",
   "urgency": null
 }
