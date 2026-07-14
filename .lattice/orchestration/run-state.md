@@ -92,6 +92,24 @@ catalog's most recent maintained copy, re-verified still applicable
   failed roborev reviews. The validator correctly did not act on it (outside
   its mandate — no merges/pushes/changes to `main` were in scope). Routed to
   the operator for separate triage, not folded into Run 3's closeout.
+- 2026-07-14 [autonomy: Moderate] **Merged, operator-directed order:** TB-36
+  (PR #61, merge commit 8317c2d) → TB-34 (PR #60, fdcf557) → TB-37 (PR #63,
+  2ac93ae) → TB-38 (PR #62, add61ab). TB-37→TB-38 hit exactly the predicted
+  `tests/test_passive_cli.py` import-line conflict (`AgentCensus` vs
+  `AgentsViewTimeout` both appended to the same `from toolbench.sources
+  import (...)`); resolved in a scratch worktree (kept both names,
+  alphabetized), verified ruff/mypy/pytest clean (592 passed) before pushing
+  the resolution and completing the merge — matches the validator's
+  prediction exactly, no surprises. Post-merge on real `main` (not a scratch
+  worktree): ruff clean, mypy --strict clean, 592 passed/2 skipped/3
+  subtests — identical to the Phase 2 assembled-gate rehearsal. All four
+  tickets → `done`. All four feature branches deleted (safe: none were
+  stacked on another, unlike the Run-2/PR57-58 incident this project's
+  CLAUDE.md now warns about).
+- 2026-07-14 [autonomy: Moderate] **Run 3 closed.** TB-34, TB-36, TB-37,
+  TB-38 all done, merged, verified on real `main`. Outstanding, explicitly
+  out-of-scope: the 4 failed roborev reviews on `main` flagged during Phase 2
+  — not investigated this run, needs separate operator triage.
 
 ## Configuration
 - **Autonomy:** Moderate (operator-confirmed 2026-07-10, Phase 0 config dialogue)

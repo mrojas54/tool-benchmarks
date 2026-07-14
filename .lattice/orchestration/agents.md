@@ -8,7 +8,7 @@ state. Run 1 + Run 2 delegator history retained under Archived.
 ## Active
 | Role | Ticket | Branch | Worktree isolation | Phase | Spawned at |
 |------|--------|--------|---------------------|-------|------------|
-| (none — Run 3 complete: dispatch + Phase 2 Result Validator both done, all four PASS; awaiting operator merge decision) | | | | | |
+| (none — Run 3 closed: all four merged to main, verified, done) | | | | | |
 
 ## Completed this run (Run 3, dispatch complete 2026-07-14, awaiting Phase 2 Result Validator)
 | Ticket | PR | Status | Notes |
