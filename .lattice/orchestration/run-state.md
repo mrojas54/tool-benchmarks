@@ -111,7 +111,14 @@ catalog's most recent maintained copy, re-verified still applicable
   out-of-scope: the 4 failed roborev reviews on `main` flagged during Phase 2
   — not investigated this run, needs separate operator triage.
 
-## Configuration
+## Configuration (Run 2 — HISTORICAL, superseded by "Run 3 configuration" above)
+> ⚠️ **Do not boot a delegator from this section.** It is the Run 2 (TB-19 /
+> TB-18 / TB-20) config, retained only because it carries the most recently
+> maintained copy of the footgun catalog. Where it conflicts with the Run 3
+> configuration at the top of this file, **Run 3 wins** — most importantly the
+> quality-gate baseline: `mypy --strict` is **clean (0 errors)**; the 38-error
+> tolerance below is retired and must not be resurrected.
+
 - **Autonomy:** Moderate (operator-confirmed 2026-07-10, Phase 0 config dialogue)
 - **N (max concurrent delegators):** 2
 - **PR merge policy:** leave at terminal pre-merge status (`review`); no auto-merge
@@ -123,7 +130,7 @@ catalog's most recent maintained copy, re-verified still applicable
 - **Master Validator:** OFF (3-ticket wave; operator-confirmed)
 - **Result Validator:** ON, model Sonnet
 - **auto-close finished surfaces:** on
-- **Test gate (pinned for every boot prompt):** `uv run ruff check .` · `uv run mypy --strict toolbench tests` (baseline 38 pre-existing errors — new errors only are failures) · `uv run pytest -q`. **Never `unittest discover`** — it silently skips 37 tests and executes module-level code (the defect TB-19 fixes).
+- **Test gate (pinned for every boot prompt):** `uv run ruff check .` · `uv run mypy --strict toolbench tests` (~~baseline 38 pre-existing errors — new errors only are failures~~ — **STALE as of Run 3: the 38-error baseline was fully retired; mypy --strict is clean at 0 errors and any error is a failure**) · `uv run pytest -q`. **Never `unittest discover`** — it silently skips 37 tests and executes module-level code (the defect TB-19 fixes).
 - **Contract-gap policy (operator-confirmed):** TB-19 and TB-20 author their own SPEC/EVALUATION/BUILDPLAN rows (S31, S32) in their DOCS phases, mirroring TB-18's S29/S30 precedent.
 
 ## Workspace panes (c11 refs) — set at Phase 1 boot 2026-07-10 05:48
