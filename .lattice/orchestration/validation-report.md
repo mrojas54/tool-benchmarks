@@ -1,65 +1,215 @@
-# Validation Report
+# Result Validation Report — Run 3 (TB-34, TB-36, TB-37, TB-38)
 
-Source spec: [SPEC.md](../../SPEC.md)
-Source build plan: [BUILDPLAN.md](../../BUILDPLAN.md)
-Source validation plan: [validation-plan.md](./validation-plan.md)
-Result Validator: fresh Sonnet audit session (Phase 2, run 2)
-Date: 2026-07-10
-Run completed: 2026-07-10T06:44 (per run-state.md dispatch-complete log)
+Validator: Result Validator (cold read, no prior dispatch context).
+Date: 2026-07-14.
+Baseline (pre-run, `main` @ c07609a): 578 passed, 2 skipped, 3 subtests; ruff clean; mypy --strict 0 errors.
 
-## Summary
-- Total criteria audited: 13 (all `pre-merge-static` rows, 1–13)
-- Pass: 12
-- Partial: 1
-- Fail: 0
-- Blocked: 0
+Note: this file previously held a report for an earlier run (2026-07-10, TB-18/19/20).
+That content is superseded and replaced below; see git history for the prior version.
 
-**Overall verdict: 🟡 Yellow.** Every substantive criterion (TB-18's S29/S30 implementation, and TB-19's/TB-20's self-authored S31/S32 contract rows) passes cleanly against source, tests, and diff inspection. The single Partial (row 9, strict gate) is a real, reproducible pytest exit-1 on PR #21: it branched from `main` before TB-18's hermetic-suite fix (commit `5baeca1`) landed, so its `LiveArchive` live-archive test lacks the `TOOLBENCH_LIVE` gate and unconditionally tries to open the real `~/.hermes` archive on any machine where one exists — confirmed twice, including with `TOOLBENCH_LIVE` explicitly unset. This is a genuine merge-order/rebase gap, not environment noise (see Recommendations).
+## Per-ticket verdicts
 
-## Per-criterion results
+### TB-34 — PR #60 `fix/tb-34-zero-match-census-disclosure` — **PASS**
 
-| # | SPEC.md criterion | Result | Notes |
-|---|---|---|---|
-| 1 | S29 — producer split (`HermesTraceParser`/`ClaudeParser` claims_line partition) | ✅ Pass | `parsers.py:249` and `:95` are mutually exclusive by construction (`version == HERMES_TRACE_VERSION` vs `!=`). Partition test `test_adapters.py:122-131` passes. Targeted run: 5/5 passed. PR #20. |
-| 2 | S29 — fixture routes to `HermesTraceParser` by exact type | ✅ Pass | `tests/fixtures/schema_hermes_trace.jsonl` exists; `test_adapters.py:117-119` asserts `type(parser) is HermesTraceParser`. No `AmbiguousSchema`/`UnknownSchema`. PR #20. |
-| 3 | S29 — `usage_provenance` stamped at every `ToolCall(` site | ✅ Pass | `transcript.py:71` field has no default; all 3 construction sites (`hermes.py:195`, `parsers.py:188`,`:209`) pass it explicitly. `HermesTraceParser._provenance` (`parsers.py:251-254`) returns `ABSENT_BY_EXPORT` unconditionally. `mypy --strict` → 38 errors, all pre-existing `no-untyped-def` in test files — 0 new vs. baseline. PR #20. |
-| 4 | S29 — four-case cache render (`yes`/`no`/`n/a`/`n/a*`) + `usage_missing` counter | ✅ Pass | `test_passive.py` `CacheNoteRenderTests` (814-863) covers all four renders distinctly. `passive.py:41` `usage_missing: int = 0` is a counter; `"no"` only reached via `elif stats.usage_missing == 0` (passive.py:352-360). PR #20. |
-| 5 | S29/S19 — cache render is caveat-only, never ranks | ✅ Pass | `passive.py:351` sort key is `output_tokens` only; `cache_note` computed after `ranked` is built and never feeds back into ordering. PR #20. |
-| 6 | S30 — probe refuses trace input at dispatch (no partial-corpus mode) | ✅ Pass | `test_probe.py:450-456` asserts `NonIsolableTurns` raised with "trace" in message, no scored table produced. `probe.py main()` exposes no partial-corpus flag. PR #20. |
-| 7 | S30 — `_turn_key` raises `NonIsolableTurns`, no `ts:` fallback | ✅ Pass | `probe.py:160-166` raises on missing/empty `requestId`; anti-regression test `test_probe.py:444-447` asserts no `f"ts:{"` in source. Independent `rg -n 'ts:' toolbench/probe.py` → only a class-name false-positive (`_TurnStats`), zero real fallback occurrences. PR #20. |
-| 8 | S30 — probe fixtures migrated (Task 4) before fallback deletion (Task 5); pooled fixture untouched | ✅ Pass | Commit order confirmed: `1ac1220` (Task 4, requestId migration) precedes `5704e8e`/`53e2762` (Task 5). `probe_session_response_pooled.jsonl` byte-identical to `main` (MD5 match, no diff). PR #20. |
-| 9 | S22 — strict gate green on all three PRs at head | ⚠️ Partial | Baseline (fresh `main` clone) confirmed at exactly 38 mypy errors. **Ruff:** exit 0 on all three PRs. **Mypy:** exit 1 (as expected — errors exist) but exactly 38 on all three, 0 new vs. baseline. **Pytest:** PR #20 → 247 passed/1 skipped (exit 0); PR #22 → 260 passed/1 skipped (exit 0); **PR #21 → 214 passed/1 failed (exit 1), reproduced twice, including on operator re-run with `TOOLBENCH_LIVE` explicitly unset**. Root cause (confirmed via `git log -S TOOLBENCH_LIVE -- tests/test_hermes.py`): the `TOOLBENCH_LIVE`-gated `skipTest` guard on `LiveArchive` was added by commit `5baeca1` ("Make the fast suite hermetic — TB-18 Phase 0 gap"), which lives **only on TB-18's branch**. PR #21 branched from `main` before that fix landed, so its copy of `test_hermes.py` only checks `home.is_dir()` / non-empty `dbs` — on any machine with a real `~/.hermes` directory (this one included) it unconditionally attempts a live DB open and fails with `sqlite3.OperationalError`. This is a genuine cross-branch gap, not environment noise: **PR #21 as it stands is not actually hermetic per S25** on a machine with a live archive present. Deselecting that one test: 214/214 pass. |
-| 10 | S31 — criterion authored (TB-19: SPEC + EVALUATION + BUILDPLAN all gain S31 rows) | ✅ Pass | All three docs updated in commit `46007bb`. `SPEC.md:166-171` "S31 — gate collects every test" pins `uv run pytest -q`; `EVALUATION.md` Harness `test` command updated + matching S31 table row; `BUILDPLAN.md:51` T-row carries both `S31` and `TB-19`. PR #21. |
-| 11 | S31 — full collection proven, gap closed | ✅ Pass | `uv run pytest -q --collect-only` → 215 tests; `unittest discover` → 177 (a 38-test gap — suite grew since the ticket cited "37 of 220"; same defect class, numbers shifted). Documented gate command (`pytest -q`) now collects the full 215, closing the primary pass-condition disjunct. Regression test `tests/test_gate_completeness.py` (commit `c48d0b7`) pins the defect class via a synthetic fixture package so it can't silently recur. The alternate disjunct ("`unittest discover` no longer documented anywhere") is not literally met — 6 hits remain, all contrastive/explanatory, not documenting it as the gate. PR #21. |
-| 12 | S32 — criterion authored (TB-20: SPEC + EVALUATION + BUILDPLAN all gain S32 rows) | ✅ Pass | Diffed against the TB-18 base branch (not main) to isolate TB-20's own additions. `SPEC.md` gains full "S32 — session-grain cache surfaced without per-call fabrication" entry; `EVALUATION.md` gains S32 row + operator checkpoint #7; `BUILDPLAN.md` gains `T10` row mapped to S32, retroactive-rows prose updated to "T7–T10". PR #22. |
-| 13 | S32 — session-grain cache consulted; DB opens stay read-only | ✅ Pass | `test_hermes.py::test_session_cache_read_tokens_surfaces_when_present` and `test_passive.py::test_caveat_line_present_with_correct_ratio` prove the Agent Breakdown renders session-grain cache signal instead of a universal miss for hermes buckets, without leaking into the untouched per-call `cache_assisted` column. `rg -n 'sqlite3.connect' toolbench/` → exactly 2 sites in `hermes.py::_connect` (lines 80, 86): `mode=ro` always first; `immutable=1` only in the `except OperationalError` branch gated on absence of a `-wal` sidecar. `uv run pytest -q` → 260 passed/1 skipped. PR #22. |
+Adds an additive `_sampling_notes(...)` disclosure block to the `reducer.calls_joined
+== 0` early return in `toolbench/passive.py` (~line 645). Verified against the real
+diff (not the ticket recap):
 
-## Drift from BUILDPLAN.md
+- The original `"toolbench.passive: no sessions matched the given selection."` line
+  (plus the skip tally suffix) is preserved byte-for-byte and printed first; the
+  census lines are appended after via `"\n".join(lines)`, never replacing it.
+- Reuses the existing `_sampling_notes` helper (`toolbench/report.py`) with the exact
+  same six-argument signature already used by the non-empty render path — no
+  reinvented rendering logic.
+- All of `census`, `reducer`, `skips`, `args.limit`, `limit_truncated`, and
+  `sampled_by_agent` are already in scope/computed above the early-return check
+  (`sampled_by_agent` at line 588, well before line 645) — the ticket's core claim
+  ("the run already built a full AgentCensus... discarding it here") checks out in
+  the actual control flow, not just in prose.
+- New tests (`ZeroMatchCensusDisclosureTests`, 2 cases) exercise real scenarios: an
+  agent present in the archive but unreached by the window, and an unenumerated
+  archive residual — both via a scripted `FakeRunner`, asserting on the actual
+  printed text, not a shape/type check.
+- SPEC.md/EVALUATION.md S35 updated accurately to describe the additive behavior.
+- No test pinning the old message was weakened — the assertion is `assertIn` on the
+  unchanged base string, consistent with the pre-existing tests the ticket named as
+  needing to stay green (`test_passive_cli.py:274,283,304,352` etc., unmodified in
+  this diff).
 
-- **Test-suite size grew between ticket filing and delivery.** TB-19's ticket text cites "37 of 220" tests silently skipped; the PR's own regression test and live counts show 215 collected under `pytest -q` and 177 under `unittest discover` — a 38-test gap on a 215-test suite. This doesn't change the verdict (S31's pass condition is about parity between the documented command and the true count, which holds), but the operator should not expect the ticket's original numbers to reconcile exactly with what's in the PR.
-- **TB-20 landed a new `T10` BUILDPLAN row** (as designed — TB-20 authors its own contract row per the run's contract-gap policy) rather than reusing an existing T-row. This is expected drift, not a problem: BUILDPLAN's "T7–T9 recorded retroactively" prose was correctly extended to "T7–T10" to keep the numbering honest.
+Isolated gate: ruff clean, mypy --strict clean, `580 passed, 2 skipped, 3 subtests`
+(baseline + 2 new tests).
 
-## Gaps
+### TB-36 — PR #61 `chore/tb-36-probe-argv-sole-builder` — **PASS**
 
-- **PR #21 (TB-19) is not hermetic on a machine with a real `~/.hermes` archive.** S25 requires the fast suite to be hermetic with no `~/.claude`/live-archive access; TB-18 fixed this for `LiveArchive` via commit `5baeca1`, but that commit isn't on TB-19's branch (which forked from `main` beforehand). As currently based, merging #21 to `main` before #20 would reintroduce a non-hermetic fast suite on `main` even though TB-18 already solved it elsewhere. Everything else in this run's scope (S29, S30, S31, S32) is fully addressed by a merged-or-open PR.
+Routes `_probe_agentsview` through `_list_argv` (Option A from the ticket, the
+structural fix, not the "leave it and comment" fallback).
 
-## Recommendations
+- Verified `_list_argv(agent="all", project=None, since=None, limit=1, includes=())`
+  reproduces the exact prior hand-rolled argv
+  `["agentsview", "session", "list", "--json", "--limit", "1"]`: `_list_argv` only
+  appends `--agent`/`--project`/`--date-from`/`--cursor` when those args are
+  non-default, so all four are skipped here — argv is byte-identical to before.
+- New test `test_probe_argv_is_built_by_the_sole_builder` asserts the exact argv via
+  `FakeRunner`, not just that `_probe_agentsview` still returns `None` on success —
+  it would catch a filter accidentally leaking in.
+- Smallest diff of the four (10 lines prod, 16 test) and touches only
+  `toolbench/sources.py` — no `passive.py` overlap.
 
-- **Fix-back-in-flight:** Rebase PR #21 (`tb-19-pytest-gate`) onto `main` **after** #20 merges (or cherry-pick commit `5baeca1` onto it now) before merging #21, so its copy of `test_hermes.py` picks up the `TOOLBENCH_LIVE` gate. Re-run `uv run pytest -q` post-rebase to confirm exit 0. This is the highest-priority action from this audit — without it, `main`'s fast suite regresses to non-hermetic the moment #21 merges.
-- **Accept-as-is:** The TB-19 ticket-number drift (215 vs. 220, gap 38 vs. 37) — the criterion the PR ships (documented-command parity) holds regardless of the exact historical count; no action needed beyond operator awareness.
-- **New tickets:** None indicated by this audit.
-- **Merge order (revised):** #20 first (unblocks the hermetic fix), then rebase #21 onto post-#20 `main` and re-verify before merging #21, then retarget #22 (currently based on #20's branch) to `main` and rebase before merging. Do **not** merge #21 independently of this ordering, contrary to run-state.md's original "independent" note — that note predates this finding.
+Isolated gate: ruff clean, mypy --strict clean, `579 passed, 2 skipped, 3 subtests`
+(baseline + 1 new test).
 
-## What I couldn't verify
+### TB-37 — PR #63 `feat/tb-37-freeze-manifest-census` — **PASS**
 
-- **Row 11's "no timestamp fallback" grep count** — 6 contrastive hits of the phrase "unittest discover" remain in the docs (explaining why *not* to use it). The pass condition's first disjunct (count parity) is unambiguously met, so I did not treat this as a blocker, but flagging it in case the plan's author intended a stricter reading.
+Bumps `MANIFEST_VERSION` to `toolbench-freeze-2`, persists an optional `AgentCensus`
+in the manifest at freeze time, and adds a historical-denominator caveat on replay.
 
-## Operator smoke-pass checklist (post-merge)
+- `write_manifest`/`read_manifest` (`toolbench/freeze.py`) verified: `census` is an
+  optional kwarg at write time; `read_manifest` branches on **key presence**
+  (`data.get("census")`), not the version string — confirmed by
+  `test_v2_manifest_with_no_census_degrades_same_as_v1` and a hand-written v1
+  fixture with the literal old `"toolbench-freeze-1"` string and no `census` key
+  (`test_v1_manifest_replay_degrades_gracefully_named_by_version`), both routed to
+  the same `unavailable_reason` code path.
+- Three-way branch in `passive.py`'s replay logic verified: no census → generic
+  unavailable reason naming the manifest version; census present but itself
+  `unavailable_reason`-carrying (freeze-time failure) → that reason is propagated
+  verbatim, not laundered into generic text; real census → real fractions render
+  plus a `frozen_census_note` wired through `render_report` and printed adjacent to
+  the sampling notes it qualifies. All three paths have a dedicated test, each
+  asserting on actual rendered report text (`"Historical denominator"`,
+  `"1 of 1 (100.0%)"`, `"boom: census call failed"`, etc.), not shape checks.
+- `residual` is correctly *not* persisted (derived property, reconstructed from
+  `totals`/`archive_total`), avoiding a stored-vs-derived drift bug.
+- Backward compatibility with a genuine v1 manifest (old version string, no key)
+  verified explicitly, not just a same-run round-trip.
+- SPEC.md nests the TB-37 addendum under the existing S37 bullet (rather than
+  minting a new S-number) and EVALUATION.md extends the S37 row in place — consistent
+  with how other tickets (TB-21/TB-22/etc.) have extended a criterion previously.
 
-Copied verbatim from `validation-plan.md` — these are **not** attempted here; they require a merged tree or a live/real-CLI environment.
+Isolated gate: ruff clean, mypy --strict clean, `585 passed, 2 skipped, 3 subtests`
+(baseline + 7 new tests, split across `test_freeze.py` and `test_passive_cli.py`).
 
-| # | SPEC.md criterion | Verification method | Artifact to inspect | Pass condition |
-|---|---|---|---|---|
-| 14 | S29/S30 live trace export (external-oracle) | EVALUATION smoke #6: `hermes sessions export --format trace <dir>` on a real session; `passive` renders `n/a` (not `no`) for its calls; `probe` over the same file refuses with `NonIsolableTurns` | operator terminal, merged tree | Both behaviors observed against a fresh export from the installed hermes CLI |
-| 15 | S32 live archive (operator-assisted) | `TOOLBENCH_LIVE=1 uv run pytest -q` against the real `~/.hermes` archives; hermes cache figures materially non-zero in a real report run | operator terminal, merged tree | Live suite green; a real hermes report shows session-grain cache signal |
-| 16 | Report reads well (felt) | Operator reads one full passive report post-merge | merged tree report output | Four-case cache column is scannable and the `n/a*` footnote explains itself |
+### TB-38 — PR #62 `fix/tb-38-auto-fallback-mid-listing` — **PASS**
+
+Widens `_discover_refs`'s exception handling so `--index-source auto` falls back to
+raw on a mid-listing `RuntimeError` **or** `AgentsViewTimeout` (both subclass
+`RuntimeError`, confirmed via `test_agentsview_timeout_is_a_runtimeerror` on main),
+gated to `auto` only — an explicit `--index-source agentsview` still raises.
+
+- One code path for both failure modes, as the ticket demanded: a single new
+  `except RuntimeError` block in `_discover_refs` (`toolbench/passive.py`) handles
+  both the pre-existing nonzero-exit case and TB-32's timeout case identically —
+  `classify_skip(exc)` picks `EXPORT_FAILED` vs `EXPORT_TIMEOUT` correctly per type.
+- Partial agentsview refs are discarded, not spliced: refactored the ref-collection
+  loop into a new `_collect_refs` helper whose local `refs` list is never assigned
+  back to the caller until it returns cleanly — a mid-loop exception leaves the
+  caller's `refs` untouched, so the fallback path starts a clean raw rescan via
+  `iter_sessions(index_source="raw", ...)` rather than a second hand-rolled path.
+  This matches TB-22's "no spliced/incoherent corpus identity" precedent, cited in
+  both the ticket and the new code comments.
+- The `FileNotFoundError` branch (vanished binary) is deliberately **not** widened —
+  it keeps the pre-existing `MISSING_SOURCE`/no-rescan handling, and a dedicated test
+  (`test_source_vanishing_after_a_healthy_probe_is_unaffected`) pins that boundary.
+  This is the correct scope: the ticket only asked to fix the "unhealthy-but-present"
+  failure modes, not the "vanished" one.
+- New tests (`MidListingAutoFallbackTests`, 4 cases) each assert on real `_discover_refs`
+  return values (`refs`, `fallback_reason` substring, `skips[0].reason`, `census.totals`,
+  `truncated`), not just exit codes.
+- Old test `test_mid_discovery_timeout_is_fatal_like_any_other_source_error` was
+  **renamed and re-described**, not weakened: its assertion (`assertRaises` for both
+  `AgentsViewTimeout` and plain `RuntimeError` out of `iter_sessions` itself) is
+  unchanged — the docstring now correctly explains that `iter_sessions` still raises,
+  and it's `_discover_refs` one layer up (new in this PR) that recovers. Confirmed by
+  diff: no assertion lines changed, only comments/name.
+- **Scope-boundary correction from the orchestrator's framing**: this PR does *not*
+  touch `toolbench/sources.py` production code at all — only `tests/test_sources.py`
+  (a comment/rename in an already-passing test) and `toolbench/passive.py`. The
+  dispatch prompt's premise that "TB-36/TB-38 both claim disjoint regions of
+  `sources.py`" doesn't hold as stated: TB-38's actual fix lives in `passive.py`'s
+  `_discover_refs`, not `sources.py`. Disjointness with TB-36 holds trivially (TB-38
+  has no production changes there), but this is worth noting as drift from the
+  dispatch framing, not a defect in the PR itself.
+
+Isolated gate: ruff clean, mypy --strict clean, `582 passed, 2 skipped, 3 subtests`
+(baseline + 4 new tests).
+
+## Assembled-gate check (all four merged onto `origin/main`)
+
+Performed in a throwaway worktree/branch (`tb-run3-assembled-gate-scratch`, off
+`origin/main` @ `c07609a`), merged in ticket order TB-34 → TB-36 → TB-37 → TB-38,
+**not pushed**, and removed afterward (`git worktree remove --force` + `git branch -D`).
+
+- TB-34 → main: clean merge.
+- TB-36 → +TB-34: clean merge (different files entirely: `sources.py` vs `passive.py`).
+- TB-37 → +TB-34,36: clean merge, including `toolbench/passive.py` (auto-merged
+  despite TB-34 and TB-37 both touching that file — confirmed disjoint hunks: TB-34's
+  change is in the `calls_joined == 0` early-return block, ~line 645; TB-37's is in
+  the replay branch, ~lines 441–483, plus the `render_report(...)` call site).
+- TB-38 → +TB-34,36,37: **one conflict**, in `tests/test_passive_cli.py`'s import
+  block — TB-37 added `AgentCensus` and TB-38 added `AgentsViewTimeout` to the same
+  `from toolbench.sources import (...)` statement. Trivial, mechanical: both names
+  kept, no logic conflict. `toolbench/passive.py` itself (all three of TB-34/37/38
+  touch it) merged with **zero conflicts** — confirmed disjoint hunks: TB-38's changes
+  are the new `_collect_refs` helper and the widened `except RuntimeError` inside
+  `_discover_refs` (~lines 347–440), well clear of both TB-34's and TB-37's regions.
+
+After resolving the one import-ordering conflict and committing the merge:
+
+- `uv run ruff check .` → **All checks passed.**
+- `uv run mypy --strict toolbench tests` → **Success: no issues found in 35 source files.**
+- `uv run pytest -q` → **592 passed, 2 skipped, 3 subtests passed** — exactly
+  578 (baseline) + 2 (TB-34) + 1 (TB-36) + 7 (TB-37) + 4 (TB-38) = 592, confirming no
+  test was lost, duplicated, or silently dropped by the merges.
+
+**Assembled-gate verdict: PASS**, modulo the one mechanical import-conflict a real
+merge (e.g. via GitHub's merge UI or a maintainer rebase) will also need to resolve
+by hand — it is not auto-mergeable by GitHub's three-way merge without a human/CI
+touching that one line, but it is not a design conflict, just two independent PRs
+appending a name to the same import statement.
+
+## Drift from ticket/delegator claims
+
+- **TB-38 scope-boundary framing**: see above — the PR does not touch
+  `toolbench/sources.py` production code, contrary to the implied disjoint-region
+  framing in the dispatch prompt. Not a defect; just a correction for the record.
+- No other drift found. All four PRs' actual diffs matched their tickets' FIX
+  SKETCH and their lattice event-log "Delegator plan" comments. No loosened
+  assertions, no shape-only tests standing in for behavior tests, no scope creep
+  into files outside each ticket's stated area.
+
+## Operator post-merge smoke-checklist
+
+Everything below needs human eyes because it depends on live systems the hermetic
+suite fakes (`FakeRunner`) rather than exercises for real:
+
+1. **TB-34/TB-37 shared machinery** — run `passive` with a deliberately narrow
+   `--since`/`--date-from` window against a real `~/.claude/projects` tree (or via
+   `--index-source agentsview` against a healthy daemon) until it hits zero matches;
+   confirm the new census disclosure lines actually appear and name a real agent/
+   archive-total, not just pass in the fixture.
+2. **TB-37 freeze/replay round-trip on real data** — `--freeze <path>` once against a
+   real corpus, inspect the manifest JSON for a populated `census` key, then replay
+   and confirm the report shows real fractions plus the "Historical denominator"
+   caveat text. Also worth doing once against an **old, pre-existing v1 manifest**
+   left over from before this change (if one exists on disk) to confirm the
+   graceful-degrade path fires outside the test fixtures.
+3. **TB-38 mid-listing fallback against a real flaky daemon** — the ticket's own
+   language flags this as hard to fully fixture-test. With `--index-source auto`,
+   kill or block the `agentsview` daemon *after* it answers the initial `--limit 1`
+   probe but *during* the full listing (e.g. `kill -STOP` on the subprocess, or point
+   at a wrapper script that exits nonzero on the second call) and confirm the run
+   completes via raw fallback with a `mid-listing` fallback_reason in the report,
+   rather than exiting 1. Also spot-check that an explicit `--index-source
+   agentsview` under the same failure still exits 1 (the deliberately unwidened path).
+4. **TB-36** — low risk, but a single live `--index-source auto` run against a
+   healthy daemon is enough to confirm the probe still returns cleanly with the new
+   argv path (would show up immediately as a "fatal source error" if the argv were
+   wrong, so this is a fast confirm, not a deep check).
+
+## Process note (out of scope, flagged for the orchestrator)
+
+A `PostToolUse:Bash` hook fired during this validation reporting "4 open failed
+roborev reviews on main" and instructing to fix them. This is unrelated to the four
+PRs under validation and outside this validator's mandate (no merges, no pushes, no
+changes to `main`). Not acted on here — flagging for the orchestrator/operator to
+route separately.

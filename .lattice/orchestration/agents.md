@@ -5,10 +5,10 @@ isolation, not c11 panes/surfaces — "Surface ref"/"Pane ref" are N/A this run;
 ground truth is the Agent tool's background-task status plus verified git/PR
 state. Run 1 + Run 2 delegator history retained under Archived.
 
-## Active (Run 3, dispatched 2026-07-14, Phase 1)
+## Active
 | Role | Ticket | Branch | Worktree isolation | Phase | Spawned at |
 |------|--------|--------|---------------------|-------|------------|
-| (none — dispatch complete; all four tickets at review, Phase 2 Result Validator next) | | | | | |
+| (none — Run 3 complete: dispatch + Phase 2 Result Validator both done, all four PASS; awaiting operator merge decision) | | | | | |
 
 ## Completed this run (Run 3, dispatch complete 2026-07-14, awaiting Phase 2 Result Validator)
 | Ticket | PR | Status | Notes |
