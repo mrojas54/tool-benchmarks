@@ -208,10 +208,16 @@ def _mkdir_private(path: Path) -> None:
 def _assert_deps_base_safe(deps_base: Path, corpus_root: Path) -> None:
     """Refuse a cache that leaks corpus source or that this user does not own.
 
-    Called before any dep is built or symlinked. Resolves both paths first, so a
-    symlinked cache ancestor pointing back under the corpus is caught as the real
-    path it is rather than the path it advertises.
+    Called before any dep is built or symlinked. Rejects the literal cache leaf
+    before resolving either path, including dangling symlinks. Resolution still
+    catches a symlinked ancestor pointing back under the corpus as the real path
+    it is rather than the path it advertises.
     """
+    if deps_base.is_symlink():
+        raise UnsafeDepsCache(
+            f"dependency cache {deps_base.absolute()} is a symlink: refusing to "
+            "follow a replaceable cache base for dependency writes or trial reads"
+        )
     cache = deps_base.resolve()
     corpus = corpus_root.resolve()
     anchor = Path(cache.anchor)
@@ -230,9 +236,6 @@ def _assert_deps_base_safe(deps_base: Path, corpus_root: Path) -> None:
                 f"Set $TMPDIR (or pass deps_base=) to a location that diverges from "
                 f"the corpus checkout at the filesystem root."
             )
-
-    if cache.is_symlink():  # resolve() above means this is a dangling link
-        raise UnsafeDepsCache(f"dependency cache {cache} is a dangling symlink")
 
     # A private leaf under a parent others can write is still swappable: they cannot
     # read into it, but they can rename it away and leave their own in its place
@@ -266,12 +269,33 @@ def _assert_deps_base_safe(deps_base: Path, corpus_root: Path) -> None:
             )
 
     if not cache.exists():
-        _mkdir_private(cache)
+        try:
+            _mkdir_private(deps_base)
+        except FileExistsError as exc:
+            raise UnsafeDepsCache(
+                f"dependency cache {deps_base.absolute()} changed while it was "
+                "being validated; refusing to follow it"
+            ) from exc
 
     # Validate whatever is now there -- created or pre-existing alike. Checking the
     # dir we just made is not redundant: it is what catches a hostile umask, or
     # another uid winning a race to create the path first.
-    st = cache.stat()
+    try:
+        st = deps_base.lstat()
+    except FileNotFoundError as exc:
+        raise UnsafeDepsCache(
+            f"dependency cache {deps_base.absolute()} disappeared while it was "
+            "being validated"
+        ) from exc
+    if stat.S_ISLNK(st.st_mode):
+        raise UnsafeDepsCache(
+            f"dependency cache {deps_base.absolute()} became a symlink while it "
+            "was being validated"
+        )
+    if not stat.S_ISDIR(st.st_mode):
+        raise UnsafeDepsCache(
+            f"dependency cache {deps_base.absolute()} is not a directory"
+        )
     if st.st_uid != os.getuid():
         raise UnsafeDepsCache(
             f"dependency cache {cache} is owned by uid {st.st_uid}, not by this "
