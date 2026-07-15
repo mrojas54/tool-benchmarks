@@ -13,6 +13,7 @@ from toolbench.complex_runner import (
     UnsafeDepsCache,
     _assert_deps_base_safe,
     _default_deps_base,
+    _mkdir_private,
     branch_name,
     build_claude_argv,
     ensure_deps,
@@ -633,6 +634,63 @@ class DepsCacheRuntimeGuardTests(unittest.TestCase):
         os.chmod(hostile, 0o777)  # defeat umask
         with self.assertRaises(UnsafeDepsCache):
             ensure_deps(self.corpus_root, "toy", deps_base=hostile)
+
+    def test_ensure_deps_refuses_a_non_dangling_base_symlink_without_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            victim = root / "victim"
+            victim.mkdir()
+            deps_base = root / "cache"
+            deps_base.symlink_to(victim, target_is_directory=True)
+            repo_web = self.corpus_root / "toy" / "web"
+            repo_web.mkdir(parents=True)
+            for name in ("package.json", "package-lock.json"):
+                (repo_web / name).write_text("{}\n", encoding="utf-8")
+
+            with mock.patch("toolbench.complex_runner.subprocess.run") as run:
+                with self.assertRaisesRegex(UnsafeDepsCache, "is a symlink"):
+                    ensure_deps(self.corpus_root, "toy", deps_base=deps_base)
+
+            self.assertFalse((victim / "toy").exists())
+            run.assert_not_called()
+
+    def test_a_dangling_base_symlink_is_refused_without_creating_its_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            victim = root / "victim"
+            deps_base = root / "cache"
+            deps_base.symlink_to(victim, target_is_directory=True)
+
+            with self.assertRaisesRegex(UnsafeDepsCache, "is a symlink"):
+                _assert_deps_base_safe(deps_base, self.corpus_root)
+
+            self.assertFalse(victim.exists())
+
+    def test_a_base_changed_to_a_dangling_symlink_before_creation_is_refused(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            victim = root / "victim"
+            deps_base = root / "cache"
+            real_mkdir_private = _mkdir_private
+            swapped = False
+
+            def swap_before_mkdir(path: Path) -> None:
+                nonlocal swapped
+                deps_base.symlink_to(victim, target_is_directory=True)
+                swapped = True
+                real_mkdir_private(path)
+
+            with mock.patch(
+                "toolbench.complex_runner._mkdir_private",
+                side_effect=swap_before_mkdir,
+            ):
+                with self.assertRaisesRegex(UnsafeDepsCache, "changed while"):
+                    _assert_deps_base_safe(deps_base, self.corpus_root)
+
+            self.assertTrue(swapped, "test must replace the leaf after the initial check")
+            self.assertFalse(victim.exists())
 
 
 class ShellOracleTests(unittest.TestCase):
