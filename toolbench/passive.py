@@ -360,9 +360,10 @@ def _discover_refs(
     exactly that reason.
 
     `FileNotFoundError` (the source vanished outright -- binary removed, root gone)
-    and `RuntimeError`/`AgentsViewTimeout` (the daemon answered `_probe_agentsview`'s
-    health check and then broke -- nonzero exit or a hang -- somewhere in the
-    pagination that followed, TB-38) get different treatment on purpose: a vanished
+    and `RuntimeError`/`AgentsViewTimeout`/`ValueError` (the daemon answered
+    `_probe_agentsview`'s health check and then broke -- nonzero exit, a hang, or a
+    malformed JSON payload -- somewhere in the pagination that followed, TB-38) get
+    different treatment on purpose: a vanished
     source has no raw root to fall back to any more reliably than agentsview itself,
     so it degrades to a named `MISSING_SOURCE` skip with no denominator. A daemon that
     was merely unhealthy mid-listing has no such excuse -- the raw filesystem is still
@@ -414,7 +415,7 @@ def _discover_refs(
             )
         else:
             raise
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         if args.index_source != "auto":
             # An explicit `--index-source agentsview` is a demand, not a preference
             # (mirrors `test_explicit_agentsview_does_not_swallow_a_timeout`): the
@@ -560,7 +561,7 @@ def main(
             refs, fallback_reason, skips, census, limit_truncated = _discover_refs(
                 args, root, runner
             )
-        except (FileNotFoundError, RuntimeError) as exc:
+        except (FileNotFoundError, RuntimeError, ValueError) as exc:
             print(f"toolbench.passive: fatal source error: {exc}", file=sys.stderr)
             return 1
         if freeze_path is not None:
