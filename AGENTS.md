@@ -68,10 +68,14 @@ Non-obvious notes for this environment:
   gate:** the `agentsview` CLI, real `~/.claude`/Codex transcript roots, and the
   Hermes archive (`~/.hermes` / `$HERMES_HOME`). Fast-suite skips for absent live
   archives are expected (currently 2 skips when hermes/live paths are missing).
-- **Sampling disclosure (TB-33):** `--limit` caps total refs in RECENCY order across the
-  whole archive, so each agent lands at a different fraction of its own history and an
-  agent whose work is all older than the window vanishes entirely. The Agent Breakdown's
-  `sampled` column carries each agent's denominator; agents present in the archive but
-  never scanned still get a row. Cross-agent ratios are only comparable when the report
-  emits no uneven-sampling line. A frozen corpus (`--freeze`) has no denominator and
-  says so.
+- **Sampling disclosure (S41 / TB-33 / TB-35):** `--limit` caps total refs in RECENCY
+  order across the whole archive, so each agent lands at a different fraction of its own
+  history and an agent whose work is all older than the window vanishes entirely. The
+  Agent Breakdown's `sampled` column carries each agent's denominator; agents present in
+  the archive but never scanned still get a row. The uneven-sampling line apportions the
+  per-agent remainder (`total - sampled`) between truncation and attrition from *observed*
+  signals only — `limit_truncated` for the window cutting the listing, `SkipRecord`s for
+  skips — rather than merely asserting both happened (TB-35): a `--limit` passed without
+  biting is not truncation, and a negative remainder is flagged as drift. Cross-agent
+  ratios are only comparable when the report emits no uneven-sampling line. A frozen
+  corpus (`--freeze`) has no denominator and says so.

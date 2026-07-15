@@ -262,6 +262,26 @@ and re-exports the public symbols historical imports expect.
   caveat — never a ranking column (S19). `.lattice/orchestration/agents.md` cannot
   serve as the manifest: it discards its Branch column on run completion (TB-27;
   builds on the session-grain sums of S39/TB-26).
+- **S41 — per-agent sampling disclosure.** `--limit` truncates discovery in
+  **recency order across the whole archive**, not per agent, so each agent's row
+  rests on a different fraction of its own history and an agent whose work is all
+  older than the window can vanish at `sessions == 0`. Discovery therefore gathers
+  an `AgentCensus` (`toolbench/sources.py`) under the *same* filters as the scan
+  (including `--exclude-subagents`), and the Agent Breakdown carries a `sampled`
+  cell per agent — numerator, census denominator, and fraction — with agents
+  present in the archive but never reached still given a row (`sessions == 0` reads
+  as looked-and-found-none, not never-looked). When the sampling is uneven,
+  `_sampling_notes` / `_apportionment` (`toolbench/report.py`) name the cause from
+  *observed signals only* — `SkipRecord`s for attrition, `limit_truncated` for
+  truncation — and apportion the per-agent remainder (`total - sampled`) between
+  the two rather than merely asserting both happened (TB-35): a limit that was
+  passed but never bit is not truncation, a negative remainder is flagged as
+  census/scan drift instead of laundered, and `limit_truncated is None` (the source
+  could not say) is stated as its own third answer. Cross-agent ratios are
+  trustworthy only when no uneven-sampling line prints. A `--freeze` replay has no
+  live archive to census, and a census that failed at discovery carries its
+  `unavailable_reason`, so both mark the fractions unavailable rather than
+  inventing a denominator (S37).
 
 ## Active probes — `toolbench/probe.py` + `protocols/active-probes.md`
 

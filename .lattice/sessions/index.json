@@ -3,6 +3,7 @@
     "Argus-1": "sess_01KXE3VPXAC2C9HYRXW1FFDRMW",
     "Orchestrator-1": "sess_01KXFYJZ3BMPT2JKA6MBSH2ABQ",
     "Scribe-1": "sess_01KXEJ2C3JK579PEPHCEW7WFH2",
+    "Scribe-2": "sess_01KXH9AQV6K6DVYP8VXFKBK0RR",
     "Vulcan-1": "sess_01KXE6GYAJ6320TK4NJ29NKA4P",
     "Vulcan-2": "sess_01KXFH7HF6DJ3AVNXKKTGJZ9MS",
     "Vulcan-3": "sess_01KXFN0VJVQNSK8V3GG5DY1H9M",
@@ -11,7 +12,7 @@
   "serial_counters": {
     "Argus": 1,
     "Orchestrator": 1,
-    "Scribe": 1,
+    "Scribe": 2,
     "Vulcan": 4
   }
 }
