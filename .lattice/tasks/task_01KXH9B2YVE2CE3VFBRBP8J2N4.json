@@ -1,0 +1,49 @@
+{
+  "assigned_to": null,
+  "branch_links": [],
+  "comment_count": 1,
+  "complexity": "low",
+  "created_at": "2026-07-14T21:43:15Z",
+  "created_by": {
+    "agent_type": "triage",
+    "base_name": "Scribe",
+    "framework": "claude-code",
+    "model": "claude-opus-4-8",
+    "name": "Scribe-2",
+    "serial": 2,
+    "session": "sess_01KXH9AQV6K6DVYP8VXFKBK0RR"
+  },
+  "custom_fields": {},
+  "description": "Draft PR #59 (cursor/engineering-documentation-updates-af18) was closed as superseded by the Run 3 closeout: it was 15 commits stale, and the substance it documented (--agentsview-timeout / TB-39, AgentCensus + sampling disclosure, the sampled column, the export_timeout skip reason) had already landed on main independently.\n\nThree pieces of bookkeeping it carried, however, are genuinely ABSENT from main. Verified by grep across all *.md on main at 95c13f7 -- zero hits for each:\n\n  1. EVALUATION.md -- no S41 criterion row. The sampling-disclosure behaviour is implemented and tested, but has no row in the criteria table, so the one table meant to enumerate every SPEC criterion silently under-reports. Every other S-number has a row.\n\n  2. BUILDPLAN.md -- no T18 / T19 rows. T17 is the last row on main, so the two build tickets that produced the AgentsView hang bound (TB-32/TB-39) and the per-agent sampling disclosure (TB-33/TB-35) are missing from the build ledger.\n\n  3. TB-35 is referenced NOWHERE in any doc on main, despite being closed. The uneven-sampling line apportions truncation vs attrition from observed signals -- that is TB-35's contribution -- but the text credits only TB-33.\n\nDO NOT rebase or cherry-pick PR #59's branch. Its EVALUATION.md hunks rewrite the S34 / S35 / S37 rows from a merge-base at which those rows were much shorter; main has since expanded them with the TB-34 and TB-37 census text. Resolving that merge risks regressing those rows. Author the three additions fresh against current main instead.\n\nScope is docs-only: no code change, no test change. Confirm the gate still passes rather than assuming it.",
+  "done_at": "2026-07-15T03:27:50Z",
+  "evidence_refs": [
+    {
+      "id": "ev_01KXHX217ZWQ2RZ7Z6EP0QKQY1",
+      "role": "review",
+      "source_type": "comment"
+    },
+    {
+      "id": "art_01KXHX217ZWQ2RZ7Z6EP0QKQY0",
+      "role": "review",
+      "source_type": "artifact"
+    }
+  ],
+  "id": "task_01KXH9B2YVE2CE3VFBRBP8J2N4",
+  "last_event_id": "ev_01KXHX217ZWQ2RZ7Z6EP0QKQY4",
+  "last_status_changed_at": "2026-07-15T03:27:50Z",
+  "priority": "low",
+  "relationships_out": [],
+  "reopened_count": 0,
+  "schema_version": 1,
+  "short_id": "TB-40",
+  "status": "done",
+  "tags": [
+    "docs",
+    "bookkeeping",
+    "tb-33-followup"
+  ],
+  "title": "Docs bookkeeping gap: S41 criterion, T18/T19 build rows, and TB-35 attribution never landed on main",
+  "type": "chore",
+  "updated_at": "2026-07-15T03:27:50Z",
+  "urgency": null
+}

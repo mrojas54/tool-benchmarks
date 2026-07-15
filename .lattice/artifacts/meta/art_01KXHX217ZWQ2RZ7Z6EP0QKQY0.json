@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-07-15T03:27:50Z",
+  "created_by": "agent:claude",
+  "custom_fields": {},
+  "id": "art_01KXHX217ZWQ2RZ7Z6EP0QKQY0",
+  "model": null,
+  "payload": {
+    "content_type": "text/markdown",
+    "file": "art_01KXHX217ZWQ2RZ7Z6EP0QKQY0.md",
+    "size_bytes": 691
+  },
+  "schema_version": 1,
+  "sensitive": false,
+  "summary": "Minted S41 fully rather than adding a dangling EVALUATION row: the sampled/AgentCensus feature shipped unnumbered (SPEC topped at S40), so a bare EVALUATION S41 row would reference a criterion SPEC ne",
+  "tags": [],
+  "title": "Review findings",
+  "token_usage": null,
+  "type": "note"
+}

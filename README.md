@@ -208,7 +208,7 @@ covers `tests` as well as `toolbench`.
 
 Source-of-truth documents:
 
-- [`SPEC.md`](SPEC.md) — 40 numbered acceptance criteria (S1–S40).
+- [`SPEC.md`](SPEC.md) — 41 numbered acceptance criteria (S1–S41).
 - [`EVALUATION.md`](EVALUATION.md) — verification map for every criterion.
 - [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the T1–T6 tickets
   plus post-merge TB/T rows.
