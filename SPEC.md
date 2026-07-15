@@ -279,9 +279,14 @@ and re-exports the public symbols historical imports expect.
   census/scan drift instead of laundered, and `limit_truncated is None` (the source
   could not say) is stated as its own third answer. Cross-agent ratios are
   trustworthy only when no uneven-sampling line prints. A `--freeze` replay has no
-  live archive to census, and a census that failed at discovery carries its
-  `unavailable_reason`, so both mark the fractions unavailable rather than
-  inventing a denominator (S37).
+  *live* archive to census: when the v2 manifest carries a freeze-time census
+  (TB-37 / S37), replay discloses those fractions with an explicit historical-
+  denominator caveat; when the manifest has no `census` key (v1, or a v2 write
+  whose freeze-time census itself failed) — or when a live census failed at
+  discovery — the report carries `unavailable_reason` and marks fractions
+  unavailable rather than inventing a denominator. The empty-selection path
+  reuses the same census disclosure so a narrow window is not mistaken for an
+  empty archive (TB-34 / S35).
 
 ## Active probes — `toolbench/probe.py` + `protocols/active-probes.md`
 
