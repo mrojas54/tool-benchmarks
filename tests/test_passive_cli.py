@@ -1518,8 +1518,28 @@ class MidListingAutoFallbackTests(unittest.TestCase):
         self.assertIsNone(census.unavailable_reason)
         self.assertFalse(truncated)
 
+    def test_malformed_json_mid_listing_falls_back_to_raw(self) -> None:
+        """A zero-exit response can still be unusable; auto mode must recover from
+        malformed listing JSON just as it does from nonzero exits and timeouts."""
+        args = parse_args(["--index-source", "auto"])
+        runner = FakeRunner([self._probe_ok(), completed(stdout="not-json")])
+
+        refs, fallback_reason, skips, census, truncated = _discover_refs(
+            args, self._root_with_one_session(), runner
+        )
+
+        self.assertEqual([r.source for r in refs], ["raw"])
+        assert fallback_reason is not None
+        self.assertIn("mid-listing", fallback_reason)
+        self.assertIn("Expecting value", fallback_reason)
+        self.assertEqual(len(skips), 1)
+        self.assertIs(skips[0].reason, SkipReason.EXPORT_FAILED)
+        self.assertEqual(census.totals, {"claude-code": 1})
+        self.assertIsNone(census.unavailable_reason)
+        self.assertFalse(truncated)
+
     def test_explicit_agentsview_mode_still_raises(self) -> None:
-        """Scope check: the widened `except RuntimeError` is gated on `auto`. An
+        """Scope check: the widened source-failure guard is gated on `auto`. An
         explicit `--index-source agentsview` demand must still surface the failure
         raw, unchanged from TB-32 (`test_explicit_agentsview_does_not_swallow_a_timeout`,
         tests/test_sources.py)."""
@@ -1528,6 +1548,17 @@ class MidListingAutoFallbackTests(unittest.TestCase):
 
         with self.assertRaises(AgentsViewTimeout):
             _discover_refs(args, "/nonexistent", runner)
+
+    def test_explicit_agentsview_malformed_listing_reports_fatal_error(self) -> None:
+        runner = FakeRunner([completed(stdout="not-json")])
+        stderr = io.StringIO()
+
+        with redirect_stderr(stderr):
+            result = main(["--index-source", "agentsview"], runner=runner)
+
+        self.assertEqual(result, 1)
+        self.assertIn("fatal source error", stderr.getvalue())
+        self.assertIn("Expecting value", stderr.getvalue())
 
     def test_source_vanishing_after_a_healthy_probe_is_unaffected(self) -> None:
         """`FileNotFoundError` gets its own, separate, deliberately-untouched branch in
