@@ -58,7 +58,10 @@ Non-obvious notes for this environment:
 - **Module split:** aggregation is `reducer.py`, markdown/fingerprint is
   `report.py`, freeze I/O is `freeze.py`, run-manifest I/O is
   `run_manifest.py`; `passive.py` is CLI + orchestration and re-exports the
-  historical public symbols.
+  historical public symbols. The complex debug probe library is `complex.py`
+  (defects, scoring, profile render) + `complex_runner.py` (worktree /
+  deps-cache / trial driver) — library only, no CLI yet; fixtures under
+  `probes/complex/`, pinned corpora under `corpus/`.
 - **Subagent paths:** real layout is
   `<project>/<session-uuid>/subagents/*.jsonl` (TB-29). `--exclude-subagents`
   drops those refs; freeze replay re-derives the flag from the path so a
@@ -67,15 +70,26 @@ Non-obvious notes for this environment:
 - **Optional external dependencies are not present here and are not needed for the
   gate:** the `agentsview` CLI, real `~/.claude`/Codex transcript roots, and the
   Hermes archive (`~/.hermes` / `$HERMES_HOME`). Fast-suite skips for absent live
-  archives are expected (currently 2 skips when hermes/live paths are missing).
-- **Sampling disclosure (S41 / TB-33 / TB-35):** `--limit` caps total refs in RECENCY
-  order across the whole archive, so each agent lands at a different fraction of its own
-  history and an agent whose work is all older than the window vanishes entirely. The
-  Agent Breakdown's `sampled` column carries each agent's denominator; agents present in
-  the archive but never scanned still get a row. The uneven-sampling line apportions the
-  per-agent remainder (`total - sampled`) between truncation and attrition from *observed*
-  signals only — `limit_truncated` for the window cutting the listing, `SkipRecord`s for
-  skips — rather than merely asserting both happened (TB-35): a `--limit` passed without
-  biting is not truncation, and a negative remainder is flagged as drift. Cross-agent
-  ratios are only comparable when the report emits no uneven-sampling line. A frozen
-  corpus (`--freeze`) has no denominator and says so.
+  archives are expected (currently 3 skips when hermes/optional live paths are
+  missing; hermetic suite is ~594 passing).
+- **`--index-source auto` mid-listing fallback (TB-38):** a daemon that answers
+  the `--limit 1` probe and then fails during pagination (nonzero exit or
+  `AgentsViewTimeout`) still degrades to raw — the partial agentsview listing is
+  discarded and rescanned wholesale, never spliced. Explicit `agentsview` stays
+  strict for all three failure modes.
+- **Sampling disclosure (S41 / TB-33 / TB-35 / TB-34 / TB-37):** `--limit` caps
+  total refs in RECENCY order across the whole archive, so each agent lands at a
+  different fraction of its own history and an agent whose work is all older than
+  the window vanishes entirely. The Agent Breakdown's `sampled` column carries
+  each agent's denominator; agents present in the archive but never scanned still
+  get a row. The uneven-sampling line apportions the per-agent remainder
+  (`total - sampled`) between truncation and attrition from *observed* signals
+  only — `limit_truncated` for the window cutting the listing, `SkipRecord`s for
+  skips — rather than merely asserting both happened (TB-35): a `--limit` passed
+  without biting is not truncation, and a negative remainder is flagged as drift.
+  Cross-agent ratios are only comparable when the report emits no uneven-sampling
+  line. A zero-match early return still prints the census the run already built
+  (TB-34) — a narrow window must not read as an empty archive. Freeze replay
+  (manifest v2, TB-37) restores the freeze-time census when present and labels it
+  a **historical** denominator; a v1 manifest or a v2 write without a census still
+  marks fractions unavailable and names the manifest version.

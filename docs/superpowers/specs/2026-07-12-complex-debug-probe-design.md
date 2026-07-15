@@ -1,7 +1,23 @@
 # Complex debug probe — design
 
-**Status:** design, pre-implementation. Pre-registered; no trials run.
-**Date:** 2026-07-12
+**Status:** library implemented (`toolbench/complex.py`, `toolbench/complex_runner.py`);
+no CLI yet. Fixtures under `probes/complex/`; pinned corpora under `corpus/`.
+Pre-registered predictions committed; no live trial matrix run yet.
+**Date:** 2026-07-12 (status refreshed 2026-07-15)
+
+## Implementation map (as shipped)
+
+| Module / path | Responsibility |
+|---|---|
+| `toolbench/complex.py` | Defect loading, `LOCATED:` scoring, arm audit, profile render |
+| `toolbench/complex_runner.py` | Hermetic worktree provision, deps cache, injectable `run_trial` |
+| `probes/complex/` | Per-cell fixtures (`defect.patch`, `truth.json`, `prediction.md`, `oracle.json`, `prompt.md`) |
+| `corpus/manifest.json` | Pinned SHAs + dep/warmup/provision recipes (`wids`, `maltese`, `rich`) |
+
+**Deps-cache invariants** (`UnsafeDepsCache`): the shared cache must diverge from
+the corpus at the filesystem root; must be a real private directory owned by this
+uid (not a replaceable symlink); contents are symlinked into trials and executed
+by oracles. Default base: `tempfile.gettempdir()/vendor-cache-<uid>`.
 
 ## Why this exists
 
