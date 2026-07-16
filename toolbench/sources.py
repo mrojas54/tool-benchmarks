@@ -89,6 +89,10 @@ class AgentsViewTimeout(RuntimeError):
     """
 
 
+class MalformedAgentsViewResponse(ValueError):
+    """A successful `agentsview session list` response violates its JSON contract."""
+
+
 class SkipReason(StrEnum):
     """Why a discovered session never reached the reducer (TB-23).
 
@@ -286,6 +290,63 @@ def _list_argv(
     return argv
 
 
+def _decode_agentsview_list_payload(
+    stdout: str, *, require_total: bool = False
+) -> dict[str, Any]:
+    """Parse and validate one successful `agentsview session list` response."""
+    try:
+        raw = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise MalformedAgentsViewResponse(
+            f"agentsview session list returned invalid JSON: {exc}"
+        ) from exc
+    if not isinstance(raw, dict):
+        raise MalformedAgentsViewResponse(
+            "agentsview session list payload must be a JSON object"
+        )
+
+    raw_sessions = raw.get("sessions")
+    if not isinstance(raw_sessions, list):
+        raise MalformedAgentsViewResponse(
+            "agentsview session list payload field `sessions` must be a list"
+        )
+    for index, row in enumerate(raw_sessions):
+        if not isinstance(row, dict):
+            raise MalformedAgentsViewResponse(
+                f"agentsview session list row {index} must be a JSON object"
+            )
+        for field in ("id", "agent", "project"):
+            if field not in row:
+                raise MalformedAgentsViewResponse(
+                    f"agentsview session list row {index} is missing required field `{field}`"
+                )
+            value = row[field]
+            if not isinstance(value, str) or not value:
+                raise MalformedAgentsViewResponse(
+                    f"agentsview session list row {index} field `{field}` "
+                    "must be a non-empty string"
+                )
+
+    raw_cursor = raw.get("next_cursor")
+    if raw_cursor is not None and not isinstance(raw_cursor, str):
+        raise MalformedAgentsViewResponse(
+            "agentsview session list payload field `next_cursor` must be a string or null"
+        )
+    if "total" in raw:
+        raw_total = raw["total"]
+        if isinstance(raw_total, bool) or not isinstance(raw_total, int) or raw_total < 0:
+            raise MalformedAgentsViewResponse(
+                "agentsview session list payload field `total` "
+                "must be a non-negative integer"
+            )
+    elif require_total:
+        raise MalformedAgentsViewResponse(
+            "agentsview session list payload is missing required field `total`"
+        )
+
+    return raw
+
+
 def _agentsview_pages(
     runner: Runner,
     *,
@@ -294,7 +355,7 @@ def _agentsview_pages(
     since: str | None,
     limit: int,
     includes: tuple[str, ...],
-) -> Iterator[tuple[Any, str]]:
+) -> Iterator[tuple[dict[str, Any], str]]:
     """Yield `(payload, stderr)` for each cursor page of one `session list` pass."""
     cursor: str | None = None
     while True:
@@ -312,7 +373,7 @@ def _agentsview_pages(
             raise RuntimeError(
                 f"agentsview session list failed ({result.returncode}): {result.stderr.strip()}"
             )
-        payload = json.loads(result.stdout)
+        payload = _decode_agentsview_list_payload(result.stdout)
         yield payload, result.stderr
         cursor = payload.get("next_cursor") or None
         if not cursor:
@@ -338,7 +399,7 @@ def _probe_pass(
     for payload, _ in _agentsview_pages(
         runner, agent=agent, project=project, since=since, limit=limit, includes=_PROBE_INCLUDES
     ):
-        for entry in payload.get("sessions", []):
+        for entry in payload["sessions"]:
             parent_ids.add(entry["id"])
             agents_seen.add(entry["agent"])
     return parent_ids, agents_seen
@@ -367,9 +428,8 @@ def _list_total(
         raise RuntimeError(
             f"agentsview session list failed ({result.returncode}): {result.stderr.strip()}"
         )
-    total = json.loads(result.stdout).get("total")
-    if not isinstance(total, int):
-        raise RuntimeError(f"agentsview session list returned no usable `total`: {total!r}")
+    total = _decode_agentsview_list_payload(result.stdout, require_total=True)["total"]
+    assert isinstance(total, int)
     return total
 
 
@@ -428,7 +488,7 @@ def _yield_refs(
                 AgentsViewExclusionWarning,
                 stacklevel=2,
             )
-        for entry in payload.get("sessions", []):
+        for entry in payload["sessions"]:
             yield SessionRef(
                 agent=entry["agent"],
                 source="agentsview",
@@ -612,10 +672,9 @@ def _probe_agentsview(runner: Runner) -> str | None:
     never block a scan, which is the whole of S10's intent.
 
     Routed through `_list_argv` (TB-36) like every other `session list` call site, even
-    though this one is exempt from the invariant `_list_argv` exists to enforce: this
-    argv is discarded wholesale (returncode/exit status only) and never feeds a census
-    denominator or a discovery numerator, so `agent="all"`, `project=None`, `since=None`,
-    and an empty `includes` are correct here -- not a stand-in for real filters.
+    though this one is exempt from the invariant `_list_argv` exists to enforce: its
+    validated payload never feeds a census denominator or discovery numerator, so
+    `agent="all"`, `project=None`, `since=None`, and empty `includes` are correct here.
     """
     try:
         result = runner(
@@ -627,6 +686,10 @@ def _probe_agentsview(runner: Runner) -> str | None:
         return str(exc)
     if result.returncode != 0:
         return f"agentsview exited {result.returncode}: {result.stderr.strip()}"
+    try:
+        _decode_agentsview_list_payload(result.stdout)
+    except ValueError as exc:
+        return str(exc)
     return None
 
 
