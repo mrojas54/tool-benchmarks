@@ -1,0 +1,54 @@
+# Continuous integration — the tech-debt gate.
+#
+# Runs the quality gate documented in README.md and AGENTS.md — ruff, mypy
+# --strict, pytest — on every pull request and on pushes to main, so new
+# lint / type / test debt can't land unnoticed. This is the enforcement half of
+# the tech-debt routine; the periodic *assessment* is a separate local tool
+# (see docs/superpowers/specs/2026-07-15-tech-debt-cicd-routine-design.md).
+#
+# Security note: every run: block below is a static string; no github.event.*
+# input is interpolated, so this workflow is not exposed to script-injection.
+# https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
+
+name: CI
+
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: python (ruff + mypy --strict + pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # --frozen asserts uv.lock is in sync with pyproject.toml (fails CI if a
+      # dependency change forgot to re-lock), so the environment is reproducible
+      # from the committed lock. --python 3.13 matches requires-python >=3.13;
+      # uv provisions the interpreter if the runner lacks it. The dev dependency
+      # group (ruff, mypy, pytest) installs by default under uv sync.
+      - name: Install dependencies
+        run: uv sync --frozen --python 3.13
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Type-check (mypy --strict)
+        run: uv run mypy --strict toolbench tests
+
+      - name: Tests (pytest)
+        run: uv run pytest -q
