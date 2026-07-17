@@ -16,8 +16,9 @@ Pre-registered predictions committed; no live trial matrix run yet.
 
 **Deps-cache invariants** (`UnsafeDepsCache`): the shared cache must diverge from
 the corpus at the filesystem root; must be a real private directory owned by this
-uid (not a replaceable symlink); contents are symlinked into trials and executed
-by oracles. Default base: `tempfile.gettempdir()/vendor-cache-<uid>`.
+uid (not a replaceable symlink — the leaf is rejected before `resolve()`,
+including a dangling link); contents are symlinked into trials and executed by
+oracles. Default base: `tempfile.gettempdir()/vendor-cache-<uid>`.
 
 ## Why this exists
 

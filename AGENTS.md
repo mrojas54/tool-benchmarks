@@ -76,7 +76,13 @@ Non-obvious notes for this environment:
   gate:** the `agentsview` CLI, real `~/.claude`/Codex transcript roots, and the
   Hermes archive (`~/.hermes` / `$HERMES_HOME`). Fast-suite skips for absent live
   archives are expected (currently 3 skips when hermes/optional live paths are
-  missing; hermetic suite is ~594 passing).
+  missing; hermetic suite is ~596 passing).
+- **Complex deps cache (`UnsafeDepsCache`):** `complex_runner._assert_deps_base_safe`
+  rejects a replaceable cache leaf *before* `resolve()` (including a dangling
+  symlink), then requires FS-root divergence from the corpus, sticky-safe
+  ancestors, and a private uid-owned directory under
+  `gettempdir()/vendor-cache-<uid>`. Operator notes live in `README.md`
+  (Complex debug probe section + troubleshooting).
 - **`--index-source auto` mid-listing fallback (TB-38):** a daemon that answers
   the `--limit 1` probe and then fails during pagination (nonzero exit,
   `AgentsViewTimeout`, or malformed listing JSON → `ValueError`) still degrades
