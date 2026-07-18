@@ -194,6 +194,100 @@ class IterAgentsviewSessionsTests(unittest.TestCase):
         self.assertIn("7497", str(caught.warning))
 
 
+class AgentsViewPayloadValidationTests(unittest.TestCase):
+    def test_eager_parent_probe_rejects_a_row_missing_id(self) -> None:
+        malformed = json.dumps({
+            "sessions": [{"project": "p", "agent": "claude"}],
+            "next_cursor": "",
+            "total": 1,
+        })
+
+        with self.assertRaisesRegex(ValueError, "id"):
+            discover_agentsview(
+                FakeRunner([completed(stdout=malformed)]),
+                agent="all",
+                project=None,
+                since=None,
+                limit=500,
+            )
+
+    def test_sessions_must_be_a_list(self) -> None:
+        malformed = json.dumps({"sessions": None, "next_cursor": "", "total": 0})
+
+        with self.assertRaisesRegex(ValueError, "sessions"):
+            list(iter_agentsview_sessions(runner=FakeRunner([completed(stdout=malformed)])))
+
+    def test_auto_falls_back_when_health_payload_shape_is_invalid(self) -> None:
+        malformed = json.dumps({"sessions": None, "next_cursor": "", "total": 0})
+        with TemporaryDirectory() as tmp:
+            project = Path(tmp) / "p"
+            project.mkdir()
+            (project / "raw.jsonl").write_text("{}\n")
+
+            refs, reason, _census = iter_sessions(
+                index_source="auto",
+                root=tmp,
+                runner=FakeRunner([completed(stdout=malformed)]),
+            )
+
+            self.assertEqual([ref.source for ref in refs], ["raw"])
+            assert reason is not None
+            self.assertIn("sessions", reason)
+
+    def test_top_level_payload_must_be_an_object(self) -> None:
+        with self.assertRaisesRegex(ValueError, "object"):
+            list(iter_agentsview_sessions(runner=FakeRunner([completed(stdout="[]")])))
+
+    def test_lazy_full_listing_rejects_a_row_missing_project(self) -> None:
+        malformed = json.dumps({
+            "sessions": [{"id": "s1", "agent": "claude"}],
+            "next_cursor": "",
+            "total": 1,
+        })
+        runner = FakeRunner([
+            completed(stdout=_page()),       # eager parent probe
+            completed(stdout=_total_page(0)),  # eager archive census
+            completed(stdout=malformed),     # lazy full listing
+        ])
+
+        _census, refs = discover_agentsview(
+            runner,
+            agent="all",
+            project=None,
+            since=None,
+            limit=500,
+        )
+
+        with self.assertRaisesRegex(ValueError, "project"):
+            list(refs)
+
+    def test_next_cursor_must_be_a_string_or_null(self) -> None:
+        malformed = json.dumps({"sessions": [], "next_cursor": 17, "total": 0})
+
+        with self.assertRaisesRegex(ValueError, "next_cursor"):
+            list(iter_agentsview_sessions(runner=FakeRunner([completed(stdout=malformed)])))
+
+    def test_census_total_must_be_a_non_negative_integer(self) -> None:
+        probe = _page({"id": "s1", "project": "p", "agent": "claude"})
+        malformed_total = json.dumps({"sessions": [], "next_cursor": "", "total": "one"})
+        runner = FakeRunner([
+            completed(stdout=probe),
+            completed(stdout=malformed_total),
+        ])
+
+        census, _refs = discover_agentsview(
+            runner,
+            agent="all",
+            project=None,
+            since=None,
+            limit=500,
+        )
+
+        self.assertIsNotNone(census.unavailable_reason)
+        assert census.unavailable_reason is not None
+        self.assertIn("total", census.unavailable_reason)
+
+
 class AgentCensusTests(unittest.TestCase):
     """Per-agent denominators, gathered under the run's own filters (TB-33)."""
 
