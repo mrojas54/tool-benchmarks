@@ -473,12 +473,12 @@ moving, not your code (TB-22).
   instead of letting it masquerade as a code effect.
   - **Manifest v2 + freeze-time census (TB-37).** New freezes write
     `toolbench-freeze-2` and, when the freeze-time census succeeded, persist it
-    under a `census` key. Replay then shows real per-agent `sampled` fractions
-    with an explicit **Historical denominator** caveat — the archive size as of
-    freeze time, not today's. A v1 manifest (or a v2 write whose census itself
-    failed) still marks fractions unavailable and names the manifest `version` in
-    the disclosure; absence of the key is what matters, not the version string
-    alone.
+    under a `census` key together with its subagent-population filter. Replay then
+    shows real per-agent `sampled` fractions only when that filter matches, with an
+    explicit **Historical denominator** caveat — the archive size as of freeze
+    time, not today's. A v1 manifest, a v2 write whose census itself failed, a
+    legacy v2 census without filter metadata, or a replay using the opposite
+    `--exclude-subagents` choice marks fractions unavailable instead.
 
 ### Sampling disclosure (`sampled` column + uneven line)
 
@@ -583,7 +583,7 @@ line means the run headline may understate what the orchestration spent.
 | Fingerprints differ between two "same" runs | Corpus moved: vanished observer tail and/or live append (S36) | Do not attribute the delta to code. Re-run with `--freeze` (S37) or compare only when digests match. |
 | `--freeze` replay reports vanished sessions | Frozen refs' transcripts aged out or AgentsView `source file not found` | Expected when the sliding window deletes mid-corpus. `--verbose` names them; rewrite the manifest only when you intentionally want a new pin. |
 | `--freeze` replay shows "Historical denominator" | Manifest v2 carried a freeze-time census (TB-37) | Expected. Fractions are archive size at freeze time, not today. Do not treat them as a live census. |
-| `--freeze` replay still says fractions unavailable | Manifest has no `census` key (v1, or freeze-time census failed) | Expected. Rewrite the freeze on current `main` if you want historical fractions; the disclosure names the manifest version. |
+| `--freeze` replay still says fractions unavailable | Manifest has no usable `census` (v1, freeze-time census failure, legacy v2 without population metadata, or replay changed `--exclude-subagents`) | Expected. Use the same subagent filter as the freeze; rewrite a legacy freeze on current `main` if you want historical fractions. |
 | Agent Breakdown ratios look incomparable across agents | `--limit` truncates in whole-archive recency order (S41) | Read the `sampled` column and the uneven-sampling line. Compare across agents only when that line is absent. |
 | `toolbench.passive` via `-m` fails from `~` | Package isn't on `sys.path` outside the checkout | From `~`, invoke by file path per the cache-token-metrics skill; from the repo root, `-m toolbench.passive` works. |
 | Summary cache read ↓ but creation ↑ by ~the same | Prefix-sharing moved cost between buckets (S39/S40) | Not a win. Compare read **and** creation together; read alone misleads. |

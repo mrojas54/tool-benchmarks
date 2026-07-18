@@ -1124,6 +1124,35 @@ class FreezeReplayCensusTests(unittest.TestCase):
             self.assertIn("freeze time", report)
             self.assertIn("frozen corpus", report)
 
+    def test_v2_replay_preserves_parent_only_census(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "projects"
+            project = root / "proj"
+            subagents = project / "session-parent" / "subagents"
+            subagents.mkdir(parents=True)
+            shutil.copy(FIXTURES / "sample.jsonl", project / "parent.jsonl")
+            shutil.copy(FIXTURES / "sample.jsonl", subagents / "child.jsonl")
+            manifest = str(Path(tmp) / "freeze.json")
+            argv = [
+                "--index-source",
+                "raw",
+                "--all",
+                "--freeze",
+                manifest,
+                "--exclude-subagents",
+            ]
+
+            main(argv, root=str(root))
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = main(argv, root=str(root))
+
+            self.assertEqual(code, 0)
+            report = out.getvalue()
+            self.assertIn("1 of 1 (100.0%)", report)
+            self.assertIn("Historical denominator", report)
+            self.assertNotIn("Sampling fractions unavailable", report)
+
     def test_replay_with_opposite_subagent_filter_does_not_reuse_wrong_census(self) -> None:
         for freeze_excludes_subagents in (False, True):
             with self.subTest(freeze_excludes_subagents=freeze_excludes_subagents):
@@ -1156,6 +1185,29 @@ class FreezeReplayCensusTests(unittest.TestCase):
                     self.assertIn("| claude-code | unknown |", report)
                     self.assertNotIn("(50.0%)", report)
                     self.assertNotIn("(200.0%)", report)
+
+    def test_legacy_v2_census_without_population_filter_is_not_reused(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "projects" / "proj"
+            root.mkdir(parents=True)
+            shutil.copy(FIXTURES / "sample.jsonl", root / "s1.jsonl")
+            manifest = Path(tmp) / "freeze.json"
+            argv = ["--index-source", "raw", "--all", "--freeze", str(manifest)]
+            main(argv, root=str(root.parent))
+
+            payload = json.loads(manifest.read_text())
+            payload.pop("census_includes_subagents")
+            manifest.write_text(json.dumps(payload))
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = main(argv, root=str(root.parent))
+
+            self.assertEqual(code, 0)
+            report = out.getvalue()
+            self.assertIn("Sampling fractions unavailable", report)
+            self.assertIn("recorded a census without its subagent population filter", report)
+            self.assertNotIn("Historical denominator", report)
 
     def test_v1_manifest_replay_degrades_gracefully_named_by_version(self) -> None:
         """A manifest frozen before TB-37 has no `census` key at all -- replay must not

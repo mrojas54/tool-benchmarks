@@ -38,6 +38,10 @@ class CorpusManifest:
     (e.g. discovery itself failed). When present, it is a HISTORICAL snapshot -- the
     live archive has moved on since -- and callers disclosing it must say so; see
     `passive.py`'s replay branch, which is the one place that renders it.
+
+    `census_includes_subagents` records the population filter used to measure that
+    denominator. Older v2 manifests lack it; replay must treat their census as
+    unavailable rather than risk pairing it with a differently filtered numerator.
     """
 
     version: str
@@ -128,7 +132,9 @@ def write_manifest(
     `census` (TB-37) is the archive-size census measured at freeze time -- optional
     so existing callers that have none (or none worth keeping) still write a valid
     manifest; `read_manifest` treats an absent `census` key exactly like a v1
-    manifest, whichever version string is on it.
+    manifest, whichever version string is on it. Its population filter is persisted
+    separately when known so replay can verify that the denominator still describes
+    the selected refs.
     """
     payload: dict[str, object] = {
         "version": MANIFEST_VERSION,
