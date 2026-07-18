@@ -45,6 +45,7 @@ class CorpusManifest:
     count: int
     refs: list[SessionRef]
     census: AgentCensus | None
+    census_includes_subagents: bool | None
 
 
 def _ref_to_dict(ref: SessionRef) -> dict[str, str | bool | None]:
@@ -116,7 +117,11 @@ def _census_from_dict(d: dict[str, object]) -> AgentCensus:
 
 
 def write_manifest(
-    path: str, refs: list[SessionRef], fingerprint: str, census: AgentCensus | None = None
+    path: str,
+    refs: list[SessionRef],
+    fingerprint: str,
+    census: AgentCensus | None = None,
+    census_includes_subagents: bool | None = None,
 ) -> None:
     """Freeze `refs` to `path` (write-once). Sorted keys keep the file stable.
 
@@ -133,6 +138,8 @@ def write_manifest(
     }
     if census is not None:
         payload["census"] = _census_to_dict(census)
+        if census_includes_subagents is not None:
+            payload["census_includes_subagents"] = census_includes_subagents
     Path(path).expanduser().write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
@@ -149,10 +156,17 @@ def read_manifest(path: str) -> CorpusManifest:
     data = json.loads(Path(path).expanduser().read_text())
     raw_census = data.get("census")
     census = _census_from_dict(raw_census) if isinstance(raw_census, dict) else None
+    raw_census_includes_subagents = data.get("census_includes_subagents")
+    census_includes_subagents = (
+        raw_census_includes_subagents
+        if isinstance(raw_census_includes_subagents, bool)
+        else None
+    )
     return CorpusManifest(
         version=str(data["version"]),
         fingerprint=str(data["fingerprint"]),
         count=int(data["count"]),
         refs=[_ref_from_dict(r) for r in data["refs"]],
         census=census,
+        census_includes_subagents=census_includes_subagents,
     )

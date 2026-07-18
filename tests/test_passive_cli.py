@@ -1124,6 +1124,39 @@ class FreezeReplayCensusTests(unittest.TestCase):
             self.assertIn("freeze time", report)
             self.assertIn("frozen corpus", report)
 
+    def test_replay_with_opposite_subagent_filter_does_not_reuse_wrong_census(self) -> None:
+        for freeze_excludes_subagents in (False, True):
+            with self.subTest(freeze_excludes_subagents=freeze_excludes_subagents):
+                with TemporaryDirectory() as tmp:
+                    root = Path(tmp) / "projects"
+                    project = root / "proj"
+                    subagents = project / "session-parent" / "subagents"
+                    subagents.mkdir(parents=True)
+                    shutil.copy(FIXTURES / "sample.jsonl", project / "parent.jsonl")
+                    shutil.copy(FIXTURES / "sample.jsonl", subagents / "child.jsonl")
+                    manifest = str(Path(tmp) / "freeze.json")
+
+                    freeze_argv = ["--index-source", "raw", "--all", "--freeze", manifest]
+                    if freeze_excludes_subagents:
+                        freeze_argv.append("--exclude-subagents")
+                    main(freeze_argv, root=str(root))
+
+                    replay_argv = ["--index-source", "raw", "--all", "--freeze", manifest]
+                    if not freeze_excludes_subagents:
+                        replay_argv.append("--exclude-subagents")
+                    out = io.StringIO()
+                    with redirect_stdout(out):
+                        code = main(replay_argv, root=str(root))
+
+                    self.assertEqual(code, 0)
+                    report = out.getvalue()
+                    self.assertIn("Sampling fractions unavailable", report)
+                    self.assertIn("freeze-time census", report)
+                    self.assertIn("subagents", report)
+                    self.assertIn("of unknown", report)
+                    self.assertNotIn("(50.0%)", report)
+                    self.assertNotIn("(200.0%)", report)
+
     def test_v1_manifest_replay_degrades_gracefully_named_by_version(self) -> None:
         """A manifest frozen before TB-37 has no `census` key at all -- replay must not
         crash, and the disclosure names the MANIFEST VERSION specifically, not

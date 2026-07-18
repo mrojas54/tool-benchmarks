@@ -542,6 +542,33 @@ def main(
                     f"freeze time was itself unavailable: {manifest.census.unavailable_reason}"
                 ),
             )
+        elif manifest.census_includes_subagents is None:
+            census = AgentCensus(
+                totals={},
+                archive_total=0,
+                unavailable_reason=(
+                    f"frozen corpus replay ({freeze_path}): manifest format "
+                    f"{manifest.version} recorded a census without its subagent "
+                    "population filter"
+                ),
+            )
+        elif manifest.census_includes_subagents != (not args.exclude_subagents):
+            frozen_population = (
+                "included subagents"
+                if manifest.census_includes_subagents
+                else "excluded subagents"
+            )
+            replay_population = (
+                "includes subagents" if not args.exclude_subagents else "excludes subagents"
+            )
+            census = AgentCensus(
+                totals={},
+                archive_total=0,
+                unavailable_reason=(
+                    f"frozen corpus replay ({freeze_path}): the freeze-time census "
+                    f"{frozen_population}, but this replay {replay_population}"
+                ),
+            )
         else:
             # A real census survived the freeze (TB-37): the fractions below are REAL,
             # but HISTORICAL -- the archive size as of freeze time, not today's. That
@@ -570,6 +597,7 @@ def main(
                 refs,
                 corpus_fingerprint(r.session_id for r in refs).digest,
                 census=census,
+                census_includes_subagents=not args.exclude_subagents,
             )
 
     # Counted before the filter runs, on both the discovery and the replay path -- these
