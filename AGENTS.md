@@ -76,12 +76,21 @@ Non-obvious notes for this environment:
   gate:** the `agentsview` CLI, real `~/.claude`/Codex transcript roots, and the
   Hermes archive (`~/.hermes` / `$HERMES_HOME`). Fast-suite skips for absent live
   archives are expected (currently 3 skips when hermes/optional live paths are
-  missing; hermetic suite is ~594 passing).
+  missing; hermetic suite is ~606 passing).
+- **Complex deps cache (`UnsafeDepsCache`):** `complex_runner._assert_deps_base_safe`
+  rejects a replaceable cache leaf *before* `resolve()` (including a dangling
+  symlink), then requires FS-root divergence from the corpus, sticky-safe
+  ancestors, and a private uid-owned directory under
+  `gettempdir()/vendor-cache-<uid>`. Operator notes live in `README.md`
+  (Complex debug probe section + troubleshooting).
 - **`--index-source auto` mid-listing fallback (TB-38):** a daemon that answers
   the `--limit 1` probe and then fails during pagination (nonzero exit,
-  `AgentsViewTimeout`, or malformed listing JSON → `ValueError`) still degrades
-  to raw — the partial agentsview listing is discarded and rescanned wholesale,
-  never spliced. Explicit `agentsview` stays strict for those mid-listing
+  `AgentsViewTimeout`, or schema-invalid listing → `MalformedAgentsViewResponse`
+  / `ValueError`) still degrades to raw — the partial agentsview listing is
+  discarded and rescanned wholesale, never spliced. "Schema-invalid" covers bad
+  JSON and contract failures (`sessions` not a list, row missing non-empty
+  `id`/`agent`/`project`, bad `next_cursor`/`total`). The health probe validates
+  that same shape. Explicit `agentsview` stays strict for those mid-listing
   failure modes (and for a vanished binary).
 - **Sampling disclosure (S41 / TB-33 / TB-35 / TB-34 / TB-37):** `--limit` caps
   total refs in RECENCY order across the whole archive, so each agent lands at a

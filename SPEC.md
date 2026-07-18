@@ -67,12 +67,17 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   `raw` uses the filesystem only. The fallback is not limited to what a single
   `--limit 1` health probe can see: a daemon that answers the probe and then
   breaks during the pagination that follows -- a nonzero exit, a hang
-  (`AgentsViewTimeout`, TB-32), or a malformed listing JSON payload
-  (`ValueError` / `json.JSONDecodeError`) -- also degrades `auto` to raw,
+  (`AgentsViewTimeout`, TB-32), or a schema-invalid listing payload
+  (`MalformedAgentsViewResponse` / `ValueError`: invalid JSON, non-object
+  payload, `sessions` not a list, row missing non-empty `id`/`agent`/`project`,
+  bad `next_cursor`/`total`) -- also degrades `auto` to raw,
   discarding whatever partial agentsview listing that attempt had collected and
   rescanning the corpus wholesale from the filesystem rather than splicing the
   two (TB-38; TB-22's identity/fingerprint precedent is why nothing is spliced).
-  A source that vanishes outright mid-discovery (`FileNotFoundError` — the
+  The `auto` health probe validates that same listing contract, so a zero-exit
+  but schema-invalid `--limit 1` response falls back at the probe rather than
+  entering pagination. A
+  source that vanishes outright mid-discovery (`FileNotFoundError` — the
   binary itself disappears) keeps its narrower, pre-existing handling: a named
   `MISSING_SOURCE` skip and an unavailable census, no raw rescan, since a
   vanished binary is not evidence the raw root is any healthier. An explicit
