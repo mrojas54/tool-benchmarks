@@ -4,7 +4,7 @@ Numbered acceptance criteria with stable IDs. Derived from
 `docs/2026-07-07-tool-benchmarks-design.md` (v2) and the v2 implementation
 plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 
-## Parser & records — `toolbench/transcript.py`
+## Parser & records — `src/toolbench/transcript.py`
 
 - **S1 — id-join.** `ClaudeParser.parse(lines, …)` joins each assistant
   `tool_use` block to its result by id. The join key is `message.content[].id`
@@ -26,7 +26,7 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 - **S6 — interrupted kept.** A `tool_use` with no matching result yields
   `output_chars=0, no_result=True`; it is kept, not dropped.
 
-## Multi-agent discovery — `toolbench/sources.py`
+## Multi-agent discovery — `src/toolbench/sources.py`
 
 - **S7 — raw discovery.** `iter_session_files(root="~/.claude/projects",
   project=None, since=None)` yields Claude Code JSONL paths, filtered by
@@ -95,7 +95,7 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   type the absence rather than stringify it. `detail` preserves the original message
   for `--verbose`/sidecar output but is never parsed to recover `reason` (TB-23).
 
-## Passive analyzer — `toolbench/passive.py` (+ `reducer.py` / `report.py` / `freeze.py`)
+## Passive analyzer — `src/toolbench/passive.py` (+ `reducer.py` / `report.py` / `freeze.py`)
 
 Aggregation and markdown rendering live in `reducer.py` and `report.py`;
 `freeze.py` owns the opt-in corpus pin. `passive.py` is the CLI + scan loop
@@ -170,7 +170,7 @@ and re-exports the public symbols historical imports expect.
   change (TB-22).
 - **S37 — `--freeze <manifest>` pins the corpus for reproducibility.** Absent the
   manifest, the first `--freeze` run discovers as usual and writes the discovered
-  ref list once (`toolbench/freeze.py`, JSON, `SessionRef` round-tripped, an
+  ref list once (`src/toolbench/freeze.py`, JSON, `SessionRef` round-tripped, an
   identity fingerprint over the discovered ids stored alongside); the Summary notes
   `Corpus frozen to: <path>`. When the manifest exists, the run **replays** it:
   live discovery is bypassed and the frozen refs are scanned directly, so the input
@@ -267,12 +267,12 @@ and re-exports the public symbols historical imports expect.
   **recency order across the whole archive**, not per agent, so each agent's row
   rests on a different fraction of its own history and an agent whose work is all
   older than the window can vanish at `sessions == 0`. Discovery therefore gathers
-  an `AgentCensus` (`toolbench/sources.py`) under the *same* filters as the scan
+  an `AgentCensus` (`src/toolbench/sources.py`) under the *same* filters as the scan
   (including `--exclude-subagents`), and the Agent Breakdown carries a `sampled`
   cell per agent — numerator, census denominator, and fraction — with agents
   present in the archive but never reached still given a row (`sessions == 0` reads
   as looked-and-found-none, not never-looked). When the sampling is uneven,
-  `_sampling_notes` / `_apportionment` (`toolbench/report.py`) name the cause from
+  `_sampling_notes` / `_apportionment` (`src/toolbench/report.py`) name the cause from
   *observed signals only* — `SkipRecord`s for attrition, `limit_truncated` for
   truncation — and apportion the per-agent remainder (`total - sampled`) between
   the two rather than merely asserting both happened (TB-35): a limit that was
@@ -289,7 +289,7 @@ and re-exports the public symbols historical imports expect.
   reuses the same census disclosure so a narrow window is not mistaken for an
   empty archive (TB-34 / S35).
 
-## Active probes — `toolbench/probe.py` + `protocols/active-probes.md`
+## Active probes — `src/toolbench/probe.py` + `protocols/active-probes.md`
 
 - **S16 — vendored corpus.** The probe corpus is **five files vendored under
   `tools/`** (relative paths, committed to the repo so probes are reproducible
@@ -378,7 +378,7 @@ and re-exports the public symbols historical imports expect.
   collects uniformly alongside `TestCase` methods. A test added as a bare
   module-level function cannot silently escape the gate (TB-19).
 
-## Schema dispatch — `toolbench/adapters.py` + `toolbench/registry.py`
+## Schema dispatch — `src/toolbench/adapters.py` + `src/toolbench/registry.py`
 
 - **S27 — schema dispatch.** `detect_parser` sniffs up to 100 non-empty lines
   and returns the single parser whose `claims_line` matches. Two matches raise
@@ -392,7 +392,7 @@ and re-exports the public symbols historical imports expect.
   lands in `skipped_roots` pending a parser of its own. `codex` is claimed by
   `CodexParser` (S33 / TB-12).
 
-## Usage provenance — `toolbench/parsers.py` + `toolbench/probe.py`
+## Usage provenance — `src/toolbench/parsers.py` + `src/toolbench/probe.py`
 
 - **S29 — producer provenance for usage.** Schema and producer are separate
   axes. A transcript claimed by the claude schema is routed by producer:
