@@ -116,9 +116,12 @@ rather than silently absent (S38 / TB-24).
   local transcript roots or pages the AgentsView CLI (`--index-source auto |
   agentsview | raw`). `auto` tries AgentsView first and falls back to raw
   scanning, recording the reason — including when a healthy probe is followed by
-  a mid-listing nonzero exit, hang, or malformed JSON payload (TB-38; partial
-  agentsview refs are discarded, never spliced). Raw discovery stamps `SessionRef.is_subagent`
-  for `<project>/<session-uuid>/subagents/*.jsonl` while keeping the owning project as the
+  a mid-listing nonzero exit, hang, or schema-invalid listing payload (TB-38;
+  partial agentsview refs are discarded, never spliced). Every successful
+  `session list` page is validated by `_decode_agentsview_list_payload`
+  (`MalformedAgentsViewResponse`); the `auto` health probe runs that same check.
+  Raw discovery stamps `SessionRef.is_subagent` for
+  `<project>/<session-uuid>/subagents/*.jsonl` while keeping the owning project as the
   first path segment (S13). Exports that are not JSONL (e.g. a SQLite dump
   with a NUL in the header) raise `NonTranscriptExport` and are skipped by
   name (TB-10).
@@ -215,9 +218,10 @@ corpora under [`corpus/`](corpus/) (`manifest.json` + `vendor.sh`). Design:
   A walkable shared ancestor (e.g. both under `$HOME`) re-opens a pristine-
   source leak via `..` from a trial's `node_modules` symlink.
 - The cache base must be a real, private directory owned by this uid — not a
-  symlink (replaceable cache base → `UnsafeDepsCache`), not world-accessible,
-  not under a writable non-sticky ancestor. Contents are symlinked into every
-  trial and executed by oracles.
+  symlink (replaceable cache base → `UnsafeDepsCache`; the leaf is rejected
+  *before* `resolve()`, including a dangling link), not world-accessible, not
+  under a writable non-sticky ancestor. Contents are symlinked into every trial
+  and executed by oracles.
 - Arms are enforced by **transcript audit** (`arm_violations` + read-scope), not
   filesystem walls: any resolved read outside the trial tree voids the trial.
   Bash/control arms hold a full shell; the profile discloses that their
@@ -261,7 +265,7 @@ are shipped. The complex debug probe library (`complex.py` /
 `reducer`/`report`, fold probe into `ClaudeParser`
 (`keep_raw_input` / `track_turns`), and stamp inefficiency tags at emit.
 The strict gate (`uv run ruff check .`, `uv run mypy --strict toolbench tests`,
-`uv run pytest -q`) is green — **594** tests passing (3 skipped when the
+`uv run pytest -q`) is green — **606** tests passing (3 skipped when the
 live hermes archive / optional live paths are absent). `mypy --strict`
 covers `tests` as well as `toolbench`. The same three commands run in CI
 (`.github/workflows/ci.yml`) on every PR and on pushes to `main`.
@@ -395,15 +399,19 @@ uv run pytest -q
 "Failure" means any of four things, not two (TB-32 / TB-38). AgentsView can be
 **absent** (binary not on `PATH`), **broken** (nonzero exit), **hung** — a daemon
 that accepts the connection and never answers — or **malformed** (zero-exit stdout
-that is not usable JSON). Every `agentsview` call is bounded by
+that fails the listing contract). Every `agentsview` call is bounded by
 `AGENTSVIEW_TIMEOUT_S` (60s, `sources.py`) and a hang is raised as
-`AgentsViewTimeout`; a garbled page raises `ValueError` (`json.JSONDecodeError`).
-Where that surfaces depends on when the daemon stops answering:
+`AgentsViewTimeout`. Successful `session list` pages are decoded by
+`_decode_agentsview_list_payload`, which raises `MalformedAgentsViewResponse`
+(`ValueError`) for invalid JSON, a non-object payload, `sessions` not a list, a
+row missing non-empty `id` / `agent` / `project`, a non-string `next_cursor`, or
+a bad `total`. Where that surfaces depends on when the daemon fails the check:
 
-- at the `auto` probe → fallback to raw, reason named in the Summary
-  (`agentsview timed out after 60.0s and was killed: …`);
+- at the `auto` probe → fallback to raw, reason named in the Summary (timeout
+  prose, or the schema-validation message when `--limit 1` returns a zero-exit
+  but invalid payload);
 - mid-listing, after a healthy probe, during pagination → `auto` still falls back to
-  raw (TB-38): a nonzero exit, hang, or malformed listing JSON discards the
+  raw (TB-38): a nonzero exit, hang, or schema-invalid listing discards the
   partial agentsview listing and rescans the corpus wholesale from the filesystem
   — never spliced onto truncated agentsview refs (a mixed corpus would break the
   fingerprint identity TB-22 protects). Explicit `--index-source agentsview` stays
@@ -576,7 +584,8 @@ line means the run headline may understate what the orchestration spent.
 | `toolbench.probe` raises `NonIsolableTurns` on a hermes trace file | Trace export has no `requestId`; probe keys turns only by that field (S30) | Score a native Claude Code probe session instead. Trace remains valid input to `passive`. |
 | `cursor` sessions appear only under the `unknown_schema` skip reason | No parser claims cursor's schema yet (`UnknownSchema`, S28) | Expected until a `CursorParser` lands. It must not appear as a healthy zero-call agent; `tally_skips`/`--verbose` surface the count and ids (S34). |
 | Sessions skipped under the `export_timeout` reason | The AgentsView daemon stopped answering **mid-scan**; each `export` is bounded at `AGENTSVIEW_TIMEOUT_S` (TB-32) | Not a bad session — a sick daemon. The probe passed, so the hang began later; the scan degrades to skips rather than dying. Restart AgentsView and re-run, or use `--index-source raw`. A run where *many* sessions carry this reason is not a corpus to trust. |
-| `--index-source auto` used to exit 1 after a healthy probe | Mid-listing failure (nonzero exit, hang, or malformed listing JSON) used to be fatal; now falls back to raw and discards the partial listing (TB-38) | Expected on current `main`. Explicit `--index-source agentsview` still exits 1 — that is the strict path. |
+| `--index-source auto` used to exit 1 after a healthy probe | Mid-listing failure (nonzero exit, hang, or schema-invalid listing — bad JSON **or** missing/`sessions`/row/`next_cursor`/`total` contract) used to be fatal; now falls back to raw and discards the partial listing (TB-38) | Expected on current `main`. Explicit `--index-source agentsview` still exits 1 — that is the strict path. A zero-exit but schema-invalid health probe also falls back under `auto`. |
+| Complex trial raises `UnsafeDepsCache` | Dep cache shares a walkable ancestor with the corpus, is a symlink (including dangling — checked before `resolve()`), or is not private to this uid | Pass `deps_base=` (or set `$TMPDIR`) so cache and corpus diverge at `/`; never point the cache at a replaceable symlink. |
 | `cache_assisted` shows `n/a` for every `codex` tool | codex has no per-call usage channel; it bills per turn via `token_count` events (`ABSENT_BY_SCHEMA`, S33) | Expected. Do not read `n/a` as "no cache hits". |
 | `codex` reports 0 errors no matter what failed | codex encodes exit status in the output text and sets `status: completed` even for failed tools (S33) | Expected. `error` is never inferred from output prose. Use `output_chars` / the raw transcript to inspect failures. |
 | `codex` web searches never appear in the leaderboard | `web_search_call` carries no `call_id` and emits no output record, so it cannot be joined (S33 / TB-24) | Expected. They are not joinable calls, so leaderboard/ratio counts exclude them. The count is not lost: the Summary's `Unjoinable tool records (seen, not joined)` line names it as `codex/web_search_call` (S38). |
