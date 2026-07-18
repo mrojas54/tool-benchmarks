@@ -1153,7 +1153,7 @@ class FreezeReplayCensusTests(unittest.TestCase):
                     self.assertIn("Sampling fractions unavailable", report)
                     self.assertIn("freeze-time census", report)
                     self.assertIn("subagents", report)
-                    self.assertIn("of unknown", report)
+                    self.assertIn("| claude-code | unknown |", report)
                     self.assertNotIn("(50.0%)", report)
                     self.assertNotIn("(200.0%)", report)
 
