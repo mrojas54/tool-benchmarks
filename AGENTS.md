@@ -20,7 +20,12 @@ Non-obvious notes for this environment:
   `uv run mypy --strict toolbench tests`, and `uv run pytest -q`. Do not use
   `uv run python -m unittest discover tests` as the gate — it silently misses
   module-level `test_*` functions (37 of 220 as of TB-19) and executes
-  module-level code, printing report tables to stdout mid-run.
+  module-level code, printing report tables to stdout mid-run. The same three
+  commands run in CI (`.github/workflows/ci.yml`) on every PR and push to
+  `main` (`uv sync --frozen --python 3.13`); the Lattice pre-commit hook is
+  orthogonal (event-log integrity, not the gate). Periodic tech-debt
+  *assessment* reports live under `~/tech-debt-work/` (local tool; not CI).
+  Design: `docs/superpowers/specs/2026-07-15-tech-debt-cicd-routine-design.md`.
 - **Lattice board integrity (install the pre-commit hook once per clone):**
   `ln -sf ../../.githooks/pre-commit .git/hooks/pre-commit`. `.git/hooks/` is not
   versioned, so a fresh clone gets the script but not the wiring; linked worktrees
@@ -73,10 +78,11 @@ Non-obvious notes for this environment:
   archives are expected (currently 3 skips when hermes/optional live paths are
   missing; hermetic suite is ~594 passing).
 - **`--index-source auto` mid-listing fallback (TB-38):** a daemon that answers
-  the `--limit 1` probe and then fails during pagination (nonzero exit or
-  `AgentsViewTimeout`) still degrades to raw — the partial agentsview listing is
-  discarded and rescanned wholesale, never spliced. Explicit `agentsview` stays
-  strict for all three failure modes.
+  the `--limit 1` probe and then fails during pagination (nonzero exit,
+  `AgentsViewTimeout`, or malformed listing JSON → `ValueError`) still degrades
+  to raw — the partial agentsview listing is discarded and rescanned wholesale,
+  never spliced. Explicit `agentsview` stays strict for those mid-listing
+  failure modes (and for a vanished binary).
 - **Sampling disclosure (S41 / TB-33 / TB-35 / TB-34 / TB-37):** `--limit` caps
   total refs in RECENCY order across the whole archive, so each agent lands at a
   different fraction of its own history and an agent whose work is all older than

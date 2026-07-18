@@ -1,14 +1,23 @@
 # Tech-debt routine — a repo CI gate, and a shared local assessment tool
 
+## Status
+
+**CI gate shipped** (`.github/workflows/ci.yml`, merged with the design): every
+PR and every push to `main` runs `uv sync --frozen --python 3.13`, then the
+documented gate (`ruff check .`, `mypy --strict toolbench tests`, `pytest -q`).
+The assessment tool remains local-only under `~/tech-debt-work/` (not in this
+repo).
+
 ## Problem
 
-The repo has a well-defined quality gate — `uv run ruff check .`, `uv run mypy
+The repo had a well-defined quality gate — `uv run ruff check .`, `uv run mypy
 --strict toolbench tests`, `uv run pytest -q` (documented in `AGENTS.md` and
-`README.md`) — but nothing runs it except a human at a keyboard. There is no
-`.github/` directory: the only automated check is the `.githooks/pre-commit`
-hook, and it guards Lattice event-log integrity, not the gate. So the gate holds
-only as long as every contributor remembers to run it locally. That is exactly
-the condition under which tech debt accretes silently.
+`README.md`) — but nothing ran it except a human at a keyboard. Before this
+change there was no `.github/` workflow for the gate: the only automated check
+was the `.githooks/pre-commit` hook, and it guards Lattice event-log integrity,
+not the gate. So the gate held only as long as every contributor remembered to
+run it locally. That is exactly the condition under which tech debt accretes
+silently.
 
 Separately, there is an established local practice: `~/tech-debt-work/<REPO>/` is
 where per-repo tech-debt work and reports live (today it holds a
