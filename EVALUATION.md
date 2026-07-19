@@ -52,7 +52,7 @@ One row per SPEC criterion, each tagged by how it is verified:
 | S18 | comparison table + seeded fallback + SeededReportError | `autonomous` | `test` |
 | S19 | context-cost ranking; cache caveat-only | `autonomous` | `test` |
 | S20 | stdlib runtime; uv project shape | `autonomous` | `test` + import-scan + `pyproject.toml` |
-| S21 | entry points run | `autonomous` | smoke via `uv run python -m …` |
+| S21 | entry points run (`toolbench` console script + `python -m`) | `autonomous` | smoke via `uv run toolbench …` / `uv run python -m …` |
 | S22 | strict gate green | `autonomous` | ruff + mypy + `test` |
 | S23 | exit-code contract; per-session skip continues the run | `autonomous` | `test` (argv, tmp roots, binary/non-UTF-8) |
 | S24 | fixtures + fake runner present | `autonomous` | `test` |
