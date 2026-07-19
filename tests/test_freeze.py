@@ -142,12 +142,19 @@ def test_write_manifest_persists_census_totals_and_archive_total() -> None:
     census = AgentCensus(totals={"claude": 12, "codex": 3}, archive_total=15)
     with TemporaryDirectory() as d:
         path = str(Path(d) / "corpus.manifest")
-        write_manifest(path, _refs(), "abc123", census=census)
+        write_manifest(
+            path,
+            _refs(),
+            "abc123",
+            census=census,
+            census_includes_subagents=False,
+        )
         m = read_manifest(path)
         assert m.census is not None
         assert m.census.totals == {"claude": 12, "codex": 3}
         assert m.census.archive_total == 15
         assert m.census.unavailable_reason is None
+        assert m.census_includes_subagents is False
         # `residual` is derived, not stored, and must reconstruct correctly.
         assert m.census.residual == 0
 

@@ -155,9 +155,10 @@ rather than silently absent (S38 / TB-24).
   `…/subagents/…` still counts as a subagent even if a pre-TB-29 manifest stored
   `"is_subagent": false` — the path is ground truth (TB-29). Manifest format
   v2 (`toolbench-freeze-2`) optionally persists the freeze-time `AgentCensus`
-  under a `census` key so replay can disclose real historical fractions
-  (TB-37); absence of the key (v1, or a failed freeze-time census) still marks
-  fractions unavailable and names the manifest version.
+  and its subagent-population filter so replay can disclose real historical
+  fractions only for the population that denominator measured (TB-37).
+  Missing census/filter metadata or a replay with the opposite filter marks
+  fractions unavailable instead.
 - **`run_manifest.py`** — JSON reader for `--run-manifest` (S40). Defines a
   run's branch set (`branches` required; empty/missing is refused). Not
   `.lattice/orchestration/agents.md` — that file drops its Branch column when
@@ -489,12 +490,12 @@ moving, not your code (TB-22).
   instead of letting it masquerade as a code effect.
   - **Manifest v2 + freeze-time census (TB-37).** New freezes write
     `toolbench-freeze-2` and, when the freeze-time census succeeded, persist it
-    under a `census` key. Replay then shows real per-agent `sampled` fractions
-    with an explicit **Historical denominator** caveat — the archive size as of
-    freeze time, not today's. A v1 manifest (or a v2 write whose census itself
-    failed) still marks fractions unavailable and names the manifest `version` in
-    the disclosure; absence of the key is what matters, not the version string
-    alone.
+    under a `census` key together with its subagent-population filter. Replay then
+    shows real per-agent `sampled` fractions only when that filter matches, with an
+    explicit **Historical denominator** caveat — the archive size as of freeze
+    time, not today's. A v1 manifest, a v2 write whose census itself failed, a
+    legacy v2 census without filter metadata, or a replay using the opposite
+    `--exclude-subagents` choice marks fractions unavailable instead.
 
 ### Sampling disclosure (`sampled` column + uneven line)
 
@@ -599,7 +600,7 @@ line means the run headline may understate what the orchestration spent.
 | Fingerprints differ between two "same" runs | Corpus moved: vanished observer tail and/or live append (S36) | Do not attribute the delta to code. Re-run with `--freeze` (S37) or compare only when digests match. |
 | `--freeze` replay reports vanished sessions | Frozen refs' transcripts aged out or AgentsView `source file not found` | Expected when the sliding window deletes mid-corpus. `--verbose` names them; rewrite the manifest only when you intentionally want a new pin. |
 | `--freeze` replay shows "Historical denominator" | Manifest v2 carried a freeze-time census (TB-37) | Expected. Fractions are archive size at freeze time, not today. Do not treat them as a live census. |
-| `--freeze` replay still says fractions unavailable | Manifest has no `census` key (v1, or freeze-time census failed) | Expected. Rewrite the freeze on current `main` if you want historical fractions; the disclosure names the manifest version. |
+| `--freeze` replay still says fractions unavailable | Manifest has no usable `census` (v1, freeze-time census failure, legacy v2 without population metadata, or replay changed `--exclude-subagents`) | Expected. Use the same subagent filter as the freeze; rewrite a legacy freeze on current `main` if you want historical fractions. |
 | Agent Breakdown ratios look incomparable across agents | `--limit` truncates in whole-archive recency order (S41) | Read the `sampled` column and the uneven-sampling line. Compare across agents only when that line is absent. |
 | `toolbench` / `-m toolbench.passive` fails from `~` with a system python | The checkout's venv (with the editable install) isn't active | Use `uv run --project ~/tool-benchmarks toolbench passive ...` from any cwd; inside the repo, `uv run toolbench ...` or `uv run python -m toolbench.passive` both work. |
 | `corpus/manifest.json` disappeared after pulling the src-layout change | The manifest now ships inside the package (`src/toolbench/corpus/manifest.json`); the corpus copy is generated | Re-run `corpus/vendor.sh` (idempotent — skips existing clones); it copies the packaged manifest back into `corpus/`. |
