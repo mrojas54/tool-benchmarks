@@ -219,8 +219,9 @@ packaged manifest there so the vendored tree stays self-describing). Design:
   A walkable shared ancestor (e.g. both under `$HOME`) re-opens a pristine-
   source leak via `..` from a trial's `node_modules` symlink.
 - The cache base must be a real, private directory owned by this uid — not a
-  symlink (replaceable cache base → `UnsafeDepsCache`), not world-accessible,
-  not under a writable non-sticky ancestor. Contents are symlinked into every
+  symlink (replaceable cache base → `UnsafeDepsCache`; the leaf is rejected
+  before `resolve()`, including a dangling link), not world-accessible, not
+  under a writable non-sticky ancestor. Contents are symlinked into every
   trial and executed by oracles.
 - Arms are enforced by **transcript audit** (`arm_violations` + read-scope), not
   filesystem walls: any resolved read outside the trial tree voids the trial.
@@ -596,7 +597,7 @@ line means the run headline may understate what the orchestration spent.
 | `--run-manifest` shows a large `unattributed` line | Candidate sessions also ran on non-run branches (straddle spillover, S40) | Expected. The run total is only the in-set entry slice; do not treat session totals as run-owned. |
 | `--run-manifest path.md` (or empty `branches`) exits 1 | Manifest must be JSON with a non-empty `branches` list (S40) | Use a dispatch-time JSON like `.lattice/orchestration/run-tb21-23.json`; `agents.md` cannot serve (Branch column is discarded on completion). |
 | `--exclude-subagents` still includes nested subagents / freeze replay ignores the flag | Pre-TB-29 discovery checked `rel.parts[1] == "subagents"` (flat layout that does not exist on disk); freeze manifests could pin stale `"is_subagent": false` | Current code matches `"subagents" in rel.parts[1:-1]` and ORs path re-derivation on freeze replay. Re-run on current `main`; rewrite the freeze manifest only if you intentionally want a new pin. |
-| Complex trial raises `UnsafeDepsCache` | Dep cache shares a walkable ancestor with the corpus, is a symlink, or is not private to this uid | Pass `deps_base=` (or set `$TMPDIR`) so cache and corpus diverge at `/`; never point the cache at a replaceable symlink. |
+| Complex trial raises `UnsafeDepsCache` | Dep cache shares a walkable ancestor with the corpus, is a symlink (including dangling — checked before `resolve()`), or is not private to this uid | Pass `deps_base=` (or set `$TMPDIR`) so cache and corpus diverge at `/`; never point the cache at a replaceable symlink. |
 | Complex trial raises `UnprovisionedWorktree` | `run_trial` was called without `provision_worktree` (no `PROMPT.md`) | Call `provision_worktree` first. There is no fallback prompt — the rationale would leak the predicted winner. |
 ## Quality gate
 
