@@ -153,7 +153,7 @@ looks exactly like the call that *performs* probe 01's bash arm.
 
 The run sheet in `protocols/probe-run-sheet.md` is the executable form of this
 protocol. Run it in a fresh session; it is written so the operator never needs
-to open this file or `toolbench/probe.py` mid-run.
+to open this file or `src/toolbench/probe.py` mid-run.
 
 A tool-arm candidate carrying some *other* probe's sentinel is rejected on the
 same grounds: a serena search of `tools/mcp.py` for `TB_PROBE_01_TOOL_V2` is a

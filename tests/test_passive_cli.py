@@ -299,7 +299,11 @@ class MainExitContractTests(unittest.TestCase):
         # `_discover_refs` did not wrap the `iter_sessions(...)` call itself in its
         # try/except, this would surface as `main`'s fatal source error (exit 1)
         # instead of degrading gracefully to a `MISSING_SOURCE` skip (exit 0).
-        runner = FakeRunner([completed(returncode=0), FileNotFoundError("agentsview vanished")])
+        probe = {"sessions": [], "next_cursor": "", "total": 0}
+        runner = FakeRunner([
+            completed(stdout=json.dumps(probe)),
+            FileNotFoundError("agentsview vanished"),
+        ])
         out = io.StringIO()
         with redirect_stdout(out):
             code = main(["--index-source", "auto"], runner=runner, root="/definitely/not/a/real/root")
@@ -1399,7 +1403,10 @@ class LimitTruncationProbeFailureTests(unittest.TestCase):
             failure,  # the probe's extra page
         ]
         if auto:  # `auto` asks whether agentsview is there at all before using it
-            responses.insert(0, completed(returncode=0))
+            responses.insert(
+                0,
+                completed(stdout=json.dumps({"sessions": [], "next_cursor": "", "total": 0})),
+            )
         return FakeRunner(responses)  # type: ignore[arg-type]
 
     def test_a_failed_page_leaves_truncation_unobserved(self) -> None:
@@ -1538,6 +1545,53 @@ class MidListingAutoFallbackTests(unittest.TestCase):
         self.assertIsNone(census.unavailable_reason)
         self.assertFalse(truncated)
 
+    def test_malformed_parent_probe_row_falls_back_to_raw(self) -> None:
+        args = parse_args(["--index-source", "auto"])
+        malformed = json.dumps({
+            "sessions": [{"project": "p", "agent": "claude"}],
+            "next_cursor": "",
+            "total": 1,
+        })
+        runner = FakeRunner([self._probe_ok(), completed(stdout=malformed)])
+
+        refs, fallback_reason, skips, census, truncated = _discover_refs(
+            args, self._root_with_one_session(), runner
+        )
+
+        self.assertEqual([r.source for r in refs], ["raw"])
+        assert fallback_reason is not None
+        self.assertIn("id", fallback_reason)
+        self.assertEqual(len(skips), 1)
+        self.assertIs(skips[0].reason, SkipReason.EXPORT_FAILED)
+        self.assertEqual(census.totals, {"claude-code": 1})
+        self.assertFalse(truncated)
+
+    def test_malformed_lazy_full_listing_row_falls_back_to_raw(self) -> None:
+        args = parse_args(["--index-source", "auto"])
+        malformed = json.dumps({
+            "sessions": [{"id": "s1", "agent": "claude"}],
+            "next_cursor": "",
+            "total": 1,
+        })
+        runner = FakeRunner([
+            self._probe_ok(),
+            completed(stdout=json.dumps({"sessions": [], "next_cursor": "", "total": 0})),
+            completed(stdout=json.dumps({"sessions": [], "next_cursor": "", "total": 0})),
+            completed(stdout=malformed),
+        ])
+
+        refs, fallback_reason, skips, census, truncated = _discover_refs(
+            args, self._root_with_one_session(), runner
+        )
+
+        self.assertEqual([r.source for r in refs], ["raw"])
+        assert fallback_reason is not None
+        self.assertIn("project", fallback_reason)
+        self.assertEqual(len(skips), 1)
+        self.assertIs(skips[0].reason, SkipReason.EXPORT_FAILED)
+        self.assertEqual(census.totals, {"claude-code": 1})
+        self.assertFalse(truncated)
+
     def test_explicit_agentsview_mode_still_raises(self) -> None:
         """Scope check: the widened source-failure guard is gated on `auto`. An
         explicit `--index-source agentsview` demand must still surface the failure
@@ -1559,6 +1613,23 @@ class MidListingAutoFallbackTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("fatal source error", stderr.getvalue())
         self.assertIn("Expecting value", stderr.getvalue())
+
+    def test_explicit_agentsview_malformed_row_reports_fatal_error(self) -> None:
+        malformed = json.dumps({
+            "sessions": [{"project": "p", "agent": "claude"}],
+            "next_cursor": "",
+            "total": 1,
+        })
+        runner = FakeRunner([completed(stdout=malformed)])
+        stderr = io.StringIO()
+
+        with redirect_stderr(stderr):
+            result = main(["--index-source", "agentsview"], runner=runner)
+
+        self.assertEqual(result, 1)
+        self.assertIn("fatal source error", stderr.getvalue())
+        self.assertIn("id", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
 
     def test_source_vanishing_after_a_healthy_probe_is_unaffected(self) -> None:
         """`FileNotFoundError` gets its own, separate, deliberately-untouched branch in

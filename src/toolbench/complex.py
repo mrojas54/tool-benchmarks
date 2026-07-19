@@ -92,13 +92,15 @@ class Truth:
 
 _KNOWN_WINNERS = ("serena", "native", "bash", "neutral")
 
-# The repo root, so `import toolbench.complex` works from any cwd. The fixtures
-# live at a fixed path relative to this module, never relative to the process's
-# working directory: a relative default made the import itself raise
-# FileNotFoundError anywhere but the repo root.
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_FIXTURE_ROOT = _REPO_ROOT / "probes" / "complex"
-MANIFEST_PATH = _REPO_ROOT / "corpus" / "manifest.json"
+# The package root, so `import toolbench.complex` works from any cwd AND any
+# install (editable checkout or wheel). The fixtures ship inside the package
+# and live at a fixed path relative to this module, never relative to the
+# process's working directory: a relative default made the import itself raise
+# FileNotFoundError anywhere but the repo root, and a repo-root anchor made it
+# raise anywhere but a checkout.
+_PACKAGE_ROOT = Path(__file__).resolve().parent
+DEFAULT_FIXTURE_ROOT = _PACKAGE_ROOT / "probes" / "complex"
+MANIFEST_PATH = _PACKAGE_ROOT / "corpus" / "manifest.json"
 
 # A gate is the leading run of bare-word tokens in the oracle's own argv:
 # ["npx","vitest","run","tests/x.ts"] -> `Bash(npx vitest run:*)`. A token with a
@@ -256,8 +258,8 @@ def load_defects(root: str | Path = DEFAULT_FIXTURE_ROOT) -> tuple[DefectSpec, .
         if repo not in known:
             raise ValueError(
                 f"fixture dir {entry.name!r} names repo {repo!r}, which is not in "
-                f"corpus/manifest.json ({sorted(known)}). A typo'd prefix would "
-                f"otherwise load as a real defect against a corpus that does not exist."
+                f"the packaged corpus manifest {MANIFEST_PATH} ({sorted(known)}). A typo'd "
+                f"prefix would otherwise load as a real defect against a corpus that does not exist."
             )
         if (repo, defect_id) in seen:
             raise ValueError(
