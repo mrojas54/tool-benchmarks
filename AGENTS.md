@@ -88,9 +88,12 @@ Non-obvious notes for this environment:
   (Complex debug probe section + troubleshooting).
 - **`--index-source auto` mid-listing fallback (TB-38):** a daemon that answers
   the `--limit 1` probe and then fails during pagination (nonzero exit,
-  `AgentsViewTimeout`, or malformed listing JSON → `ValueError`) still degrades
-  to raw — the partial agentsview listing is discarded and rescanned wholesale,
-  never spliced. Explicit `agentsview` stays strict for those mid-listing
+  `AgentsViewTimeout`, or schema-invalid listing → `MalformedAgentsViewResponse`
+  / `ValueError`) still degrades to raw — the partial agentsview listing is
+  discarded and rescanned wholesale, never spliced. "Schema-invalid" covers bad
+  JSON and contract failures (`sessions` not a list, row missing non-empty
+  `id`/`agent`/`project`, bad `next_cursor`/`total`). The health probe validates
+  that same shape. Explicit `agentsview` stays strict for those mid-listing
   failure modes (and for a vanished binary).
 - **Sampling disclosure (S41 / TB-33 / TB-35 / TB-34 / TB-37):** `--limit` caps
   total refs in RECENCY order across the whole archive, so each agent lands at a
