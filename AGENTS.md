@@ -13,11 +13,13 @@ Non-obvious notes for this environment:
 
 - **Toolchain:** the project is `uv`-managed and pins `requires-python = ">=3.13"`.
   Run `uv sync` (or let `uv run` sync implicitly) to provision a ≥3.13
-  interpreter into `.venv`. Always invoke tools via `uv run …` (e.g.
-  `uv run python -m toolbench.passive`); a system `python3` older than 3.13
-  will not satisfy the version pin.
+  interpreter into `.venv` and install `toolbench` editable (src layout,
+  `uv_build` backend). Always invoke tools via `uv run …` — the unified
+  console script `uv run toolbench passive …` / `uv run toolbench probe …`,
+  or the equivalent `uv run python -m toolbench.passive`; a system `python3`
+  older than 3.13 will not satisfy the version pin.
 - **Quality gate before any PR** (from `README.md`): `uv run ruff check .`,
-  `uv run mypy --strict toolbench tests`, and `uv run pytest -q`. Do not use
+  `uv run mypy --strict src/toolbench tests`, and `uv run pytest -q`. Do not use
   `uv run python -m unittest discover tests` as the gate — it silently misses
   module-level `test_*` functions (37 of 220 as of TB-19) and executes
   module-level code, printing report tables to stdout mid-run. The same three
@@ -53,11 +55,10 @@ Non-obvious notes for this environment:
   `keep_raw_input` / `track_turns` (no private Claude walker).
 - **Per-run cache-token grouping:** `--run-manifest <run.json>` is a flag on
   `toolbench.passive` (S40), not a separate module. Reader lives in
-  `run_manifest.py`. `uv run python -m toolbench.passive --run-manifest
-  run.json` works from the repo root. From `~` (cwd hygiene for measuring
-  `~/.claude`), invoke by file path as in
-  `.claude/skills/cache-token-metrics/SKILL.md` — `-m` fails outside the
-  checkout because the package is not installed into the venv. Detached
+  `run_manifest.py`. The package is installed editable into `.venv`, so it
+  works from any cwd: from `~` (cwd hygiene for measuring `~/.claude`), run
+  `uv run --project ~/tool-benchmarks toolbench passive --run-manifest
+  run.json` as in `.claude/skills/cache-token-metrics/SKILL.md`. Detached
   checkouts stamp `gitBranch="HEAD"` and are named in the run section, never
   folded into the run total (TB-28).
 - **Module split:** aggregation is `reducer.py`, markdown/fingerprint is
@@ -65,8 +66,10 @@ Non-obvious notes for this environment:
   `run_manifest.py`; `passive.py` is CLI + orchestration and re-exports the
   historical public symbols. The complex debug probe library is `complex.py`
   (defects, scoring, profile render) + `complex_runner.py` (worktree /
-  deps-cache / trial driver) — library only, no CLI yet; fixtures under
-  `probes/complex/`, pinned corpora under `corpus/`.
+  deps-cache / trial driver) — library only, no CLI yet; fixtures and the
+  pinned manifest ship inside the package (`src/toolbench/probes/complex/`,
+  `src/toolbench/corpus/manifest.json`), vendored corpora under `corpus/`
+  (vendor.sh copies the packaged manifest there).
 - **Subagent paths:** real layout is
   `<project>/<session-uuid>/subagents/*.jsonl` (TB-29). `--exclude-subagents`
   drops those refs; freeze replay re-derives the flag from the path so a
@@ -76,7 +79,7 @@ Non-obvious notes for this environment:
   gate:** the `agentsview` CLI, real `~/.claude`/Codex transcript roots, and the
   Hermes archive (`~/.hermes` / `$HERMES_HOME`). Fast-suite skips for absent live
   archives are expected (currently 3 skips when hermes/optional live paths are
-  missing; hermetic suite is ~606 passing).
+  missing; hermetic suite is ~613 passing).
 - **Complex deps cache (`UnsafeDepsCache`):** `complex_runner._assert_deps_base_safe`
   rejects a replaceable cache leaf *before* `resolve()` (including a dangling
   symlink), then requires FS-root divergence from the corpus, sticky-safe

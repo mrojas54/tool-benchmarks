@@ -1,8 +1,9 @@
 import json
 import unittest
-from pathlib import Path
 
-MANIFEST = Path("corpus/manifest.json")
+from toolbench.complex import MANIFEST_PATH
+
+MANIFEST = MANIFEST_PATH
 
 
 # Keys the manifest must NEVER carry again. The gate is derived per DEFECT from

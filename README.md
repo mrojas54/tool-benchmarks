@@ -196,17 +196,21 @@ different question: **which toolset reaches a verified fix for the fewest
 context tokens?** That changes the unit from tokens-per-call to tokens-to-
 outcome, so the agent chooses its own path and step count dominates.
 
-**Status:** library shipped (`toolbench/complex.py`, `toolbench/complex_runner.py`);
-**no CLI yet**. Fixtures live under [`probes/complex/`](probes/complex/); pinned
-corpora under [`corpus/`](corpus/) (`manifest.json` + `vendor.sh`). Design:
+**Status:** library shipped (`src/toolbench/complex.py`, `src/toolbench/complex_runner.py`);
+**no CLI yet**. Fixtures ship inside the package under
+[`src/toolbench/probes/complex/`](src/toolbench/probes/complex/); the pinned
+manifest is packaged at
+[`src/toolbench/corpus/manifest.json`](src/toolbench/corpus/manifest.json), and
+vendored corpora live under [`corpus/`](corpus/) (`vendor.sh` copies the
+packaged manifest there so the vendored tree stays self-describing). Design:
 [`docs/superpowers/specs/2026-07-12-complex-debug-probe-design.md`](docs/superpowers/specs/2026-07-12-complex-debug-probe-design.md).
 
 | Piece | Role |
 |---|---|
 | `complex.py` | Load defects from fixtures, score a trial (`LOCATED:` + oracle), build/render a routing profile |
 | `complex_runner.py` | Provision a hermetic worktree, shared deps cache, injectable `launch`/`oracle`, `run_trial` |
-| `probes/complex/<repo>-<id>-*/` | `defect.patch`, `truth.json`, `prediction.md`, `oracle.json`, `prompt.md` |
-| `corpus/manifest.json` | Pinned SHAs + dep/warmup/provision recipes for `wids`, `maltese`, `rich` |
+| `src/toolbench/probes/complex/<repo>-<id>-*/` | `defect.patch`, `truth.json`, `prediction.md`, `oracle.json`, `prompt.md` |
+| `src/toolbench/corpus/manifest.json` | Pinned SHAs + dep/warmup/provision recipes for `wids`, `maltese`, `rich` |
 
 **Operator constraints (verified in code):**
 
@@ -232,7 +236,7 @@ the hermetic suite — `launch` / `oracle` are injectable (S24 pattern).
 
 ## Status
 
-**Implemented.** `toolbench/` ships all of tickets **T1–T6** in
+**Implemented.** `src/toolbench/` ships all of tickets **T1–T6** in
 [`BUILDPLAN.md`](BUILDPLAN.md): the scaffold, the transcript parser, the
 multi-agent source layer, the passive analyzer, and the active probes.
 Post-merge hardening covers **TB-8** (subagent `--project` filter), **TB-9**
@@ -261,13 +265,13 @@ apportionment (**S41** / **TB-33** / **TB-35**) — including census on the
 zero-match path (**TB-34**) and freeze-time census in manifest v2 (**TB-37**) —
 are shipped. The complex debug probe library (`complex.py` /
 `complex_runner.py`) is implemented as a library (fixtures under
-`probes/complex/`; no CLI yet). CQ follow-ons split passive into
+`src/toolbench/probes/complex/`; no CLI yet). CQ follow-ons split passive into
 `reducer`/`report`, fold probe into `ClaudeParser`
 (`keep_raw_input` / `track_turns`), and stamp inefficiency tags at emit.
-The strict gate (`uv run ruff check .`, `uv run mypy --strict toolbench tests`,
-`uv run pytest -q`) is green — **606** tests passing (3 skipped when the
+The strict gate (`uv run ruff check .`, `uv run mypy --strict src/toolbench tests`,
+`uv run pytest -q`) is green — **613** tests passing (3 skipped when the
 live hermes archive / optional live paths are absent). `mypy --strict`
-covers `tests` as well as `toolbench`. The same three commands run in CI
+covers `tests` as well as `src/toolbench`. The same three commands run in CI
 (`.github/workflows/ci.yml`) on every PR and on pushes to `main`.
 
 Source-of-truth documents:
@@ -594,7 +598,8 @@ line means the run headline may understate what the orchestration spent.
 | `--freeze` replay shows "Historical denominator" | Manifest v2 carried a freeze-time census (TB-37) | Expected. Fractions are archive size at freeze time, not today. Do not treat them as a live census. |
 | `--freeze` replay still says fractions unavailable | Manifest has no `census` key (v1, or freeze-time census failed) | Expected. Rewrite the freeze on current `main` if you want historical fractions; the disclosure names the manifest version. |
 | Agent Breakdown ratios look incomparable across agents | `--limit` truncates in whole-archive recency order (S41) | Read the `sampled` column and the uneven-sampling line. Compare across agents only when that line is absent. |
-| `toolbench.passive` via `-m` fails from `~` | Package isn't on `sys.path` outside the checkout | From `~`, invoke by file path per the cache-token-metrics skill; from the repo root, `-m toolbench.passive` works. |
+| `toolbench` / `-m toolbench.passive` fails from `~` with a system python | The checkout's venv (with the editable install) isn't active | Use `uv run --project ~/tool-benchmarks toolbench passive ...` from any cwd; inside the repo, `uv run toolbench ...` or `uv run python -m toolbench.passive` both work. |
+| `corpus/manifest.json` disappeared after pulling the src-layout change | The manifest now ships inside the package (`src/toolbench/corpus/manifest.json`); the corpus copy is generated | Re-run `corpus/vendor.sh` (idempotent — skips existing clones); it copies the packaged manifest back into `corpus/`. |
 | Summary cache read ↓ but creation ↑ by ~the same | Prefix-sharing moved cost between buckets (S39/S40) | Not a win. Compare read **and** creation together; read alone misleads. |
 | `--run-manifest` run total looks too low vs wall-clock spend | Detached-HEAD usage (`gitBranch="HEAD"`) cannot match any branch set (TB-28) | Read the `detached-HEAD (unattributable)` line (includes input/output). Do not fold it into the run — a detached delegator is indistinguishable from unrelated detached work. |
 | `--run-manifest` shows a large `unattributed` line | Candidate sessions also ran on non-run branches (straddle spillover, S40) | Expected. The run total is only the in-set entry slice; do not treat session totals as run-owned. |
@@ -603,7 +608,7 @@ line means the run headline may understate what the orchestration spent.
 | Complex trial raises `UnprovisionedWorktree` | `run_trial` was called without `provision_worktree` (no `PROMPT.md`) | Call `provision_worktree` first. There is no fallback prompt — the rationale would leak the predicted winner. |
 ## Quality gate
 
-Before any PR: `uv run ruff check .`, `uv run mypy --strict toolbench tests`,
+Before any PR: `uv run ruff check .`, `uv run mypy --strict src/toolbench tests`,
 and `uv run pytest -q` must be green (S31 — the documented command must
 collect every test, including module-level `test_*` functions that
 `unittest discover` silently misses).
