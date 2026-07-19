@@ -112,13 +112,20 @@ rather than silently absent (S38 / TB-24).
 - **`registry.py`** — the ordered adapter list and `pick_adapter`. Exists to
   break the `hermes.py` ↔ `adapters.py` import cycle. Adding an agent means
   adding an entry here, never editing a dispatcher.
+- **`cli.py`** — unified console entry (`toolbench passive …` /
+  `toolbench probe …`). Dispatches remaining argv verbatim to the sub-CLIs;
+  imports are lazy per subcommand so a broken complex fixture cannot break
+  `passive` or `--help`.
 - **`sources.py`** — multi-agent discovery plus the loaders. Either scans raw
   local transcript roots or pages the AgentsView CLI (`--index-source auto |
   agentsview | raw`). `auto` tries AgentsView first and falls back to raw
   scanning, recording the reason — including when a healthy probe is followed by
-  a mid-listing nonzero exit, hang, or malformed JSON payload (TB-38; partial
-  agentsview refs are discarded, never spliced). Raw discovery stamps `SessionRef.is_subagent`
-  for `<project>/<session-uuid>/subagents/*.jsonl` while keeping the owning project as the
+  a mid-listing nonzero exit, hang, or schema-invalid listing payload (TB-38;
+  partial agentsview refs are discarded, never spliced). Every successful
+  `session list` page is validated by `_decode_agentsview_list_payload`
+  (`MalformedAgentsViewResponse`); the `auto` health probe runs that same check.
+  Raw discovery stamps `SessionRef.is_subagent` for
+  `<project>/<session-uuid>/subagents/*.jsonl` while keeping the owning project as the
   first path segment (S13). Exports that are not JSONL (e.g. a SQLite dump
   with a NUL in the header) raise `NonTranscriptExport` and are skipped by
   name (TB-10).
@@ -148,9 +155,10 @@ rather than silently absent (S38 / TB-24).
   `…/subagents/…` still counts as a subagent even if a pre-TB-29 manifest stored
   `"is_subagent": false` — the path is ground truth (TB-29). Manifest format
   v2 (`toolbench-freeze-2`) optionally persists the freeze-time `AgentCensus`
-  under a `census` key so replay can disclose real historical fractions
-  (TB-37); absence of the key (v1, or a failed freeze-time census) still marks
-  fractions unavailable and names the manifest version.
+  and its subagent-population filter so replay can disclose real historical
+  fractions only for the population that denominator measured (TB-37).
+  Missing census/filter metadata or a replay with the opposite filter marks
+  fractions unavailable instead.
 - **`run_manifest.py`** — JSON reader for `--run-manifest` (S40). Defines a
   run's branch set (`branches` required; empty/missing is refused). Not
   `.lattice/orchestration/agents.md` — that file drops its Branch column when
@@ -193,17 +201,21 @@ different question: **which toolset reaches a verified fix for the fewest
 context tokens?** That changes the unit from tokens-per-call to tokens-to-
 outcome, so the agent chooses its own path and step count dominates.
 
-**Status:** library shipped (`toolbench/complex.py`, `toolbench/complex_runner.py`);
-**no CLI yet**. Fixtures live under [`probes/complex/`](probes/complex/); pinned
-corpora under [`corpus/`](corpus/) (`manifest.json` + `vendor.sh`). Design:
+**Status:** library shipped (`src/toolbench/complex.py`, `src/toolbench/complex_runner.py`);
+**no CLI yet**. Fixtures ship inside the package under
+[`src/toolbench/probes/complex/`](src/toolbench/probes/complex/); the pinned
+manifest is packaged at
+[`src/toolbench/corpus/manifest.json`](src/toolbench/corpus/manifest.json), and
+vendored corpora live under [`corpus/`](corpus/) (`vendor.sh` copies the
+packaged manifest there so the vendored tree stays self-describing). Design:
 [`docs/superpowers/specs/2026-07-12-complex-debug-probe-design.md`](docs/superpowers/specs/2026-07-12-complex-debug-probe-design.md).
 
 | Piece | Role |
 |---|---|
 | `complex.py` | Load defects from fixtures, score a trial (`LOCATED:` + oracle), build/render a routing profile |
 | `complex_runner.py` | Provision a hermetic worktree, shared deps cache, injectable `launch`/`oracle`, `run_trial` |
-| `probes/complex/<repo>-<id>-*/` | `defect.patch`, `truth.json`, `prediction.md`, `oracle.json`, `prompt.md` |
-| `corpus/manifest.json` | Pinned SHAs + dep/warmup/provision recipes for `wids`, `maltese`, `rich` |
+| `src/toolbench/probes/complex/<repo>-<id>-*/` | `defect.patch`, `truth.json`, `prediction.md`, `oracle.json`, `prompt.md` |
+| `src/toolbench/corpus/manifest.json` | Pinned SHAs + dep/warmup/provision recipes for `wids`, `maltese`, `rich` |
 
 **Operator constraints (verified in code):**
 
@@ -215,9 +227,10 @@ corpora under [`corpus/`](corpus/) (`manifest.json` + `vendor.sh`). Design:
   A walkable shared ancestor (e.g. both under `$HOME`) re-opens a pristine-
   source leak via `..` from a trial's `node_modules` symlink.
 - The cache base must be a real, private directory owned by this uid — not a
-  symlink (replaceable cache base → `UnsafeDepsCache`), not world-accessible,
-  not under a writable non-sticky ancestor. Contents are symlinked into every
-  trial and executed by oracles.
+  symlink (replaceable cache base → `UnsafeDepsCache`; the leaf is rejected
+  *before* `resolve()`, including a dangling link), not world-accessible, not
+  under a writable non-sticky ancestor. Contents are symlinked into every trial
+  and executed by oracles.
 - Arms are enforced by **transcript audit** (`arm_violations` + read-scope), not
   filesystem walls: any resolved read outside the trial tree voids the trial.
   Bash/control arms hold a full shell; the profile discloses that their
@@ -228,7 +241,7 @@ the hermetic suite — `launch` / `oracle` are injectable (S24 pattern).
 
 ## Status
 
-**Implemented.** `toolbench/` ships all of tickets **T1–T6** in
+**Implemented.** `src/toolbench/` ships all of tickets **T1–T6** in
 [`BUILDPLAN.md`](BUILDPLAN.md): the scaffold, the transcript parser, the
 multi-agent source layer, the passive analyzer, and the active probes.
 Post-merge hardening covers **TB-8** (subagent `--project` filter), **TB-9**
@@ -257,13 +270,13 @@ apportionment (**S41** / **TB-33** / **TB-35**) — including census on the
 zero-match path (**TB-34**) and freeze-time census in manifest v2 (**TB-37**) —
 are shipped. The complex debug probe library (`complex.py` /
 `complex_runner.py`) is implemented as a library (fixtures under
-`probes/complex/`; no CLI yet). CQ follow-ons split passive into
+`src/toolbench/probes/complex/`; no CLI yet). CQ follow-ons split passive into
 `reducer`/`report`, fold probe into `ClaudeParser`
 (`keep_raw_input` / `track_turns`), and stamp inefficiency tags at emit.
-The strict gate (`uv run ruff check .`, `uv run mypy --strict toolbench tests`,
-`uv run pytest -q`) is green — **594** tests passing (3 skipped when the
+The strict gate (`uv run ruff check .`, `uv run mypy --strict src/toolbench tests`,
+`uv run pytest -q`) is green — **613** tests passing (3 skipped when the
 live hermes archive / optional live paths are absent). `mypy --strict`
-covers `tests` as well as `toolbench`. The same three commands run in CI
+covers `tests` as well as `src/toolbench`. The same three commands run in CI
 (`.github/workflows/ci.yml`) on every PR and on pushes to `main`.
 
 Source-of-truth documents:
@@ -395,15 +408,19 @@ uv run pytest -q
 "Failure" means any of four things, not two (TB-32 / TB-38). AgentsView can be
 **absent** (binary not on `PATH`), **broken** (nonzero exit), **hung** — a daemon
 that accepts the connection and never answers — or **malformed** (zero-exit stdout
-that is not usable JSON). Every `agentsview` call is bounded by
+that fails the listing contract). Every `agentsview` call is bounded by
 `AGENTSVIEW_TIMEOUT_S` (60s, `sources.py`) and a hang is raised as
-`AgentsViewTimeout`; a garbled page raises `ValueError` (`json.JSONDecodeError`).
-Where that surfaces depends on when the daemon stops answering:
+`AgentsViewTimeout`. Successful `session list` pages are decoded by
+`_decode_agentsview_list_payload`, which raises `MalformedAgentsViewResponse`
+(`ValueError`) for invalid JSON, a non-object payload, `sessions` not a list, a
+row missing non-empty `id` / `agent` / `project`, a non-string `next_cursor`, or
+a bad `total`. Where that surfaces depends on when the daemon fails the check:
 
-- at the `auto` probe → fallback to raw, reason named in the Summary
-  (`agentsview timed out after 60.0s and was killed: …`);
+- at the `auto` probe → fallback to raw, reason named in the Summary (timeout
+  prose, or the schema-validation message when `--limit 1` returns a zero-exit
+  but invalid payload);
 - mid-listing, after a healthy probe, during pagination → `auto` still falls back to
-  raw (TB-38): a nonzero exit, hang, or malformed listing JSON discards the
+  raw (TB-38): a nonzero exit, hang, or schema-invalid listing discards the
   partial agentsview listing and rescans the corpus wholesale from the filesystem
   — never spliced onto truncated agentsview refs (a mixed corpus would break the
   fingerprint identity TB-22 protects). Explicit `--index-source agentsview` stays
@@ -576,7 +593,7 @@ line means the run headline may understate what the orchestration spent.
 | `toolbench.probe` raises `NonIsolableTurns` on a hermes trace file | Trace export has no `requestId`; probe keys turns only by that field (S30) | Score a native Claude Code probe session instead. Trace remains valid input to `passive`. |
 | `cursor` sessions appear only under the `unknown_schema` skip reason | No parser claims cursor's schema yet (`UnknownSchema`, S28) | Expected until a `CursorParser` lands. It must not appear as a healthy zero-call agent; `tally_skips`/`--verbose` surface the count and ids (S34). |
 | Sessions skipped under the `export_timeout` reason | The AgentsView daemon stopped answering **mid-scan**; each `export` is bounded at `AGENTSVIEW_TIMEOUT_S` (TB-32) | Not a bad session — a sick daemon. The probe passed, so the hang began later; the scan degrades to skips rather than dying. Restart AgentsView and re-run, or use `--index-source raw`. A run where *many* sessions carry this reason is not a corpus to trust. |
-| `--index-source auto` used to exit 1 after a healthy probe | Mid-listing failure (nonzero exit, hang, or malformed listing JSON) used to be fatal; now falls back to raw and discards the partial listing (TB-38) | Expected on current `main`. Explicit `--index-source agentsview` still exits 1 — that is the strict path. |
+| `--index-source auto` used to exit 1 after a healthy probe | Mid-listing failure (nonzero exit, hang, or schema-invalid listing — bad JSON **or** missing/`sessions`/row/`next_cursor`/`total` contract) used to be fatal; now falls back to raw and discards the partial listing (TB-38) | Expected on current `main`. Explicit `--index-source agentsview` still exits 1 — that is the strict path. A zero-exit but schema-invalid health probe also falls back under `auto`. |
 | `cache_assisted` shows `n/a` for every `codex` tool | codex has no per-call usage channel; it bills per turn via `token_count` events (`ABSENT_BY_SCHEMA`, S33) | Expected. Do not read `n/a` as "no cache hits". |
 | `codex` reports 0 errors no matter what failed | codex encodes exit status in the output text and sets `status: completed` even for failed tools (S33) | Expected. `error` is never inferred from output prose. Use `output_chars` / the raw transcript to inspect failures. |
 | `codex` web searches never appear in the leaderboard | `web_search_call` carries no `call_id` and emits no output record, so it cannot be joined (S33 / TB-24) | Expected. They are not joinable calls, so leaderboard/ratio counts exclude them. The count is not lost: the Summary's `Unjoinable tool records (seen, not joined)` line names it as `codex/web_search_call` (S38). |
@@ -585,17 +602,18 @@ line means the run headline may understate what the orchestration spent.
 | `--freeze` replay shows "Historical denominator" | Manifest v2 carried a freeze-time census (TB-37) | Expected. Fractions are archive size at freeze time, not today. Do not treat them as a live census. |
 | `--freeze` replay still says fractions unavailable | Manifest has no usable `census` (v1, freeze-time census failure, legacy v2 without population metadata, or replay changed `--exclude-subagents`) | Expected. Use the same subagent filter as the freeze; rewrite a legacy freeze on current `main` if you want historical fractions. |
 | Agent Breakdown ratios look incomparable across agents | `--limit` truncates in whole-archive recency order (S41) | Read the `sampled` column and the uneven-sampling line. Compare across agents only when that line is absent. |
-| `toolbench.passive` via `-m` fails from `~` | Package isn't on `sys.path` outside the checkout | From `~`, invoke by file path per the cache-token-metrics skill; from the repo root, `-m toolbench.passive` works. |
+| `toolbench` / `-m toolbench.passive` fails from `~` with a system python | The checkout's venv (with the editable install) isn't active | Use `uv run --project ~/tool-benchmarks toolbench passive ...` from any cwd; inside the repo, `uv run toolbench ...` or `uv run python -m toolbench.passive` both work. |
+| `corpus/manifest.json` disappeared after pulling the src-layout change | The manifest now ships inside the package (`src/toolbench/corpus/manifest.json`); the corpus copy is generated | Re-run `corpus/vendor.sh` (idempotent — skips existing clones); it copies the packaged manifest back into `corpus/`. |
 | Summary cache read ↓ but creation ↑ by ~the same | Prefix-sharing moved cost between buckets (S39/S40) | Not a win. Compare read **and** creation together; read alone misleads. |
 | `--run-manifest` run total looks too low vs wall-clock spend | Detached-HEAD usage (`gitBranch="HEAD"`) cannot match any branch set (TB-28) | Read the `detached-HEAD (unattributable)` line (includes input/output). Do not fold it into the run — a detached delegator is indistinguishable from unrelated detached work. |
 | `--run-manifest` shows a large `unattributed` line | Candidate sessions also ran on non-run branches (straddle spillover, S40) | Expected. The run total is only the in-set entry slice; do not treat session totals as run-owned. |
 | `--run-manifest path.md` (or empty `branches`) exits 1 | Manifest must be JSON with a non-empty `branches` list (S40) | Use a dispatch-time JSON like `.lattice/orchestration/run-tb21-23.json`; `agents.md` cannot serve (Branch column is discarded on completion). |
 | `--exclude-subagents` still includes nested subagents / freeze replay ignores the flag | Pre-TB-29 discovery checked `rel.parts[1] == "subagents"` (flat layout that does not exist on disk); freeze manifests could pin stale `"is_subagent": false` | Current code matches `"subagents" in rel.parts[1:-1]` and ORs path re-derivation on freeze replay. Re-run on current `main`; rewrite the freeze manifest only if you intentionally want a new pin. |
-| Complex trial raises `UnsafeDepsCache` | Dep cache shares a walkable ancestor with the corpus, is a symlink, or is not private to this uid | Pass `deps_base=` (or set `$TMPDIR`) so cache and corpus diverge at `/`; never point the cache at a replaceable symlink. |
+| Complex trial raises `UnsafeDepsCache` | Dep cache shares a walkable ancestor with the corpus, is a symlink (including dangling — checked before `resolve()`), or is not private to this uid | Pass `deps_base=` (or set `$TMPDIR`) so cache and corpus diverge at `/`; never point the cache at a replaceable symlink. |
 | Complex trial raises `UnprovisionedWorktree` | `run_trial` was called without `provision_worktree` (no `PROMPT.md`) | Call `provision_worktree` first. There is no fallback prompt — the rationale would leak the predicted winner. |
 ## Quality gate
 
-Before any PR: `uv run ruff check .`, `uv run mypy --strict toolbench tests`,
+Before any PR: `uv run ruff check .`, `uv run mypy --strict src/toolbench tests`,
 and `uv run pytest -q` must be green (S31 — the documented command must
 collect every test, including module-level `test_*` functions that
 `unittest discover` silently misses).

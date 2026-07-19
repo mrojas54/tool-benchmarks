@@ -2,7 +2,7 @@
 
 Execute this in a **fresh session**, in the repo root, with serena loaded and a
 project activated — turn 0 checks both, and you must run it. Do not read
-`toolbench/probe.py` or `protocols/active-probes.md` during the run; you do not
+`src/toolbench/probe.py` or `protocols/active-probes.md` during the run; you do not
 need them, and reading them is what disqualified the last two sessions.
 
 Everything you need is below. Copy each call exactly.

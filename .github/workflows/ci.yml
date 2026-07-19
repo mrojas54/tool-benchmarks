@@ -48,7 +48,7 @@ jobs:
         run: uv run ruff check .
 
       - name: Type-check (mypy --strict)
-        run: uv run mypy --strict toolbench tests
+        run: uv run mypy --strict src/toolbench tests
 
       - name: Tests (pytest)
         run: uv run pytest -q

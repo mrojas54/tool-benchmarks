@@ -4,7 +4,7 @@
 
 **CI gate shipped** (`.github/workflows/ci.yml`, merged with the design): every
 PR and every push to `main` runs `uv sync --frozen --python 3.13`, then the
-documented gate (`ruff check .`, `mypy --strict toolbench tests`, `pytest -q`).
+documented gate (`ruff check .`, `mypy --strict src/toolbench tests`, `pytest -q`).
 The assessment tool remains local-only under `~/tech-debt-work/` (not in this
 repo).
 
@@ -66,15 +66,17 @@ repo's documented gate verbatim.
 | install uv | `astral-sh/setup-uv@v5` with `enable-cache: true`, `cache-dependency-glob: uv.lock` | cache keyed on the lockfile |
 | sync deps | `uv sync --frozen --python 3.13` | `--frozen` fails CI if `uv.lock` drifted from `pyproject.toml`; `--python 3.13` matches `requires-python >=3.13` (uv provisions the interpreter if the runner lacks it) |
 | lint | `uv run ruff check .` | the documented gate, unchanged |
-| type-check | `uv run mypy --strict toolbench tests` | the documented gate, unchanged |
+| type-check | `uv run mypy --strict src/toolbench tests` | the documented gate (path updated with the src-layout move; originally `toolbench tests`) |
 | test | `uv run pytest -q` | the documented gate, unchanged |
 
 `--frozen` is not incidental — a lockfile silently drifted from `pyproject.toml`
 is itself tech debt, and this is the cheapest place to catch it. The dev group
 (ruff, mypy, pytest) installs by default under `uv sync`, so no extra flag is
 needed to reach the gate tools. The gate runs `ruff check .`, **not** `ruff format
---check`, and mypy over `toolbench tests` and no wider — it reproduces the gate the
-repo already documents, it does not invent a stricter one.
+--check`, and mypy over `src/toolbench tests` and no wider — it reproduces the gate the
+repo already documents, it does not invent a stricter one. (Before the src-layout
+move the mypy path was `toolbench tests`; CI and live operator docs now use
+`src/toolbench`.)
 
 ### 2. `~/tech-debt-work/tech_debt_report.py` — the shared assessment tool
 
@@ -163,7 +165,7 @@ checking its output, not by a harness:
 | run against a second repo (`~/wids-nyc-reading-group-assistant`) | `REPO_NAME` derivation + per-repo foldering are correct across repos |
 | `--date 20260101` | filename is deterministic and honors the override |
 | `--repo` at a non-git path | clean error message, non-zero exit |
-| the gate, dry-run locally before pushing: `uv run ruff check .`, `uv run mypy --strict toolbench tests`, `uv run pytest -q` | `ci.yml` will pass; the first PR run is the live confirmation |
+| the gate, dry-run locally before pushing: `uv run ruff check .`, `uv run mypy --strict src/toolbench tests`, `uv run pytest -q` | `ci.yml` will pass; the first PR run is the live confirmation |
 
 ## Out of scope
 

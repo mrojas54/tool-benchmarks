@@ -4,7 +4,7 @@ Numbered acceptance criteria with stable IDs. Derived from
 `docs/2026-07-07-tool-benchmarks-design.md` (v2) and the v2 implementation
 plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 
-## Parser & records — `toolbench/transcript.py`
+## Parser & records — `src/toolbench/transcript.py`
 
 - **S1 — id-join.** `ClaudeParser.parse(lines, …)` joins each assistant
   `tool_use` block to its result by id. The join key is `message.content[].id`
@@ -26,7 +26,7 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 - **S6 — interrupted kept.** A `tool_use` with no matching result yields
   `output_chars=0, no_result=True`; it is kept, not dropped.
 
-## Multi-agent discovery — `toolbench/sources.py`
+## Multi-agent discovery — `src/toolbench/sources.py`
 
 - **S7 — raw discovery.** `iter_session_files(root="~/.claude/projects",
   project=None, since=None)` yields Claude Code JSONL paths, filtered by
@@ -67,12 +67,17 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   `raw` uses the filesystem only. The fallback is not limited to what a single
   `--limit 1` health probe can see: a daemon that answers the probe and then
   breaks during the pagination that follows -- a nonzero exit, a hang
-  (`AgentsViewTimeout`, TB-32), or a malformed listing JSON payload
-  (`ValueError` / `json.JSONDecodeError`) -- also degrades `auto` to raw,
+  (`AgentsViewTimeout`, TB-32), or a schema-invalid listing payload
+  (`MalformedAgentsViewResponse` / `ValueError`: invalid JSON, non-object
+  payload, `sessions` not a list, row missing non-empty `id`/`agent`/`project`,
+  bad `next_cursor`/`total`) -- also degrades `auto` to raw,
   discarding whatever partial agentsview listing that attempt had collected and
   rescanning the corpus wholesale from the filesystem rather than splicing the
   two (TB-38; TB-22's identity/fingerprint precedent is why nothing is spliced).
-  A source that vanishes outright mid-discovery (`FileNotFoundError` — the
+  The `auto` health probe validates that same listing contract, so a zero-exit
+  but schema-invalid `--limit 1` response falls back at the probe rather than
+  entering pagination. A
+  source that vanishes outright mid-discovery (`FileNotFoundError` — the
   binary itself disappears) keeps its narrower, pre-existing handling: a named
   `MISSING_SOURCE` skip and an unavailable census, no raw rescan, since a
   vanished binary is not evidence the raw root is any healthier. An explicit
@@ -95,7 +100,7 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   type the absence rather than stringify it. `detail` preserves the original message
   for `--verbose`/sidecar output but is never parsed to recover `reason` (TB-23).
 
-## Passive analyzer — `toolbench/passive.py` (+ `reducer.py` / `report.py` / `freeze.py`)
+## Passive analyzer — `src/toolbench/passive.py` (+ `reducer.py` / `report.py` / `freeze.py`)
 
 Aggregation and markdown rendering live in `reducer.py` and `report.py`;
 `freeze.py` owns the opt-in corpus pin. `passive.py` is the CLI + scan loop
@@ -170,7 +175,7 @@ and re-exports the public symbols historical imports expect.
   change (TB-22).
 - **S37 — `--freeze <manifest>` pins the corpus for reproducibility.** Absent the
   manifest, the first `--freeze` run discovers as usual and writes the discovered
-  ref list once (`toolbench/freeze.py`, JSON, `SessionRef` round-tripped, an
+  ref list once (`src/toolbench/freeze.py`, JSON, `SessionRef` round-tripped, an
   identity fingerprint over the discovered ids stored alongside); the Summary notes
   `Corpus frozen to: <path>`. When the manifest exists, the run **replays** it:
   live discovery is bypassed and the frozen refs are scanned directly, so the input
@@ -267,12 +272,12 @@ and re-exports the public symbols historical imports expect.
   **recency order across the whole archive**, not per agent, so each agent's row
   rests on a different fraction of its own history and an agent whose work is all
   older than the window can vanish at `sessions == 0`. Discovery therefore gathers
-  an `AgentCensus` (`toolbench/sources.py`) under the *same* filters as the scan
+  an `AgentCensus` (`src/toolbench/sources.py`) under the *same* filters as the scan
   (including `--exclude-subagents`), and the Agent Breakdown carries a `sampled`
   cell per agent — numerator, census denominator, and fraction — with agents
   present in the archive but never reached still given a row (`sessions == 0` reads
   as looked-and-found-none, not never-looked). When the sampling is uneven,
-  `_sampling_notes` / `_apportionment` (`toolbench/report.py`) name the cause from
+  `_sampling_notes` / `_apportionment` (`src/toolbench/report.py`) name the cause from
   *observed signals only* — `SkipRecord`s for attrition, `limit_truncated` for
   truncation — and apportion the per-agent remainder (`total - sampled`) between
   the two rather than merely asserting both happened (TB-35): a limit that was
@@ -289,7 +294,7 @@ and re-exports the public symbols historical imports expect.
   reuses the same census disclosure so a narrow window is not mistaken for an
   empty archive (TB-34 / S35).
 
-## Active probes — `toolbench/probe.py` + `protocols/active-probes.md`
+## Active probes — `src/toolbench/probe.py` + `protocols/active-probes.md`
 
 - **S16 — vendored corpus.** The probe corpus is **five files vendored under
   `tools/`** (relative paths, committed to the repo so probes are reproducible
@@ -334,12 +339,14 @@ and re-exports the public symbols historical imports expect.
 - **S20 — stdlib runtime, uv project.** The shipped `toolbench` package
   imports nothing third-party; the project is uv-managed (`pyproject.toml`
   + `uv.lock`, empty runtime deps, `dev` group `ruff`/`mypy`/`pytest`).
-- **S21 — entry points.** Runnable as `uv run python -m toolbench.passive`
-  and `… toolbench.probe`; tests via `uv run pytest -q` (S31). Run-grain
-  grouping (`--run-manifest` / `--tickets`) is a dimension on `toolbench.passive`
-  itself (S40) — the analyzer owns run grain, not a third CLI.
+- **S21 — entry points.** Runnable as `uv run toolbench passive` /
+  `uv run toolbench probe` (unified console script via `cli.py`) or
+  `uv run python -m toolbench.passive` / `… toolbench.probe`; tests via
+  `uv run pytest -q` (S31). Run-grain grouping (`--run-manifest` / `--tickets`)
+  is a dimension on `toolbench.passive` itself (S40) — the analyzer owns run
+  grain, not a third CLI.
 - **S22 — strict gate.** `uv run ruff check .`, `uv run mypy --strict
-  toolbench tests`, and the full pytest suite are green before any PR.
+  src/toolbench tests`, and the full pytest suite are green before any PR.
 - **S23 — error handling.** Empty session selection → clear message,
   exit 0. Missing selected raw root → exit 1 for a strict source; but
   `--agent all --index-source auto` continues with other sources and
@@ -378,7 +385,7 @@ and re-exports the public symbols historical imports expect.
   collects uniformly alongside `TestCase` methods. A test added as a bare
   module-level function cannot silently escape the gate (TB-19).
 
-## Schema dispatch — `toolbench/adapters.py` + `toolbench/registry.py`
+## Schema dispatch — `src/toolbench/adapters.py` + `src/toolbench/registry.py`
 
 - **S27 — schema dispatch.** `detect_parser` sniffs up to 100 non-empty lines
   and returns the single parser whose `claims_line` matches. Two matches raise
@@ -392,7 +399,7 @@ and re-exports the public symbols historical imports expect.
   lands in `skipped_roots` pending a parser of its own. `codex` is claimed by
   `CodexParser` (S33 / TB-12).
 
-## Usage provenance — `toolbench/parsers.py` + `toolbench/probe.py`
+## Usage provenance — `src/toolbench/parsers.py` + `src/toolbench/probe.py`
 
 - **S29 — producer provenance for usage.** Schema and producer are separate
   axes. A transcript claimed by the claude schema is routed by producer:

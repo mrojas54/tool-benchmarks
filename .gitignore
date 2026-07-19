@@ -37,7 +37,10 @@ reports/
 # Serena: per-machine project cache, memories, and local config.
 .serena/
 
-# Complex-probe corpora: reproduce with corpus/vendor.sh (pinned SHAs in manifest.json)
+# Complex-probe corpora: reproduce with corpus/vendor.sh (pinned SHAs in the
+# packaged manifest, src/toolbench/corpus/manifest.json; vendor.sh copies it
+# into corpus/ so the vendored tree is self-describing)
 corpus/*/
+corpus/manifest.json
 # roborev snapshots
 /.roborev/

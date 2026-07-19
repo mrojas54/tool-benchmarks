@@ -39,12 +39,12 @@ checkout, so the read doesn't bill an unrelated project's cache.
    branch that matched zero entries); `--tickets N` then normalizes it per ticket.
 
 ```bash
-# from ~ , per run. `toolbench` is not installed into the venv, so `-m toolbench.passive`
-# only resolves with the repo root on PYTHONPATH -- set it explicitly rather than `cd`ing
-# into the repo, which would defeat the cwd hygiene above.
+# from ~ , per run. `toolbench` is installed editable into the repo's venv (src
+# layout), so `uv run --project` resolves it from any cwd -- no PYTHONPATH, and
+# no `cd`ing into the repo, which would defeat the cwd hygiene above.
 # Discovery flags (--agent/--project/--since/--limit) still bound which sessions get
 # scanned; --run-manifest then filters+folds by branch within that scan.
-PYTHONPATH=~/tool-benchmarks uv run --project ~/tool-benchmarks python -m toolbench.passive \
+uv run --project ~/tool-benchmarks toolbench passive \
     --agent claude --run-manifest run-A.json --tickets 12
 ```
 
@@ -98,9 +98,9 @@ cd ~/tool-benchmarks && uv run pytest -q tests/test_parsers.py tests/test_reduce
 
 ## Engine & scope
 
-`toolbench/passive.py` — `ClaudeParser` (which stamps `ParseResult.session_cache_*` /
+`src/toolbench/passive.py` — `ClaudeParser` (which stamps `ParseResult.session_cache_*` /
 input / output / `usage_by_branch`) feeds a `Reducer`; when `--run-manifest` names a run
-(`toolbench/run_manifest.py`), the reducer folds only the manifest's branches into a
+(`src/toolbench/run_manifest.py`), the reducer folds only the manifest's branches into a
 `RunStats` and, with `--tickets N`, reports per-ticket figures. Run-grain grouping is a
 dimension on the one analyzer (TB-27 / S40) — there is no separate CLI for it. (The prior
 standalone run-aggregation module that held this before `--run-manifest` landed has been
