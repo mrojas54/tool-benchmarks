@@ -267,14 +267,14 @@ detached-HEAD attribution blind spot (**TB-28**) and make
 bounds + operator ceiling (**TB-32** / **TB-39**), mid-listing `auto` fallback
 without splicing (**TB-38**), and per-agent sampling disclosure with
 apportionment (**S41** / **TB-33** / **TB-35**) — including census on the
-zero-match path (**TB-34**) and freeze-time census in manifest v2 (**TB-37**) —
-are shipped. The complex debug probe library (`complex.py` /
+zero-match path (**TB-34**) and freeze-time census in manifest v2 with a
+subagent-population filter guard (**TB-37**) — are shipped. The complex debug probe library (`complex.py` /
 `complex_runner.py`) is implemented as a library (fixtures under
 `src/toolbench/probes/complex/`; no CLI yet). CQ follow-ons split passive into
 `reducer`/`report`, fold probe into `ClaudeParser`
 (`keep_raw_input` / `track_turns`), and stamp inefficiency tags at emit.
 The strict gate (`uv run ruff check .`, `uv run mypy --strict src/toolbench tests`,
-`uv run pytest -q`) is green — **613** tests passing (3 skipped when the
+`uv run pytest -q`) is green — **616** tests passing (3 skipped when the
 live hermes archive / optional live paths are absent). `mypy --strict`
 covers `tests` as well as `src/toolbench`. The same three commands run in CI
 (`.github/workflows/ci.yml`) on every PR and on pushes to `main`.

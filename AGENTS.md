@@ -79,7 +79,7 @@ Non-obvious notes for this environment:
   gate:** the `agentsview` CLI, real `~/.claude`/Codex transcript roots, and the
   Hermes archive (`~/.hermes` / `$HERMES_HOME`). Fast-suite skips for absent live
   archives are expected (currently 3 skips when hermes/optional live paths are
-  missing; hermetic suite is ~613 passing).
+  missing; hermetic suite is ~616 passing).
 - **Complex deps cache (`UnsafeDepsCache`):** `complex_runner._assert_deps_base_safe`
   rejects a replaceable cache leaf *before* `resolve()` (including a dangling
   symlink), then requires FS-root divergence from the corpus, sticky-safe
@@ -108,6 +108,9 @@ Non-obvious notes for this environment:
   Cross-agent ratios are only comparable when the report emits no uneven-sampling
   line. A zero-match early return still prints the census the run already built
   (TB-34) — a narrow window must not read as an empty archive. Freeze replay
-  (manifest v2, TB-37) restores the freeze-time census when present and labels it
-  a **historical** denominator; a v1 manifest or a v2 write without a census still
-  marks fractions unavailable and names the manifest version.
+  (manifest v2, TB-37) restores the freeze-time census only when
+  `census_includes_subagents` is present and matches the replay's
+  `--exclude-subagents` choice, and labels it a **historical** denominator; a v1
+  manifest, a v2 write without a census, a legacy v2 census without that filter
+  key, or a mismatched subagent filter still marks fractions unavailable (and
+  names the reason / manifest version).
