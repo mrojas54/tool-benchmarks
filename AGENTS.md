@@ -69,7 +69,10 @@ Non-obvious notes for this environment:
   deps-cache / trial driver) — library only, no CLI yet; fixtures and the
   pinned manifest ship inside the package (`src/toolbench/probes/complex/`,
   `src/toolbench/corpus/manifest.json`), vendored corpora under `corpus/`
-  (vendor.sh copies the packaged manifest there).
+  (vendor.sh copies the packaged manifest there). `ensure_deps` /
+  `provision_worktree` default to the packaged manifest; custom corpora must
+  pass their manifest explicitly so a stale generated `corpus/manifest.json`
+  cannot change a trial SHA.
 - **Subagent paths:** real layout is
   `<project>/<session-uuid>/subagents/*.jsonl` (TB-29). `--exclude-subagents`
   drops those refs; freeze replay re-derives the flag from the path so a
@@ -79,7 +82,7 @@ Non-obvious notes for this environment:
   gate:** the `agentsview` CLI, real `~/.claude`/Codex transcript roots, and the
   Hermes archive (`~/.hermes` / `$HERMES_HOME`). Fast-suite skips for absent live
   archives are expected (currently 3 skips when hermes/optional live paths are
-  missing; hermetic suite is ~616 passing).
+  missing; hermetic suite is ~617 passing).
 - **Complex deps cache (`UnsafeDepsCache`):** `complex_runner._assert_deps_base_safe`
   rejects a replaceable cache leaf *before* `resolve()` (including a dangling
   symlink), then requires FS-root divergence from the corpus, sticky-safe
