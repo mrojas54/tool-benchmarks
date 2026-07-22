@@ -82,7 +82,7 @@ Non-obvious notes for this environment:
   gate:** the `agentsview` CLI, real `~/.claude`/Codex transcript roots, and the
   Hermes archive (`~/.hermes` / `$HERMES_HOME`). Fast-suite skips for absent live
   archives are expected (currently 3 skips when hermes/optional live paths are
-  missing; hermetic suite is ~616 passing).
+  missing; hermetic suite is ~617 passing).
 - **Complex deps cache (`UnsafeDepsCache`):** `complex_runner._assert_deps_base_safe`
   rejects a replaceable cache leaf *before* `resolve()` (including a dangling
   symlink), then requires FS-root divergence from the corpus, sticky-safe
