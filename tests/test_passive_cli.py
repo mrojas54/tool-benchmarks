@@ -1565,6 +1565,46 @@ class MidListingAutoFallbackTests(unittest.TestCase):
         # `_probe_agentsview`'s `--limit 1` health check (S10): answered, healthy.
         return completed(stdout=json.dumps({"sessions": [], "next_cursor": "", "total": 0}))
 
+    def test_empty_project_keeps_reasonix_in_agentsview_listing(self) -> None:
+        """A global session is valid AgentsView data, not a reason to fall back to raw."""
+        claude = {"id": "claude-session", "project": "toolbench", "agent": "claude-code"}
+        reasonix = {"id": "reasonix:global", "project": "", "agent": "reasonix"}
+        listing = json.dumps({
+            "sessions": [claude, reasonix],
+            "next_cursor": "",
+            "total": 2,
+        })
+        runner = FakeRunner([
+            completed(stdout=json.dumps({
+                "sessions": [claude],
+                "next_cursor": "",
+                "total": 2,
+            })),
+            completed(stdout=listing),
+            completed(stdout=json.dumps({"sessions": [], "next_cursor": "", "total": 1})),
+            completed(stdout=json.dumps({"sessions": [], "next_cursor": "", "total": 1})),
+            completed(stdout=json.dumps({"sessions": [], "next_cursor": "", "total": 2})),
+            completed(stdout=listing),
+        ])
+        args = parse_args(["--index-source", "auto"])
+
+        refs, fallback_reason, skips, census, truncated = _discover_refs(
+            args, "/nonexistent", runner
+        )
+
+        self.assertEqual(
+            [(ref.agent, ref.source, ref.session_id, ref.project) for ref in refs],
+            [
+                ("claude-code", "agentsview", "claude-session", "toolbench"),
+                ("reasonix", "agentsview", "reasonix:global", ""),
+            ],
+        )
+        self.assertIsNone(fallback_reason)
+        self.assertEqual(skips, [])
+        self.assertEqual(census.totals, {"claude-code": 1, "reasonix": 1})
+        self.assertEqual(census.archive_total, 2)
+        self.assertFalse(truncated)
+
     def test_nonzero_exit_mid_listing_falls_back_to_raw(self) -> None:
         """The pre-existing failure mode (unrelated to TB-32's timeout work): a daemon
         that answers the probe and then exits nonzero during the parent-probe pass."""
