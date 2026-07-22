@@ -219,6 +219,9 @@ packaged manifest there so the vendored tree stays self-describing). Design:
 
 **Operator constraints (verified in code):**
 
+- Worktree provisioning and dependency setup default to the packaged manifest,
+  not the generated `corpus/manifest.json` copy. Custom corpora must pass their
+  manifest explicitly; a stale generated copy must never change a trial's SHA.
 - Prompt is always `PROMPT.md` from `provision_worktree` — never the defect
   rationale (that leaks the predicted winner). Missing `PROMPT.md` raises
   `UnprovisionedWorktree`.
