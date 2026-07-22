@@ -15,10 +15,12 @@ import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any, cast
 
 from toolbench.complex import (
     BANNED_TOOLS,
     DEFAULT_FIXTURE_ROOT,
+    MANIFEST_PATH,
     ArmSpec,
     DefectSpec,
     TrialResult,
@@ -314,12 +316,28 @@ def _deps_root(deps_base: Path, repo: str) -> Path:
     return deps_base / repo
 
 
-def ensure_deps(corpus_root: Path, repo: str, deps_base: Path | None = None) -> None:
+def _load_manifest(manifest_path: Path | None) -> dict[str, Any]:
+    """Read the packaged manifest unless a custom corpus opts into its own."""
+    path = MANIFEST_PATH if manifest_path is None else manifest_path
+    return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
+
+
+def ensure_deps(
+    corpus_root: Path,
+    repo: str,
+    deps_base: Path | None = None,
+    manifest_path: Path | None = None,
+) -> None:
     """Build `repo`'s dependency cache under `<deps_base>/<repo>/` if absent.
 
     The cache lives outside `corpus_root` (see the module note above): its default
     is under `tempfile.gettempdir()`, which diverges from a `$HOME` corpus checkout
     at the filesystem root, so no cache ancestor is walkable back to corpus source.
+
+    `manifest_path` defaults to the packaged source of truth. Custom corpora must
+    pass their own manifest explicitly; a generated `corpus/manifest.json` is
+    never selected implicitly because it can survive a pull and silently pin
+    trials to obsolete SHAs.
 
     Idempotent: a dep whose target path already exists is left alone, so this is
     cheap to call before every trial. All work here happens OUTSIDE the measured
@@ -332,7 +350,7 @@ def ensure_deps(corpus_root: Path, repo: str, deps_base: Path | None = None) -> 
     imports to whichever tree pip ran in, hiding the defect).
     """
     deps_base = deps_base or _default_deps_base()
-    manifest = json.loads((corpus_root / "manifest.json").read_text(encoding="utf-8"))
+    manifest = _load_manifest(manifest_path)
     entry = manifest[repo]
     repo_src = corpus_root / repo
     deps_root = _deps_root(deps_base, repo)
@@ -424,6 +442,7 @@ def provision_worktree(
     fixture_root: Path = DEFAULT_FIXTURE_ROOT,
     apply_defect: bool = True,
     deps_base: Path | None = None,
+    manifest_path: Path | None = None,
 ) -> Path:
     """A hermetic standalone trial repo of `defect`'s corpus repo at its pinned SHA,
     defect applied and committed, prompted for one trial.
@@ -441,19 +460,20 @@ def provision_worktree(
     exactly one commit, there is no parent to diff, and the defect is
     indistinguishable inside a whole-tree initial add.
 
-    Pinned to the SHA in `corpus_root/manifest.json`, never to the corpus repo's
-    current HEAD -- the corpus repo is a shared clone that other trials (and a
-    future `vendor.sh` re-run) may advance, and a tree that silently followed HEAD
-    would make every trial after the first measure a different repo state than its
-    pre-registered defect. `corpus_root` is a parameter rather than the real
-    `corpus/` so this is testable against a throwaway repo: the fast suite must not
-    depend on the vendored corpus existing.
+    Pinned to the SHA in the packaged manifest by default, never to the corpus
+    repo's current HEAD or its generated manifest copy -- the corpus repo is a
+    shared clone that other trials (and a future `vendor.sh` re-run) may advance,
+    while a generated manifest can remain stale across a pull. Either source
+    silently drifting would make trials measure a different repo state than their
+    pre-registered defects. `corpus_root`, `fixture_root`, and `manifest_path` are
+    parameters so this is testable against a throwaway corpus: the fast suite must
+    not depend on the vendored corpus existing.
 
     `apply_defect=False` provisions the clean pinned tree (C7 asserts the oracle is
     GREEN there before proving the defect turns it RED).
     """
     deps_base = deps_base or _default_deps_base()
-    manifest = json.loads((corpus_root / "manifest.json").read_text(encoding="utf-8"))
+    manifest = _load_manifest(manifest_path)
     sha = manifest[defect.repo]["sha"]
     repo_path = corpus_root / defect.repo
     branch = branch_name(defect, arm, trial)

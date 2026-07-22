@@ -108,8 +108,9 @@ Non-obvious notes for this environment:
   Cross-agent ratios are only comparable when the report emits no uneven-sampling
   line. A zero-match early return still prints the census the run already built
   (TB-34) — a narrow window must not read as an empty archive. Freeze replay
-  (manifest v2, TB-37) restores the freeze-time census when present **and** its
-  `census_includes_subagents` filter matches this replay's `--exclude-subagents`,
-  labeling it a **historical** denominator; a v1 manifest, a v2 write without a
-  census, a legacy v2 census lacking that filter key, or a mismatched
-  `--exclude-subagents` still marks fractions unavailable and names the reason.
+  (manifest v2, TB-37) restores the freeze-time census only when
+  `census_includes_subagents` is present and matches the replay's
+  `--exclude-subagents` choice, and labels it a **historical** denominator; a v1
+  manifest, a v2 write without a census, a legacy v2 census without that filter
+  key, or a mismatched subagent filter still marks fractions unavailable (and
+  names the reason / manifest version).

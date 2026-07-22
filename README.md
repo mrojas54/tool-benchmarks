@@ -219,6 +219,9 @@ packaged manifest there so the vendored tree stays self-describing). Design:
 
 **Operator constraints (verified in code):**
 
+- Worktree provisioning and dependency setup default to the packaged manifest,
+  not the generated `corpus/manifest.json` copy. Custom corpora must pass their
+  manifest explicitly; a stale generated copy must never change a trial's SHA.
 - Prompt is always `PROMPT.md` from `provision_worktree` — never the defect
   rationale (that leaks the predicted winner). Missing `PROMPT.md` raises
   `UnprovisionedWorktree`.
@@ -267,8 +270,8 @@ detached-HEAD attribution blind spot (**TB-28**) and make
 bounds + operator ceiling (**TB-32** / **TB-39**), mid-listing `auto` fallback
 without splicing (**TB-38**), and per-agent sampling disclosure with
 apportionment (**S41** / **TB-33** / **TB-35**) — including census on the
-zero-match path (**TB-34**) and freeze-time census in manifest v2 (**TB-37**) —
-are shipped. The complex debug probe library (`complex.py` /
+zero-match path (**TB-34**) and freeze-time census in manifest v2 with a
+subagent-population filter guard (**TB-37**) — are shipped. The complex debug probe library (`complex.py` /
 `complex_runner.py`) is implemented as a library (fixtures under
 `src/toolbench/probes/complex/`; no CLI yet). CQ follow-ons split passive into
 `reducer`/`report`, fold probe into `ClaudeParser`

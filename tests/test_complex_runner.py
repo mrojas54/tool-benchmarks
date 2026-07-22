@@ -163,7 +163,8 @@ class ProvisionWorktreeTests(unittest.TestCase):
         ).stdout
         _run(["git", "checkout", "-q", "--", "a.txt"], self.repo_dir)
 
-        (self.corpus_root / "manifest.json").write_text(
+        self.manifest_path = self.corpus_root / "manifest.json"
+        self.manifest_path.write_text(
             json.dumps({"toy": {"sha": self.sha}}), encoding="utf-8"
         )
 
@@ -189,7 +190,13 @@ class ProvisionWorktreeTests(unittest.TestCase):
         dest = self.root / "wt"
         arm = _arm("native")
         result = provision_worktree(
-            self.defect, arm, 1, self.corpus_root, dest, fixture_root=self.fixture_root
+            self.defect,
+            arm,
+            1,
+            self.corpus_root,
+            dest,
+            fixture_root=self.fixture_root,
+            manifest_path=self.manifest_path,
         )
         self.assertEqual(result, dest)
         self.assertEqual((dest / "a.txt").read_text(encoding="utf-8"), "modified\n")
@@ -199,7 +206,13 @@ class ProvisionWorktreeTests(unittest.TestCase):
         dest = self.root / "wt2"
         arm = _arm("serena")
         provision_worktree(
-            self.defect, arm, 3, self.corpus_root, dest, fixture_root=self.fixture_root
+            self.defect,
+            arm,
+            3,
+            self.corpus_root,
+            dest,
+            fixture_root=self.fixture_root,
+            manifest_path=self.manifest_path,
         )
         current = _run(["git", "branch", "--show-current"], dest).stdout.strip()
         self.assertEqual(current, "probe/toy/D1/serena/t3")
@@ -212,7 +225,13 @@ class ProvisionWorktreeTests(unittest.TestCase):
         # `git status` is clean and there is nothing to diff against.
         dest = self.root / "wt_hermetic"
         provision_worktree(
-            self.defect, _arm("bash"), 1, self.corpus_root, dest, fixture_root=self.fixture_root
+            self.defect,
+            _arm("bash"),
+            1,
+            self.corpus_root,
+            dest,
+            fixture_root=self.fixture_root,
+            manifest_path=self.manifest_path,
         )
         status = _run(["git", "status", "--porcelain"], dest).stdout
         self.assertEqual(status, "", "a dirty tree leaks the defect via git diff/status")
@@ -224,7 +243,13 @@ class ProvisionWorktreeTests(unittest.TestCase):
         # printed the seeded change verbatim.
         dest = self.root / "wt_nodiff"
         provision_worktree(
-            self.defect, _arm("bash"), 1, self.corpus_root, dest, fixture_root=self.fixture_root
+            self.defect,
+            _arm("bash"),
+            1,
+            self.corpus_root,
+            dest,
+            fixture_root=self.fixture_root,
+            manifest_path=self.manifest_path,
         )
         self.assertEqual(_run(["git", "diff"], dest).stdout, "")
         self.assertEqual(_run(["git", "diff", "HEAD"], dest).stdout, "")
@@ -238,7 +263,13 @@ class ProvisionWorktreeTests(unittest.TestCase):
         # repo does not: the pinned sha is not even an object here.
         dest = self.root / "wt_noshare"
         provision_worktree(
-            self.defect, _arm("bash"), 1, self.corpus_root, dest, fixture_root=self.fixture_root
+            self.defect,
+            _arm("bash"),
+            1,
+            self.corpus_root,
+            dest,
+            fixture_root=self.fixture_root,
+            manifest_path=self.manifest_path,
         )
         proc = subprocess.run(
             ["git", "cat-file", "-e", self.sha], cwd=dest, capture_output=True
@@ -261,6 +292,7 @@ class ProvisionWorktreeTests(unittest.TestCase):
             dest,
             fixture_root=self.fixture_root,
             apply_defect=False,
+            manifest_path=self.manifest_path,
         )
         self.assertEqual((dest / "a.txt").read_text(encoding="utf-8"), "original\n")
         self.assertEqual(_run(["git", "status", "--porcelain"], dest).stdout, "")
@@ -277,6 +309,7 @@ class ProvisionWorktreeTests(unittest.TestCase):
             provision_worktree(
                 self.defect, _arm("bash"), 1, self.corpus_root, dest,
                 fixture_root=self.fixture_root,
+                manifest_path=self.manifest_path,
             )
 
     def test_worktree_is_pinned_to_the_manifest_sha_not_whatever_head_is(self) -> None:
@@ -288,9 +321,46 @@ class ProvisionWorktreeTests(unittest.TestCase):
 
         dest = self.root / "wt3"
         provision_worktree(
-            self.defect, _arm("bash"), 1, self.corpus_root, dest, fixture_root=self.fixture_root
+            self.defect,
+            _arm("bash"),
+            1,
+            self.corpus_root,
+            dest,
+            fixture_root=self.fixture_root,
+            manifest_path=self.manifest_path,
         )
         self.assertFalse((dest / "b.txt").exists())
+
+    def test_default_manifest_cannot_silently_follow_a_stale_corpus_copy(self) -> None:
+        authoritative_manifest = self.root / "packaged-manifest.json"
+        authoritative_manifest.write_text(
+            json.dumps({"toy": {"sha": self.sha}}), encoding="utf-8"
+        )
+
+        (self.repo_dir / "b.txt").write_text("later\n", encoding="utf-8")
+        _run(["git", "add", "b.txt"], self.repo_dir)
+        _run(["git", "commit", "-q", "-m", "later commit"], self.repo_dir)
+        stale_sha = _run(["git", "rev-parse", "HEAD"], self.repo_dir).stdout.strip()
+        self.manifest_path.write_text(
+            json.dumps({"toy": {"sha": stale_sha}}), encoding="utf-8"
+        )
+
+        dest = self.root / "wt_packaged_manifest"
+        with mock.patch("toolbench.complex_runner.MANIFEST_PATH", authoritative_manifest):
+            provision_worktree(
+                self.defect,
+                _arm("bash"),
+                1,
+                self.corpus_root,
+                dest,
+                fixture_root=self.fixture_root,
+                apply_defect=False,
+            )
+
+        self.assertFalse(
+            (dest / "b.txt").exists(),
+            "a stale generated corpus manifest silently changed the trial SHA",
+        )
 
 
 class DepsCacheAncestryTests(unittest.TestCase):
@@ -327,7 +397,8 @@ class DepsCacheAncestryTests(unittest.TestCase):
         _run(["git", "commit", "-q", "-m", "init"], self.repo_dir)
         self.sha = _run(["git", "rev-parse", "HEAD"], self.repo_dir).stdout.strip()
 
-        (self.corpus_root / "manifest.json").write_text(
+        self.manifest_path = self.corpus_root / "manifest.json"
+        self.manifest_path.write_text(
             json.dumps(
                 {
                     "toy": {
@@ -390,6 +461,7 @@ class DepsCacheAncestryTests(unittest.TestCase):
             dest,
             fixture_root=self.fixture_root,
             apply_defect=False,
+            manifest_path=self.manifest_path,
         )
         link = dest / "web" / "node_modules"
         self.assertTrue(link.is_symlink(), "dep must be symlinked into the trial tree")
@@ -480,7 +552,12 @@ class DepsCacheRuntimeGuardTests(unittest.TestCase):
         # is walkable -- `..` from the cache reaches it and descends into corpus/toy.
         leaky_base = Path(self._home.name) / "tmp" / "vendor-cache"
         with self.assertRaises(UnsafeDepsCache):
-            ensure_deps(self.corpus_root, "toy", deps_base=leaky_base)
+            ensure_deps(
+                self.corpus_root,
+                "toy",
+                deps_base=leaky_base,
+                manifest_path=self.corpus_root / "manifest.json",
+            )
 
     def test_ensure_deps_refuses_a_corpus_that_lives_under_the_cache_temp_root(self) -> None:
         # Linux CI: the checkout itself sits under /tmp, so the default cache and the
@@ -493,7 +570,12 @@ class DepsCacheRuntimeGuardTests(unittest.TestCase):
                 json.dumps(_DEPS_MANIFEST), encoding="utf-8"
             )
             with self.assertRaises(UnsafeDepsCache):
-                ensure_deps(corpus_in_tmp, "toy", deps_base=_default_deps_base())
+                ensure_deps(
+                    corpus_in_tmp,
+                    "toy",
+                    deps_base=_default_deps_base(),
+                    manifest_path=corpus_in_tmp / "manifest.json",
+                )
 
     def test_provision_worktree_refuses_a_leaky_cache_base(self) -> None:
         # The symlink is written by provision_worktree, so the guard has to hold on
@@ -519,6 +601,7 @@ class DepsCacheRuntimeGuardTests(unittest.TestCase):
                 Path(self._home.name) / "wt",
                 fixture_root=Path(self._home.name) / "probes" / "complex",
                 deps_base=leaky_base,
+                manifest_path=self.corpus_root / "manifest.json",
             )
 
     def test_default_cache_base_is_private_to_the_current_user(self) -> None:
@@ -633,7 +716,12 @@ class DepsCacheRuntimeGuardTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, hostile, True)
         os.chmod(hostile, 0o777)  # defeat umask
         with self.assertRaises(UnsafeDepsCache):
-            ensure_deps(self.corpus_root, "toy", deps_base=hostile)
+            ensure_deps(
+                self.corpus_root,
+                "toy",
+                deps_base=hostile,
+                manifest_path=self.corpus_root / "manifest.json",
+            )
 
     def test_ensure_deps_refuses_a_non_dangling_base_symlink_without_writes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -649,7 +737,12 @@ class DepsCacheRuntimeGuardTests(unittest.TestCase):
 
             with mock.patch("toolbench.complex_runner.subprocess.run") as run:
                 with self.assertRaisesRegex(UnsafeDepsCache, "is a symlink"):
-                    ensure_deps(self.corpus_root, "toy", deps_base=deps_base)
+                    ensure_deps(
+                        self.corpus_root,
+                        "toy",
+                        deps_base=deps_base,
+                        manifest_path=self.corpus_root / "manifest.json",
+                    )
 
             self.assertFalse((victim / "toy").exists())
             run.assert_not_called()

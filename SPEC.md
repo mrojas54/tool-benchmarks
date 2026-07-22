@@ -203,19 +203,19 @@ and re-exports the public symbols historical imports expect.
     one. A freeze-time census that was itself unavailable (`unavailable_reason` set at
     write time) round-trips and propagates that reason on replay rather than being
     laundered into the generic no-census text — attempted-and-failed is a different
-    fact from never-attempted. When a v2 manifest carries a REAL census, replay renders
-    real per-agent fractions instead of "unavailable" — but they are a **historical**
-    denominator (the archive as measured at freeze time, not today's), and the report
-    says so explicitly beside the fractions it qualifies (`frozen_census_note`,
-    `render_report`), on the same "state it, don't imply it" footing TB-33 established:
-    a v2 census must never read as current. The census's population filter is
-    persisted beside it as `census_includes_subagents` (`True` when the freeze did
-    **not** pass `--exclude-subagents`): replay discloses those fractions only when
-    that key is present **and** equals `not args.exclude_subagents` for this run.
-    A legacy v2 census written before the key existed, or a replay that flips
-    `--exclude-subagents` relative to the freeze, marks fractions unavailable with a
-    reason that names the missing or mismatched filter — never pairs a parents-only
-    denominator with a parents-plus-children numerator (or the reverse).
+    fact from never-attempted. New freezes also persist `census_includes_subagents`
+    beside the census: the population filter (`not --exclude-subagents`) used to
+    measure that denominator. Replay discloses historical fractions only when that
+    filter is present **and** matches the replay's `--exclude-subagents` choice —
+    otherwise it marks fractions unavailable (legacy v2 census without the key, or a
+    mismatched replay) rather than pairing a filtered numerator with the wrong
+    denominator (false 50% / impossible 200%). When a v2 manifest carries a REAL
+    census whose population filter matches, replay renders real per-agent fractions
+    instead of "unavailable" — but they are a **historical** denominator (the archive
+    as measured at freeze time, not today's), and the report says so explicitly beside
+    the fractions it qualifies (`frozen_census_note`, `render_report`), on the same
+    "state it, don't imply it" footing TB-33 established: a v2 census must never read
+    as current.
 - **S38 — unjoinable tool records are counted and surfaced, not dropped.** A tool
   record a parser RECOGNIZES as a real call but structurally CANNOT join — no join
   key and no output record — is neither a joined call nor a malformed line. It is
@@ -292,12 +292,12 @@ and re-exports the public symbols historical imports expect.
   census/scan drift instead of laundered, and `limit_truncated is None` (the source
   could not say) is stated as its own third answer. Cross-agent ratios are
   trustworthy only when no uneven-sampling line prints. A `--freeze` replay has no
-  *live* archive to census: when the v2 manifest carries a freeze-time census
-  **and** a matching `census_includes_subagents` filter (TB-37 / S37), replay
+  *live* archive to census: when the v2 manifest carries a freeze-time census whose
+  `census_includes_subagents` filter matches the replay (TB-37 / S37), replay
   discloses those fractions with an explicit historical-denominator caveat; when
-  the manifest has no `census` key (v1, or a v2 write whose freeze-time census
-  itself failed), the census lacks population-filter metadata, the replay's
-  `--exclude-subagents` disagrees with the freeze, or a live census failed at
+  the manifest has no usable census (v1, a v2 write whose freeze-time census
+  itself failed, a legacy v2 census without population-filter metadata, or a
+  replay that flipped `--exclude-subagents`) — or when a live census failed at
   discovery — the report carries `unavailable_reason` and marks fractions
   unavailable rather than inventing a denominator. The empty-selection path
   reuses the same census disclosure so a narrow window is not mistaken for an
