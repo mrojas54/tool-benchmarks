@@ -219,6 +219,12 @@ packaged manifest there so the vendored tree stays self-describing). Design:
 
 **Operator constraints (verified in code):**
 
+- `ensure_deps` / `provision_worktree` read `<corpus_root>/manifest.json`
+  (default: the generated `corpus/manifest.json` copy). The packaged file at
+  `src/toolbench/corpus/manifest.json` is the source of truth; `vendor.sh`
+  copies it into `corpus/`. After a pull that changes the packaged pin, re-run
+  `corpus/vendor.sh` — a leftover generated copy can silently keep old SHAs
+  while fixtures advance, producing plausible but invalid trial results.
 - Prompt is always `PROMPT.md` from `provision_worktree` — never the defect
   rationale (that leaks the predicted winner). Missing `PROMPT.md` raises
   `UnprovisionedWorktree`.
@@ -603,7 +609,8 @@ line means the run headline may understate what the orchestration spent.
 | `--freeze` replay still says fractions unavailable | Manifest has no usable `census` (v1, freeze-time census failure, legacy v2 without population metadata, or replay changed `--exclude-subagents`) | Expected. Use the same subagent filter as the freeze; rewrite a legacy freeze on current `main` if you want historical fractions. |
 | Agent Breakdown ratios look incomparable across agents | `--limit` truncates in whole-archive recency order (S41) | Read the `sampled` column and the uneven-sampling line. Compare across agents only when that line is absent. |
 | `toolbench` / `-m toolbench.passive` fails from `~` with a system python | The checkout's venv (with the editable install) isn't active | Use `uv run --project ~/tool-benchmarks toolbench passive ...` from any cwd; inside the repo, `uv run toolbench ...` or `uv run python -m toolbench.passive` both work. |
-| `corpus/manifest.json` disappeared after pulling the src-layout change | The manifest now ships inside the package (`src/toolbench/corpus/manifest.json`); the corpus copy is generated | Re-run `corpus/vendor.sh` (idempotent — skips existing clones); it copies the packaged manifest back into `corpus/`. |
+| `corpus/manifest.json` disappeared after pulling the src-layout change | The manifest now ships inside the package (`src/toolbench/corpus/manifest.json`); the corpus copy is generated / gitignored | Re-run `corpus/vendor.sh` (idempotent — skips existing clones); it copies the packaged manifest back into `corpus/`. |
+| Complex trial SHA / oracle looks wrong after a pull | `complex_runner` pins from `<corpus_root>/manifest.json`; a leftover generated copy can lag the packaged pin | Diff `corpus/manifest.json` against `src/toolbench/corpus/manifest.json`, then re-run `corpus/vendor.sh` so the copy matches the package. |
 | Summary cache read ↓ but creation ↑ by ~the same | Prefix-sharing moved cost between buckets (S39/S40) | Not a win. Compare read **and** creation together; read alone misleads. |
 | `--run-manifest` run total looks too low vs wall-clock spend | Detached-HEAD usage (`gitBranch="HEAD"`) cannot match any branch set (TB-28) | Read the `detached-HEAD (unattributable)` line (includes input/output). Do not fold it into the run — a detached delegator is indistinguishable from unrelated detached work. |
 | `--run-manifest` shows a large `unattributed` line | Candidate sessions also ran on non-run branches (straddle spillover, S40) | Expected. The run total is only the in-set entry slice; do not treat session totals as run-owned. |

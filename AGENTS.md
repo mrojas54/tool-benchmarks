@@ -65,11 +65,13 @@ Non-obvious notes for this environment:
   `report.py`, freeze I/O is `freeze.py`, run-manifest I/O is
   `run_manifest.py`; `passive.py` is CLI + orchestration and re-exports the
   historical public symbols. The complex debug probe library is `complex.py`
-  (defects, scoring, profile render) + `complex_runner.py` (worktree /
+  (defects, scoring, profile render) +   `complex_runner.py` (worktree /
   deps-cache / trial driver) — library only, no CLI yet; fixtures and the
   pinned manifest ship inside the package (`src/toolbench/probes/complex/`,
-  `src/toolbench/corpus/manifest.json`), vendored corpora under `corpus/`
-  (vendor.sh copies the packaged manifest there).
+  `src/toolbench/corpus/manifest.json`). `ensure_deps` / `provision_worktree`
+  still read `<corpus_root>/manifest.json` (the generated `corpus/` copy);
+  `vendor.sh` refreshes that copy from the package — re-run after pulls so a
+  stale generated manifest cannot pin obsolete trial SHAs.
 - **Subagent paths:** real layout is
   `<project>/<session-uuid>/subagents/*.jsonl` (TB-29). `--exclude-subagents`
   drops those refs; freeze replay re-derives the flag from the path so a
