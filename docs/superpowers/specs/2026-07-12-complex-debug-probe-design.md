@@ -5,7 +5,7 @@
 `src/toolbench/probes/complex/`; pinned corpora under `corpus/` (packaged
 manifest at `src/toolbench/corpus/manifest.json`, copied by `corpus/vendor.sh`).
 Pre-registered predictions committed; no live trial matrix run yet.
-**Date:** 2026-07-12 (status refreshed 2026-07-19)
+**Date:** 2026-07-12 (status refreshed 2026-07-22)
 
 ## Implementation map (as shipped)
 
@@ -15,6 +15,11 @@ Pre-registered predictions committed; no live trial matrix run yet.
 | `src/toolbench/complex_runner.py` | Hermetic worktree provision, deps cache, injectable `run_trial` |
 | `src/toolbench/probes/complex/` | Per-cell fixtures (`defect.patch`, `truth.json`, `prediction.md`, `oracle.json`, `prompt.md`) |
 | `src/toolbench/corpus/manifest.json` | Pinned SHAs + dep/warmup/provision recipes (`wids`, `maltese`, `rich`); `corpus/vendor.sh` copies this into `corpus/` |
+
+`ensure_deps` / `provision_worktree` read `<corpus_root>/manifest.json` (the
+generated copy), not the packaged path directly — re-run `vendor.sh` after a
+pull that changes the packaged pin so a stale leftover cannot keep obsolete
+trial SHAs.
 
 **Deps-cache invariants** (`UnsafeDepsCache`): the shared cache must diverge from
 the corpus at the filesystem root; must be a real private directory owned by this
