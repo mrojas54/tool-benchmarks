@@ -65,13 +65,14 @@ Non-obvious notes for this environment:
   `report.py`, freeze I/O is `freeze.py`, run-manifest I/O is
   `run_manifest.py`; `passive.py` is CLI + orchestration and re-exports the
   historical public symbols. The complex debug probe library is `complex.py`
-  (defects, scoring, profile render) +   `complex_runner.py` (worktree /
+  (defects, scoring, profile render) + `complex_runner.py` (worktree /
   deps-cache / trial driver) — library only, no CLI yet; fixtures and the
   pinned manifest ship inside the package (`src/toolbench/probes/complex/`,
-  `src/toolbench/corpus/manifest.json`). `ensure_deps` / `provision_worktree`
-  still read `<corpus_root>/manifest.json` (the generated `corpus/` copy);
-  `vendor.sh` refreshes that copy from the package — re-run after pulls so a
-  stale generated manifest cannot pin obsolete trial SHAs.
+  `src/toolbench/corpus/manifest.json`), vendored corpora under `corpus/`
+  (vendor.sh copies the packaged manifest there). `ensure_deps` /
+  `provision_worktree` default to the packaged manifest; custom corpora must
+  pass their manifest explicitly so a stale generated `corpus/manifest.json`
+  cannot change a trial SHA.
 - **Subagent paths:** real layout is
   `<project>/<session-uuid>/subagents/*.jsonl` (TB-29). `--exclude-subagents`
   drops those refs; freeze replay re-derives the flag from the path so a
@@ -110,8 +111,9 @@ Non-obvious notes for this environment:
   Cross-agent ratios are only comparable when the report emits no uneven-sampling
   line. A zero-match early return still prints the census the run already built
   (TB-34) — a narrow window must not read as an empty archive. Freeze replay
-  (manifest v2, TB-37) restores the freeze-time census when present **and** its
-  `census_includes_subagents` filter matches this replay's `--exclude-subagents`,
-  labeling it a **historical** denominator; a v1 manifest, a v2 write without a
-  census, a legacy v2 census lacking that filter key, or a mismatched
-  `--exclude-subagents` still marks fractions unavailable and names the reason.
+  (manifest v2, TB-37) restores the freeze-time census only when
+  `census_includes_subagents` is present and matches the replay's
+  `--exclude-subagents` choice, and labels it a **historical** denominator; a v1
+  manifest, a v2 write without a census, a legacy v2 census without that filter
+  key, or a mismatched subagent filter still marks fractions unavailable (and
+  names the reason / manifest version).

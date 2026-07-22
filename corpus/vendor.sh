@@ -19,8 +19,9 @@ cd "$(dirname "$0")"
 
 # The manifest's source of truth ships inside the package
 # (src/toolbench/corpus/manifest.json). Copy it here so the vendored tree is
-# self-describing: complex_runner and the TOOLBENCH_CORPUS_TESTS=1 suite read
-# `<corpus_root>/manifest.json`, and the heredoc below reads this local copy.
+# self-describing: vendor setup and the TOOLBENCH_CORPUS_TESTS=1 suite read this
+# local copy. complex_runner deliberately defaults to the packaged source so a
+# copy left behind across a pull cannot silently select obsolete trial SHAs.
 cp ../src/toolbench/corpus/manifest.json manifest.json
 
 python3 - <<'PY'
