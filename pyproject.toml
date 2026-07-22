@@ -20,3 +20,13 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# Pin the type-check scope so a bare local `mypy` mirrors the CI gate
+# (`mypy --strict src/toolbench tests`). Without this, a bare `mypy .` descends
+# into the `tools/` probe corpus -- vendored benchmark fixtures that are excluded
+# from the gate by design -- and reports ~88 strict errors that CI never sees.
+# CI still passes explicit paths + `--strict` on the command line, which take
+# precedence over `files` and duplicate `strict`, so this changes local runs only.
+[tool.mypy]
+files = ["src/toolbench", "tests"]
+strict = true
