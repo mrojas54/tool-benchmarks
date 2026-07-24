@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
+
+from toolbench.observability import setup_tracing
 
 
 def run_traced(command: str, operation: Callable[[], int]) -> int:
@@ -12,22 +13,10 @@ def run_traced(command: str, operation: Callable[[], int]) -> int:
     Arguments and report contents are deliberately excluded: transcript paths,
     session identifiers, prompts, and outputs can contain private material.
     """
-    try:
-        from lmnr import Laminar
-    except ModuleNotFoundError as exc:
-        if exc.name != "lmnr":
-            raise
+    if not setup_tracing():
         return operation()
 
-    try:
-        Laminar.initialize(
-            project_api_key=os.environ.get("LMNR_PROJECT_API_KEY"),
-            instruments=set(),
-        )
-    except ValueError:
-        # Installing the optional dependency must not make the standard CLI
-        # require a Laminar key. The SDK also checks a local .env file.
-        return operation()
+    from lmnr import Laminar
 
     try:
         with Laminar.start_as_current_span(
