@@ -45,10 +45,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from toolbench import passive
         from toolbench.tracing import run_traced
 
-        def run_passive() -> int:
+        def operation() -> int:
             return passive.main(rest)
 
-        return run_traced(command, run_passive) if argv is None else run_passive()
+        return run_traced(command, operation) if argv is None else operation()
     if command == "probe":
         from toolbench import probe
         from toolbench.tracing import run_traced
