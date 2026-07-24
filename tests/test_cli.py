@@ -122,9 +122,14 @@ class DispatchTests(unittest.TestCase):
                 os.environ, {"LMNR_PROJECT_API_KEY": "test-project-key"}
             ),
             unittest.mock.patch.dict(sys.modules, {"lmnr": fake_lmnr}),
+            unittest.mock.patch.object(
+                sys,
+                "argv",
+                ["toolbench", "probe", "--session", private_session],
+            ),
             unittest.mock.patch("toolbench.probe.main", return_value=None),
         ):
-            self.assertEqual(main(["probe", "--session", private_session]), 0)
+            self.assertEqual(main(), 0)
 
         self.assertEqual(
             events,
@@ -137,3 +142,15 @@ class DispatchTests(unittest.TestCase):
             ],
         )
         self.assertNotIn(private_session, repr(events))
+
+    def test_programmatic_dispatch_does_not_emit_a_laminar_trace(self) -> None:
+        with (
+            unittest.mock.patch(
+                "toolbench.tracing.run_traced",
+                side_effect=lambda _command, operation: operation(),
+            ) as trace,
+            unittest.mock.patch("toolbench.probe.main", return_value=None),
+        ):
+            self.assertEqual(main(["probe", "--allow-seeded"]), 0)
+
+        trace.assert_not_called()
