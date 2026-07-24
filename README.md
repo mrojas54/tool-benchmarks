@@ -450,6 +450,10 @@ trace for each real `toolbench` console command. Library-style calls such as
 `main([...])` stay untraced, so unit tests and embedding applications do not
 send telemetry.
 
+Initialization lives in
+`toolbench.observability.setup_tracing.setup_tracing`. It returns `False`
+instead of interrupting the CLI when the optional SDK or project key is absent.
+
 Set up the linked project once from the repository root:
 
 ```sh
