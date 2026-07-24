@@ -43,13 +43,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     command, rest = args[0], args[1:]
     if command == "passive":
         from toolbench import passive
+        from toolbench.tracing import run_traced
 
-        return passive.main(rest)
+        def run_passive() -> int:
+            return passive.main(rest)
+
+        return run_traced(command, run_passive) if argv is None else run_passive()
     if command == "probe":
         from toolbench import probe
+        from toolbench.tracing import run_traced
 
-        probe.main(rest)  # returns None; success is "did not raise"
-        return 0
+        def run_probe() -> int:
+            probe.main(rest)  # returns None; success is "did not raise"
+            return 0
+
+        return run_traced(command, run_probe) if argv is None else run_probe()
     if command == "worktrees":
         from toolbench import worktrees
 
