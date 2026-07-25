@@ -1,119 +1,69 @@
 # AGENTS.md
 
-## Cursor Cloud specific instructions
+`toolbench` is an offline, standard-library-only Python CLI harness. There is no
+server or database. Use the `passive` and `probe` CLIs; treat the hermetic test
+suite plus strict gate as end-to-end coverage. README and `pyproject.toml` are
+the source of truth for routine commands.
 
-`toolbench` is an offline, standard-library-only Python CLI harness (no web
-server, no database daemon, no long-running services). "Running the app" means
-invoking the CLI entry points (`passive`, `probe`); "testing
-end to end" means the hermetic `pytest` suite plus the strict gate. Standard
-commands live in `README.md` (Usage + Quality gate) and `pyproject.toml`;
-don't duplicate them here.
+## Toolchain and gate
 
-Non-obvious notes for this environment:
+- The project is `uv`-managed and requires Python >=3.13. Run tools from this
+  repository root via `uv run`; use `uv sync` when explicit provisioning is
+  needed.
+- Before a PR, run `uv run ruff check .`,
+  `uv run mypy --strict src/toolbench tests`, and `uv run pytest -q`. Do not
+  substitute `unittest discover`: it misses module-level pytest tests and
+  executes module-level report code.
+- Optional live dependencies (`agentsview`, Claude/Codex archives, Hermes) are
+  not required for the gate; skips for absent live archives are expected (the
+  hermetic suite is ~617 passing, with 3 skips when live paths are missing).
 
-- **Toolchain:** the project is `uv`-managed and pins `requires-python = ">=3.13"`.
-  Run `uv sync` (or let `uv run` sync implicitly) to provision a ≥3.13
-  interpreter into `.venv` and install `toolbench` editable (src layout,
-  `uv_build` backend). Always invoke tools via `uv run …` — the unified
-  console script `uv run toolbench passive …` / `uv run toolbench probe …`,
-  or the equivalent `uv run python -m toolbench.passive`; a system `python3`
-  older than 3.13 will not satisfy the version pin.
-- **Quality gate before any PR** (from `README.md`): `uv run ruff check .`,
-  `uv run mypy --strict src/toolbench tests`, and `uv run pytest -q`. Do not use
-  `uv run python -m unittest discover tests` as the gate — it silently misses
-  module-level `test_*` functions (37 of 220 as of TB-19) and executes
-  module-level code, printing report tables to stdout mid-run. The same three
-  commands run in CI (`.github/workflows/ci.yml`) on every PR and push to
-  `main` (`uv sync --frozen --python 3.13`); the Lattice pre-commit hook is
-  orthogonal (event-log integrity, not the gate). Periodic tech-debt
-  *assessment* reports live under `~/tech-debt-work/` (local tool; not CI).
-  Design: `docs/superpowers/specs/2026-07-15-tech-debt-cicd-routine-design.md`.
-- **Lattice board integrity (install the pre-commit hook once per clone):**
-  `ln -sf ../../.githooks/pre-commit .git/hooks/pre-commit`. `.git/hooks/` is not
-  versioned, so a fresh clone gets the script but not the wiring; linked worktrees
-  share the main checkout's hooks and need no separate install. The hook rejects a
-  commit whose index holds a `.lattice/tasks/*.json` snapshot with no
-  `task_created`-headed log in `.lattice/events/`. **Never create a task by writing
-  `.lattice/tasks/*.json` directly — always use `lattice create`.** A hand-written
-  snapshot has no event log, and the next ordinary `lattice` mutation appends to the
-  missing file, producing a headless log that `lattice rebuild` can never replay and
-  `lattice doctor` does not flag; the snapshot silently becomes the task's only copy.
-  That happened to TB-15 on 2026-07-09 and went undetected for four days. Do not set
-  `core.hooksPath` — it would disable the existing `post-commit`/`post-rewrite` hooks.
-- **Running the passive analyzer on real data:** there is no `--root` CLI flag;
-  raw scanning defaults to `~/.claude/projects` and treats the first path segment
-  under the root as the project (subagent files at `<project>/<session-uuid>/subagents/*.jsonl`
-  keep that owning project and set `is_subagent`). To exercise it, drop a
-  `*.jsonl` transcript at `~/.claude/projects/<project>/session.jsonl` and run
-  `uv run python -m toolbench.passive --agent all --all --index-source raw`.
-- **Running the active probe:** `toolbench.probe` refuses to write a report
-  (`SeededReportError`) unless you pass `--session <probe.jsonl>` (or
-  `--allow-seeded` for the baseline-only table). Fixture sessions under
-  `tests/fixtures/*.jsonl` are valid inputs for a quick real run. A hermes
-  `--format trace` export raises `NonIsolableTurns` (S30) — use a native
-  Claude Code transcript for probes. Probe joins via `ClaudeParser` with
-  `keep_raw_input` / `track_turns` (no private Claude walker).
-- **Per-run cache-token grouping:** `--run-manifest <run.json>` is a flag on
-  `toolbench.passive` (S40), not a separate module. Reader lives in
-  `run_manifest.py`. The package is installed editable into `.venv`, so it
-  works from any cwd: from `~` (cwd hygiene for measuring `~/.claude`), run
-  `uv run --project ~/tool-benchmarks toolbench passive --run-manifest
-  run.json` as in `.claude/skills/cache-token-metrics/SKILL.md`. Detached
-  checkouts stamp `gitBranch="HEAD"` and are named in the run section, never
-  folded into the run total (TB-28).
-- **Module split:** aggregation is `reducer.py`, markdown/fingerprint is
-  `report.py`, freeze I/O is `freeze.py`, run-manifest I/O is
-  `run_manifest.py`; `passive.py` is CLI + orchestration and re-exports the
-  historical public symbols. The complex debug probe library is `complex.py`
-  (defects, scoring, profile render) + `complex_runner.py` (worktree /
-  deps-cache / trial driver) — library only, no CLI yet; fixtures and the
-  pinned manifest ship inside the package (`src/toolbench/probes/complex/`,
-  `src/toolbench/corpus/manifest.json`), vendored corpora under `corpus/`
-  (vendor.sh copies the packaged manifest there). `ensure_deps` /
-  `provision_worktree` default to the packaged manifest; custom corpora must
-  pass their manifest explicitly so a stale generated `corpus/manifest.json`
-  cannot change a trial SHA.
-- **Subagent paths:** real layout is
-  `<project>/<session-uuid>/subagents/*.jsonl` (TB-29). `--exclude-subagents`
-  drops those refs; freeze replay re-derives the flag from the path so a
-  stale pre-fix `"is_subagent": false` cannot keep them included.
-- **Generated output:** reports land in `reports/`, which is gitignored.
-- **Optional external dependencies are not present here and are not needed for the
-  gate:** the `agentsview` CLI, real `~/.claude`/Codex transcript roots, and the
-  Hermes archive (`~/.hermes` / `$HERMES_HOME`). Fast-suite skips for absent live
-  archives are expected (currently 3 skips when hermes/optional live paths are
-  missing; hermetic suite is ~617 passing).
-- **Complex deps cache (`UnsafeDepsCache`):** `complex_runner._assert_deps_base_safe`
-  rejects a replaceable cache leaf *before* `resolve()` (including a dangling
-  symlink), then requires FS-root divergence from the corpus, sticky-safe
-  ancestors, and a private uid-owned directory under
-  `gettempdir()/vendor-cache-<uid>`. Operator notes live in `README.md`
-  (Complex debug probe section + troubleshooting).
-- **`--index-source auto` mid-listing fallback (TB-38):** a daemon that answers
-  the `--limit 1` probe and then fails during pagination (nonzero exit,
-  `AgentsViewTimeout`, or schema-invalid listing → `MalformedAgentsViewResponse`
-  / `ValueError`) still degrades to raw — the partial agentsview listing is
-  discarded and rescanned wholesale, never spliced. "Schema-invalid" covers bad
-  JSON and contract failures (`sessions` not a list, row missing non-empty
-  `id`/`agent`/`project`, bad `next_cursor`/`total`). The health probe validates
-  that same shape. Explicit `agentsview` stays strict for those mid-listing
-  failure modes (and for a vanished binary).
-- **Sampling disclosure (S41 / TB-33 / TB-35 / TB-34 / TB-37):** `--limit` caps
-  total refs in RECENCY order across the whole archive, so each agent lands at a
-  different fraction of its own history and an agent whose work is all older than
-  the window vanishes entirely. The Agent Breakdown's `sampled` column carries
-  each agent's denominator; agents present in the archive but never scanned still
-  get a row. The uneven-sampling line apportions the per-agent remainder
-  (`total - sampled`) between truncation and attrition from *observed* signals
-  only — `limit_truncated` for the window cutting the listing, `SkipRecord`s for
-  skips — rather than merely asserting both happened (TB-35): a `--limit` passed
-  without biting is not truncation, and a negative remainder is flagged as drift.
-  Cross-agent ratios are only comparable when the report emits no uneven-sampling
-  line. A zero-match early return still prints the census the run already built
-  (TB-34) — a narrow window must not read as an empty archive. Freeze replay
-  (manifest v2, TB-37) restores the freeze-time census only when
-  `census_includes_subagents` is present and matches the replay's
-  `--exclude-subagents` choice, and labels it a **historical** denominator; a v1
-  manifest, a v2 write without a census, a legacy v2 census without that filter
-  key, or a mismatched subagent filter still marks fractions unavailable (and
-  names the reason / manifest version).
+## Repository integrity
+
+- Install the clone-local Lattice guard once with
+  `ln -sf ../../.githooks/pre-commit .git/hooks/pre-commit`. Never set
+  `core.hooksPath` because existing post-commit/post-rewrite hooks must remain.
+- Create tasks only with `lattice create`; never write `.lattice/tasks/*.json`
+  directly. Snapshots without a `task_created`-headed event log cannot be
+  rebuilt reliably.
+- Reports are generated under gitignored `reports/`.
+
+## Analyzer and probe constraints
+
+- Raw passive scans default to `~/.claude/projects`; the first path segment is
+  the project. Subagents live at
+  `<project>/<session-uuid>/subagents/*.jsonl`, retain the owning project, and
+  can be dropped with `--exclude-subagents`.
+- `toolbench.probe` requires `--session <probe.jsonl>` before writing a report;
+  use `--allow-seeded` only for a baseline-only table. Fixtures are valid smoke
+  inputs. Hermes `--format trace` is not turn-isolable; use native Claude
+  transcripts for probes.
+- `--run-manifest <run.json>` belongs to `toolbench.passive`. Outside the
+  checkout, invoke the installed console script with
+  `uv run --project ~/tool-benchmarks toolbench passive --run-manifest run.json`.
+  Detached checkouts remain separate `HEAD` runs rather than joining totals.
+- `--limit` is a global recency cap, so per-agent sample fractions may differ or
+  vanish. Treat cross-agent ratios as comparable only when no uneven-sampling
+  warning is emitted. Attribution must use observed truncation/skip signals;
+  flag negative remainders as drift.
+- Freeze replay (manifest v2, TB-37) restores the freeze-time census as a
+  **historical** denominator only when `census_includes_subagents` is present
+  and matches the replay's `--exclude-subagents` choice. A v1 manifest, a v2
+  write without a census, a legacy v2 census missing that key, or a mismatched
+  subagent filter each leave fractions unavailable and name the reason.
+- `ensure_deps` / `provision_worktree` default to the **packaged** manifest
+  (`src/toolbench/corpus/manifest.json`); custom corpora must pass their own
+  manifest explicitly so a stale generated `corpus/manifest.json` cannot change
+  a trial SHA.
+- `complex_runner._assert_deps_base_safe` rejects a replaceable deps-cache leaf
+  (including a dangling symlink) *before* `resolve()`, then requires FS-root
+  divergence from the corpus, sticky-safe ancestors, and a private uid-owned
+  directory under `gettempdir()/vendor-cache-<uid>`.
+
+## Module ownership
+
+Aggregation is in `reducer.py`; markdown/fingerprints in `report.py`; freeze I/O
+in `freeze.py`; run-manifest I/O in `run_manifest.py`. `passive.py` owns CLI
+orchestration and compatibility re-exports. The complex debug probe is
+`complex.py` (defects, scoring, profile render) plus `complex_runner.py`
+(worktree, deps cache, trial driver) — library only, no CLI yet.
