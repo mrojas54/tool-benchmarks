@@ -24,9 +24,11 @@ Non-obvious notes for this environment:
   module-level `test_*` functions (37 of 220 as of TB-19) and executes
   module-level code, printing report tables to stdout mid-run. The same three
   commands run in CI (`.github/workflows/ci.yml`) on every PR and push to
-  `main` (`uv sync --frozen --python 3.13`); the Lattice pre-commit hook is
-  orthogonal (event-log integrity, not the gate). Periodic tech-debt
-  *assessment* reports live under `~/tech-debt-work/` (local tool; not CI).
+  `main` (`uv sync --frozen --python 3.13`); a bare `uv run mypy` also mirrors
+  that scope via `[tool.mypy]` in `pyproject.toml` (does not descend into
+  `tools/`). The Lattice pre-commit hook is orthogonal (event-log integrity,
+  not the gate). Periodic tech-debt *assessment* reports live under
+  `~/tech-debt-work/` (local tool; not CI).
   Design: `docs/superpowers/specs/2026-07-15-tech-debt-cicd-routine-design.md`.
 - **Lattice board integrity (install the pre-commit hook once per clone):**
   `ln -sf ../../.githooks/pre-commit .git/hooks/pre-commit`. `.git/hooks/` is not
@@ -62,12 +64,14 @@ Non-obvious notes for this environment:
   checkouts stamp `gitBranch="HEAD"` and are named in the run section, never
   folded into the run total (TB-28).
 - **Module split:** aggregation is `reducer.py`, markdown/fingerprint is
-  `report.py`, freeze I/O is `freeze.py`, run-manifest I/O is
-  `run_manifest.py`; `passive.py` is CLI + orchestration and re-exports the
-  historical public symbols. The complex debug probe library is `complex.py`
-  (defects, scoring, profile render) + `complex_runner.py` (worktree /
-  deps-cache / trial driver) — library only, no CLI yet; fixtures and the
-  pinned manifest ship inside the package (`src/toolbench/probes/complex/`,
+  `report.py` (per-section `_render_*` helpers), freeze I/O is `freeze.py`,
+  run-manifest I/O is `run_manifest.py`; `passive.py` is CLI + orchestration
+  (`_resolve_corpus` for replay-vs-discover) and re-exports the historical
+  public symbols. The complex debug probe library is `complex.py` (defects,
+  scoring, profile render) + `shell_safety.py` (arm / read-scope audits;
+  re-exported from `complex`) + `complex_runner.py` (worktree / deps-cache /
+  trial driver) — library only, no CLI yet; fixtures and the pinned manifest
+  ship inside the package (`src/toolbench/probes/complex/`,
   `src/toolbench/corpus/manifest.json`), vendored corpora under `corpus/`
   (vendor.sh copies the packaged manifest there). `ensure_deps` /
   `provision_worktree` default to the packaged manifest; custom corpora must
@@ -82,7 +86,7 @@ Non-obvious notes for this environment:
   gate:** the `agentsview` CLI, real `~/.claude`/Codex transcript roots, and the
   Hermes archive (`~/.hermes` / `$HERMES_HOME`). Fast-suite skips for absent live
   archives are expected (currently 3 skips when hermes/optional live paths are
-  missing; hermetic suite is ~617 passing).
+  missing; hermetic suite is ~619 passing).
 - **Complex deps cache (`UnsafeDepsCache`):** `complex_runner._assert_deps_base_safe`
   rejects a replaceable cache leaf *before* `resolve()` (including a dangling
   symlink), then requires FS-root divergence from the corpus, sticky-safe
@@ -94,10 +98,11 @@ Non-obvious notes for this environment:
   `AgentsViewTimeout`, or schema-invalid listing → `MalformedAgentsViewResponse`
   / `ValueError`) still degrades to raw — the partial agentsview listing is
   discarded and rescanned wholesale, never spliced. "Schema-invalid" covers bad
-  JSON and contract failures (`sessions` not a list, row missing non-empty
-  `id`/`agent`/`project`, bad `next_cursor`/`total`). The health probe validates
-  that same shape. Explicit `agentsview` stays strict for those mid-listing
-  failure modes (and for a vanished binary).
+  JSON and contract failures (`sessions` not a list, row missing required
+  `id`/`agent`/`project`, non-empty `id`/`agent` — empty `project` is valid for
+  projectless/global sessions — bad `next_cursor`/`total`). The health probe
+  validates that same shape. Explicit `agentsview` stays strict for those
+  mid-listing failure modes (and for a vanished binary).
 - **Sampling disclosure (S41 / TB-33 / TB-35 / TB-34 / TB-37):** `--limit` caps
   total refs in RECENCY order across the whole archive, so each agent lands at a
   different fraction of its own history and an agent whose work is all older than

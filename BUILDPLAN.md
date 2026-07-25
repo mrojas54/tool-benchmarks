@@ -16,10 +16,10 @@ raw roots + AgentsView exports
    adapters (adapters.py + registry.py)  ── SessionRef → ParseResult
           │
      ┌────┴──────────────────┬────────────────────┐
- passive.py (CLI / scan)   probe.py          complex.py + complex_runner.py
-     │                         │             (library: locate-then-fix)
+ passive.py (CLI / scan)   probe.py          complex.py + shell_safety.py
+     │                         │             + complex_runner.py
  reducer.py → report.py        │  (ClaudeParser keep_raw + track_turns)
- freeze.py (opt-in pin)        │
+ freeze.py (opt-in pin)        │             (library: locate-then-fix)
  run_manifest.py (S40 opt-in)  │
      └──────────┬──────────────┴────────────────────┘
           reports/*.md
@@ -27,14 +27,18 @@ raw roots + AgentsView exports
 
 - **Runtime:** Python stdlib only (`subprocess` shells to the AgentsView CLI).
 - **Project:** uv-managed; `pyproject.toml` + `uv.lock`; dev group
-  `ruff`/`mypy`/`pytest`; runtime deps empty.
+  `ruff`/`mypy`/`pytest`; runtime deps empty. `[tool.mypy]` pins
+  `files` + `strict` so a bare local `mypy` mirrors the CI gate
+  (`src/toolbench` + `tests`) and does not type-check `tools/`.
 - **Parser seam (decided):** callers open lines and use `ClaudeParser.parse`
   or `registry.pick_adapter` → `SessionAdapter.parse`. Path-based
   `parse_session` was retired (CQ 1.3). Probe reuses the same pass via
   `keep_raw_input` / `track_turns` (CQ 7.1).
 - **Reducer (decided):** `reducer.py` keeps only per-agent/per-tool counters
   globally; it never accumulates a whole-corpus `list[ToolCall]`. Report
-  rendering and fingerprinting live in `report.py`.
+  rendering and fingerprinting live in `report.py` (per-section helpers).
+- **Complex library:** `shell_safety.py` holds arm / read-scope audits;
+  `complex.py` re-exports them for callers.
 - **Schema dispatch (TB-13, shipped):** acquisition (`SessionLoader`) and
   interpretation (`TranscriptParser`) are orthogonal ABCs. Hermes SQLite
   claims by source; every other session is content-sniffed (including
