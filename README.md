@@ -99,12 +99,13 @@ rather than silently absent (S38 / TB-24).
   `pick_adapter(ref).parse(ref)`.
 - **`parsers.py`** — one class per schema. `ClaudeParser` joins each assistant
   `tool_use` block to its result by id, stamps inefficiency tags at emit
-  (CQ 3.1), and sums session-grain cache read/creation (S39). Optional
-  `keep_raw_input` / `track_turns` (CQ 7.1) let probe reuse this pass instead
-  of a second Claude-shaped walker. `HermesTraceParser` subclasses it for
-  the claude-shaped hermes trace export and stamps every call
-  `ABSENT_BY_EXPORT` (S29). Malformed lines are counted and skipped, never
-  fatal.
+  (CQ 3.1), and sums session-grain cache read/creation (S39). Usage and turn
+  accounting live in module-level `_account_usage` / `_track_turn` (local
+  `_UsageTally`, no instance state on `parse`). Optional `keep_raw_input` /
+  `track_turns` (CQ 7.1) let probe reuse this pass instead of a second
+  Claude-shaped walker. `HermesTraceParser` subclasses it for the
+  claude-shaped hermes trace export and stamps every call `ABSENT_BY_EXPORT`
+  (S29). Malformed lines are counted and skipped, never fatal.
 - **`adapters.py`** — `detect_parser`, `UnknownSchema`, `AmbiguousSchema`, and
   `ComposedAdapter` (the terminal fallback). `PARSERS` currently holds
   `ClaudeParser`, `HermesTraceParser`, and `CodexParser`; Claude and HermesTrace
@@ -136,16 +137,17 @@ rather than silently absent (S38 / TB-24).
   surfaced on `ParseResult` for the Agent Breakdown caveat (S32 / TB-20),
   never attributed per call.
 - **`passive.py`** — CLI and scan orchestration only: argparse, discovery /
-  `--freeze` replay, per-ref parse, date-range filter, typed skips. Re-exports
-  reducer/report symbols so historical `from toolbench.passive import …`
-  imports keep working.
+  `--freeze` replay via `_resolve_corpus`, per-ref parse, date-range filter,
+  typed skips. Re-exports reducer/report symbols so historical
+  `from toolbench.passive import …` imports keep working.
 - **`reducer.py`** — incremental corpus aggregation (S11). Folds each
   session's `ParseResult` into per-agent / per-tool counters and discards the
   call list — never a whole-corpus `list[ToolCall]`. Schema-neutral: it only
   counts tags already stamped at parse time.
 - **`report.py`** — five-section markdown render (S14) plus corpus fingerprint
   helpers (S36) and sampling disclosure (S41: `sampled` column, uneven-
-  sampling apportionment). Sections: agent breakdown (session-grain cache
+  sampling apportionment). `render_report` orchestrates per-section
+  `_render_*` helpers. Sections: agent breakdown (session-grain cache
   caveats + census fractions), tool leaderboard (`cache_assisted` as `yes` /
   `no` / `n/a` / `n/a*`), model breakdown, inefficiency callouts, summary
   (discovery reconcile, unjoinable records, S39 cache totals).
@@ -171,10 +173,13 @@ rather than silently absent (S38 / TB-24).
   only when the API response is isolable (one `tool_use`, no prose/reasoning —
   S26). Turns are keyed solely by `requestId` (S30); hermes-trace input is
   refused with `NonIsolableTurns`.
-- **`complex.py` / `complex_runner.py`** — locate-then-fix library (no CLI
-  yet). Measures tokens to a verified outcome across four toolset arms rather
-  than cost-per-call. See [Complex debug probe](#complex-debug-probe-library)
-  below; design lives under
+- **`complex.py` / `shell_safety.py` / `complex_runner.py`** — locate-then-fix
+  library (no CLI yet). `complex.py` loads defects, scores trials, and renders
+  the routing profile; `shell_safety.py` holds the bash tokenization /
+  path-containment / gate-escape audits (`arm_violations`, `read_escapes`,
+  `BANNED_TOOLS`) and is re-exported from `complex` so callers stay unchanged;
+  `complex_runner.py` provisions worktrees and drives trials. See
+  [Complex debug probe](#complex-debug-probe-library) below; design lives under
   [`docs/superpowers/specs/2026-07-12-complex-debug-probe-design.md`](docs/superpowers/specs/2026-07-12-complex-debug-probe-design.md).
 ## Probe corpus
 
@@ -201,7 +206,8 @@ different question: **which toolset reaches a verified fix for the fewest
 context tokens?** That changes the unit from tokens-per-call to tokens-to-
 outcome, so the agent chooses its own path and step count dominates.
 
-**Status:** library shipped (`src/toolbench/complex.py`, `src/toolbench/complex_runner.py`);
+**Status:** library shipped (`src/toolbench/complex.py`,
+`src/toolbench/shell_safety.py`, `src/toolbench/complex_runner.py`);
 **no CLI yet**. Fixtures ship inside the package under
 [`src/toolbench/probes/complex/`](src/toolbench/probes/complex/); the pinned
 manifest is packaged at
@@ -213,6 +219,7 @@ packaged manifest there so the vendored tree stays self-describing). Design:
 | Piece | Role |
 |---|---|
 | `complex.py` | Load defects from fixtures, score a trial (`LOCATED:` + oracle), build/render a routing profile |
+| `shell_safety.py` | Bash tokenization, path-containment, and gate-escape audits (`arm_violations`, `read_escapes`, `BANNED_TOOLS`); re-exported by `complex` |
 | `complex_runner.py` | Provision a hermetic worktree, shared deps cache, injectable `launch`/`oracle`, `run_trial` |
 | `src/toolbench/probes/complex/<repo>-<id>-*/` | `defect.patch`, `truth.json`, `prediction.md`, `oracle.json`, `prompt.md` |
 | `src/toolbench/corpus/manifest.json` | Pinned SHAs + dep/warmup/provision recipes for `wids`, `maltese`, `rich` |
@@ -272,15 +279,18 @@ without splicing (**TB-38**), and per-agent sampling disclosure with
 apportionment (**S41** / **TB-33** / **TB-35**) — including census on the
 zero-match path (**TB-34**) and freeze-time census in manifest v2 with a
 subagent-population filter guard (**TB-37**) — are shipped. The complex debug probe library (`complex.py` /
-`complex_runner.py`) is implemented as a library (fixtures under
+`shell_safety.py` / `complex_runner.py`) is implemented as a library (fixtures under
 `src/toolbench/probes/complex/`; no CLI yet). CQ follow-ons split passive into
 `reducer`/`report`, fold probe into `ClaudeParser`
 (`keep_raw_input` / `track_turns`), and stamp inefficiency tags at emit.
 The strict gate (`uv run ruff check .`, `uv run mypy --strict src/toolbench tests`,
-`uv run pytest -q`) is green — **617** tests passing (3 skipped when the
+`uv run pytest -q`) is green — **619** tests passing (3 skipped when the
 live hermes archive / optional live paths are absent). `mypy --strict`
 covers `tests` as well as `src/toolbench`. The same three commands run in CI
-(`.github/workflows/ci.yml`) on every PR and on pushes to `main`.
+(`.github/workflows/ci.yml`) on every PR and on pushes to `main`. A bare
+`uv run mypy` also mirrors that scope via `[tool.mypy]` in `pyproject.toml`
+(`files = ["src/toolbench", "tests"]`, `strict = true`) so a local run does
+not descend into the `tools/` probe corpus.
 
 Source-of-truth documents:
 
@@ -339,7 +349,9 @@ bug this adapter exists for is
 ## Usage
 
 The project is [uv](https://docs.astral.sh/uv/)-managed (`pyproject.toml` +
-`uv.lock`, empty runtime deps, `dev` group `ruff`/`mypy`/`pytest`).
+`uv.lock`, empty runtime deps). The `dev` group installs the gate tools
+(`ruff` / `mypy` / `pytest`) plus optional parallel-run tooling (`logfire`);
+the shipped package stays stdlib-only.
 Requires Python ≥3.13.
 
 ```sh
@@ -622,7 +634,11 @@ line means the run headline may understate what the orchestration spent.
 Before any PR: `uv run ruff check .`, `uv run mypy --strict src/toolbench tests`,
 and `uv run pytest -q` must be green (S31 — the documented command must
 collect every test, including module-level `test_*` functions that
-`unittest discover` silently misses).
+`unittest discover` silently misses). A bare `uv run mypy` is also safe:
+`[tool.mypy]` in `pyproject.toml` pins `files` + `strict` to the same scope,
+so a local run does not type-check the `tools/` probe corpus (~88 by-design
+strict errors CI never sees). CI still passes explicit paths + `--strict` on
+the command line.
 
 GitHub Actions runs that same gate on every pull request and every push to
 `main` (`.github/workflows/ci.yml`: `uv sync --frozen --python 3.13`, then

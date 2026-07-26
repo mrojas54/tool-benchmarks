@@ -348,7 +348,9 @@ and re-exports the public symbols historical imports expect.
   callouts only.
 - **S20 — stdlib runtime, uv project.** The shipped `toolbench` package
   imports nothing third-party; the project is uv-managed (`pyproject.toml`
-  + `uv.lock`, empty runtime deps, `dev` group `ruff`/`mypy`/`pytest`).
+  + `uv.lock`, empty runtime deps). The `dev` group holds the gate tools
+  (`ruff` / `mypy` / `pytest`) plus optional parallel-run tooling
+  (`logfire`); none of that is imported by the shipped package.
 - **S21 — entry points.** Runnable as `uv run toolbench passive` /
   `uv run toolbench probe` (unified console script via `cli.py`) or
   `uv run python -m toolbench.passive` / `… toolbench.probe`; tests via
