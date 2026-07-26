@@ -416,8 +416,10 @@ that fails the listing contract). Every `agentsview` call is bounded by
 `AgentsViewTimeout`. Successful `session list` pages are decoded by
 `_decode_agentsview_list_payload`, which raises `MalformedAgentsViewResponse`
 (`ValueError`) for invalid JSON, a non-object payload, `sessions` not a list, a
-row missing non-empty `id` / `agent` / `project`, a non-string `next_cursor`, or
-a bad `total`. Where that surfaces depends on when the daemon fails the check:
+row missing required `id` / `agent` / `project`, non-empty `id` / `agent` (empty
+`project` is valid — AgentsView emits `""` for projectless/global sessions), a
+non-string `next_cursor`, or a bad `total`. Where that surfaces depends on when
+the daemon fails the check:
 
 - at the `auto` probe → fallback to raw, reason named in the Summary (timeout
   prose, or the schema-validation message when `--limit 1` returns a zero-exit
@@ -597,6 +599,7 @@ line means the run headline may understate what the orchestration spent.
 | `cursor` sessions appear only under the `unknown_schema` skip reason | No parser claims cursor's schema yet (`UnknownSchema`, S28) | Expected until a `CursorParser` lands. It must not appear as a healthy zero-call agent; `tally_skips`/`--verbose` surface the count and ids (S34). |
 | Sessions skipped under the `export_timeout` reason | The AgentsView daemon stopped answering **mid-scan**; each `export` is bounded at `AGENTSVIEW_TIMEOUT_S` (TB-32) | Not a bad session — a sick daemon. The probe passed, so the hang began later; the scan degrades to skips rather than dying. Restart AgentsView and re-run, or use `--index-source raw`. A run where *many* sessions carry this reason is not a corpus to trust. |
 | `--index-source auto` used to exit 1 after a healthy probe | Mid-listing failure (nonzero exit, hang, or schema-invalid listing — bad JSON **or** missing/`sessions`/row/`next_cursor`/`total` contract) used to be fatal; now falls back to raw and discards the partial listing (TB-38) | Expected on current `main`. Explicit `--index-source agentsview` still exits 1 — that is the strict path. A zero-exit but schema-invalid health probe also falls back under `auto`. |
+| AgentsView listing drops Reasonix / other projectless sessions as malformed | Pre-#80 validator required non-empty `project` on every row; AgentsView emits `""` for global/archive sessions | Current code requires `project` as a string but allows empty. `id` / `agent` stay non-empty. Re-run on current `main`. |
 | `cache_assisted` shows `n/a` for every `codex` tool | codex has no per-call usage channel; it bills per turn via `token_count` events (`ABSENT_BY_SCHEMA`, S33) | Expected. Do not read `n/a` as "no cache hits". |
 | `codex` reports 0 errors no matter what failed | codex encodes exit status in the output text and sets `status: completed` even for failed tools (S33) | Expected. `error` is never inferred from output prose. Use `output_chars` / the raw transcript to inspect failures. |
 | `codex` web searches never appear in the leaderboard | `web_search_call` carries no `call_id` and emits no output record, so it cannot be joined (S33 / TB-24) | Expected. They are not joinable calls, so leaderboard/ratio counts exclude them. The count is not lost: the Summary's `Unjoinable tool records (seen, not joined)` line names it as `codex/web_search_call` (S38). |

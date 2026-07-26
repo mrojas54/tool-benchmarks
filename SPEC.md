@@ -69,8 +69,9 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   breaks during the pagination that follows -- a nonzero exit, a hang
   (`AgentsViewTimeout`, TB-32), or a schema-invalid listing payload
   (`MalformedAgentsViewResponse` / `ValueError`: invalid JSON, non-object
-  payload, `sessions` not a list, row missing non-empty `id`/`agent`/`project`,
-  bad `next_cursor`/`total`) -- also degrades `auto` to raw,
+  payload, `sessions` not a list, row missing required `id`/`agent`/`project`,
+  non-empty `id`/`agent` — empty `project` is valid for projectless/global
+  sessions — bad `next_cursor`/`total`) -- also degrades `auto` to raw,
   discarding whatever partial agentsview listing that attempt had collected and
   rescanning the corpus wholesale from the filesystem rather than splicing the
   two (TB-38; TB-22's identity/fingerprint precedent is why nothing is spliced).
