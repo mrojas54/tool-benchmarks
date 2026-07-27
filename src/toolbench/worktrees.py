@@ -39,18 +39,25 @@ A verdict is a claim, so a failing verdict-bearing call raises
 standard: fail loudly rather than emit a plausible-looking result). Idle age and
 size are decoration, so a failing `du`/`stat` degrades to `?` and the row still
 prints.
+
+`--hook` inverts exactly one of those rules and nothing else. At a terminal a
+loud failure is right, because a human asked a question and deserves to know it
+went unanswered. Registered as a `SessionStart` hook it is not: nobody asked, so
+a broken reporter must cost the session nothing -- see `_hook`.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import subprocess
+import sys
 import time
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import IO, Literal
 
 from toolbench.sources import Runner
 
@@ -98,6 +105,19 @@ REMOTES = "refs/remotes/"
 # the separator can never appear inside a field. `%(upstream:track)` is
 # deliberately absent -- see the module docstring.
 _REF_FORMAT = "%(refname)%09%(objectname)%09%(upstream)"
+
+# The `SessionStart` payload's `source` values this reporter is willing to speak
+# on. The full set is `startup|resume|clear|compact|fork`; `compact` is the one
+# that matters, because a long session compacts repeatedly and re-injecting the
+# same line each time turns a once-a-morning notice into a mid-session nag about
+# something the reader already declined to act on.
+HOOK_SOURCES = frozenset({"startup", "resume"})
+
+# The event this hook answers for. Hard-coded rather than echoed back from the
+# payload: `source` gating already establishes which event this is, and echoing
+# an attacker-or-typo-supplied field into the envelope would let a malformed
+# payload address a hook Claude never invoked.
+HOOK_EVENT = "SessionStart"
 
 
 class WorktreeProbeFailed(RuntimeError):
@@ -556,7 +576,103 @@ def _render(main_checkout: _Stanza | None, trees: Sequence[Tree]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None) -> int:
+def _total_megabytes(trees: Sequence[Tree]) -> str:
+    """The candidates' summed size, with any tree we could not measure named.
+
+    A sum over a partly-unmeasured set is a number that can lie by omission, so
+    it says so: `560 MB` when every tree was sized, `448+ MB (1 unmeasured)` when
+    one was not. Silently dropping the unsized tree would understate the pile in
+    exactly the direction that makes the notice easier to ignore.
+    """
+    measured = [tree.megabytes for tree in trees if tree.megabytes != UNKNOWN]
+    total = sum(measured)
+    missing = len(trees) - len(measured)
+    return f"{total} MB" if not missing else f"{total}+ MB ({missing} unmeasured)"
+
+
+def _hook_line(trees: Sequence[Tree]) -> str:
+    """The single line injected into a session. Count, megabytes, procedure.
+
+    One line, not the table: this is a recurring tax on every session's context
+    window, and the table is one command away for anyone who wants it. It ends by
+    saying nothing was deleted, because a notice about reclaimable disk is
+    otherwise ambiguous about whether it already acted.
+    """
+    count = len(trees)
+    plural = "" if count == 1 else "s"
+    return (
+        f"{count} reclaimable git worktree{plural} ({_total_megabytes(trees)}): "
+        f"clean, unlocked, fully reachable, unclaimed by any live upstream, and "
+        f"idle {IDLE_DAYS}+ days. Run `uv run toolbench worktrees "
+        f"--reclaimable-only` to see them, and reclaim with the AGENTS.md "
+        f"§ Repository integrity procedure (`git worktree remove <path>` "
+        f"**then** `git branch -d <branch>`). Nothing has been deleted."
+    )
+
+
+def _hook(runner: Runner, stdin: IO[str]) -> int:
+    """`SessionStart` mode: report only what is reclaimable, and never fail.
+
+    Four rules, and every one of them is a decision about a hook nobody asked
+    for rather than a command somebody typed.
+
+    **Silent when there is nothing to say.** No reclaimable tree means no output
+    at all -- the same early return `.githooks/pre-commit` takes when nothing
+    Lattice-related is staged. On this repository today that is the answer, which
+    is what makes any output at all worth reading.
+
+    **Only `startup` and `resume`.** `compact` fires repeatedly inside one long
+    session; re-injecting the notice there turns a morning report into a nag.
+
+    **Never non-zero, and never a traceback.** A malformed payload, a missing
+    git, a hung mount, a `WorktreeProbeFailed` -- all exit 0 silently, which is
+    why the catch is deliberately broad. At a terminal the opposite is right and
+    `main` keeps that behaviour; here a broken reporter that paints a hook-error
+    notice on every session start gets the whole hook disabled, and then the one
+    morning it would have been right, it is not installed.
+
+    **One line, not the table.** See `_hook_line`.
+    """
+    try:
+        payload = json.load(stdin)
+    except (json.JSONDecodeError, ValueError, OSError, UnicodeDecodeError):
+        return 0
+    if not isinstance(payload, dict):
+        return 0
+    # `isinstance` before the membership test, not for tidiness: `x in frozenset`
+    # RAISES TypeError on an unhashable value, so a payload carrying
+    # `"source": ["startup"]` would crash the gate that exists to be
+    # uncrashable. A field arriving from outside is never a predicate until its
+    # type is checked -- the same lesson as `%(upstream:track)`, one layer down.
+    source = payload.get("source")
+    if not isinstance(source, str) or source not in HOOK_SOURCES:
+        return 0
+    try:
+        trees = classify(runner, repo=Path.cwd(), now=time.time())
+    except Exception:  # noqa: BLE001 -- see the docstring: silence is the contract
+        return 0
+    candidates = reclaimable(trees)
+    if not candidates:
+        return 0
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": HOOK_EVENT,
+                    "additionalContext": _hook_line(candidates),
+                }
+            }
+        )
+    )
+    return 0
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    runner: Runner | None = None,
+    stdin: IO[str] | None = None,
+) -> int:
     parser = argparse.ArgumentParser(
         prog="toolbench worktrees",
         description=(
@@ -565,7 +681,11 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None) -> 
             "branch, or touches a ref."
         ),
     )
-    parser.add_argument(
+    # Two output modes, not two filters: one prints a table for a human, the
+    # other prints a JSON hook envelope for a session. Asking for both is a
+    # mistake worth naming rather than silently resolving in one's favour.
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument(
         "--reclaimable-only",
         action="store_true",
         help=(
@@ -575,8 +695,19 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None) -> 
             "on a repository with nothing to reclaim, not an error."
         ),
     )
-    # `--hook` arrives with the SessionStart wiring that needs it.
+    modes.add_argument(
+        "--hook",
+        action="store_true",
+        help=(
+            "SessionStart hook mode: read the hook payload on stdin and emit a "
+            "one-line JSON context envelope when something is reclaimable. "
+            "Silent otherwise, silent on any failure, and always exit 0."
+        ),
+    )
     args = parser.parse_args(argv)
+
+    if args.hook:
+        return _hook(runner or _run, stdin if stdin is not None else sys.stdin)
 
     main_checkout, trees = _collect(runner or _run, repo=Path.cwd(), now=time.time())
     if args.reclaimable_only:

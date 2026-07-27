@@ -374,6 +374,13 @@ uv run python -m toolbench.probe --allow-seeded   # baseline table only; measure
 # the checkout).
 uv run python -m toolbench.passive --agent claude --run-manifest run.json --tickets 12
 
+# Linked git worktrees, with a reclaim verdict per tree. Reports only — it never
+# removes a tree, deletes a branch, or touches a ref (procedure: AGENTS.md
+# § Repository integrity). `--reclaimable-only` prints nothing at all when
+# nothing is reclaimable; a SessionStart hook runs that form and stays silent.
+uv run toolbench worktrees
+uv run toolbench worktrees --reclaimable-only
+
 # Tests
 uv run pytest -q
 ```

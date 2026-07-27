@@ -20,6 +20,7 @@ breaks either has changed what the reporter means, not just how it is written.
 from __future__ import annotations
 
 import io
+import json
 import subprocess
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -32,9 +33,11 @@ from toolbench.worktrees import (
     Tree,
     Verdict,
     WorktreeProbeFailed,
+    _hook_line,
     _parse_upstreams,
     _parse_worktree_list,
     _render,
+    _total_megabytes,
     classify,
     is_claimed,
     main,
@@ -1001,3 +1004,233 @@ class ReclaimableOnlyTests(unittest.TestCase):
         with redirect_stdout(out):
             main([], runner=_todays_runner())
         self.assertEqual(out.getvalue().count("CLAIMED"), 3)
+
+
+def _hook(payload: str, runner: FakeRunner) -> tuple[int, str, str]:
+    """Run `--hook` with a scripted payload and runner. Returns (code, out, err).
+
+    stdin is injected for the same reason `runner` and `now` are: a hook test
+    that read the real stdin would depend on how pytest happened to be invoked.
+    stderr is captured as well as stdout, because "silent" has to mean both --
+    a traceback on stderr is exactly the hook-error notice this mode exists to
+    never produce.
+    """
+    out, err = io.StringIO(), io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
+        code = main(["--hook"], runner=runner, stdin=io.StringIO(payload))
+    return code, out.getvalue(), err.getvalue()
+
+
+def _payload(source: str) -> str:
+    return json.dumps({"hook_event_name": "SessionStart", "source": source})
+
+
+class HookEnvelopeTests(unittest.TestCase):
+    """What a session actually receives when there IS something to say."""
+
+    def test_a_startup_session_with_candidates_gets_the_documented_envelope(
+        self,
+    ) -> None:
+        code, out, err = _hook(_payload("startup"), _pr88_runner())
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "")
+        envelope = json.loads(out)
+        self.assertEqual(
+            envelope["hookSpecificOutput"]["hookEventName"], "SessionStart"
+        )
+        self.assertIn("additionalContext", envelope["hookSpecificOutput"])
+
+    def test_the_context_names_the_count_the_size_and_the_procedure(self) -> None:
+        """Count, megabytes, and where the procedure lives -- read cold, the line
+        has to say what to run, not merely that something is wrong."""
+        _, out, _ = _hook(_payload("startup"), _pr88_runner())
+        context = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("5 reclaimable git worktrees", context)
+        self.assertIn("560 MB", context)
+        self.assertIn("AGENTS.md", context)
+        self.assertIn("git worktree remove", context)
+        self.assertIn("git branch -d", context)
+
+    def test_the_context_says_outright_that_nothing_was_deleted(self) -> None:
+        """The hook never deletes. A notice about reclaimable disk that does not
+        say so leaves the reader guessing whether it already acted."""
+        _, out, _ = _hook(_payload("startup"), _pr88_runner())
+        context = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("Nothing has been deleted", context)
+
+    def test_it_is_one_line_of_context_not_the_table(self) -> None:
+        """Context is injected into every session that gets it, so it is a
+        recurring tax on the window. The table is one command away."""
+        _, out, _ = _hook(_payload("startup"), _pr88_runner())
+        self.assertEqual(len(out.strip().splitlines()), 1)
+        context = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+        self.assertEqual(len(context.splitlines()), 1)
+        self.assertNotIn("VERDICT", context)
+        self.assertNotIn("PATH", context)
+
+    def test_a_resume_reports_the_same_as_a_startup(self) -> None:
+        _, startup, _ = _hook(_payload("startup"), _pr88_runner())
+        _, resume, _ = _hook(_payload("resume"), _pr88_runner())
+        self.assertEqual(startup, resume)
+        self.assertNotEqual(startup, "")
+
+    def test_one_candidate_is_named_in_the_singular(self) -> None:
+        trees = classify(
+            FakeRunner(
+                [
+                    completed(stdout=_one_tree("/wt/one", "c0ffee1")),
+                    completed(stdout=_ref("feature", "c0ffee1") + "\n"),
+                    *_probe(
+                        contains="refs/heads/main\n",
+                        gitdir=f"{ADMIN}/one",
+                        mtime=int(NOW) - 86400 * 30,
+                        kilobytes=MB_112,
+                    ),
+                ]
+            ),
+            repo=REPO,
+            now=NOW,
+        )
+        self.assertIn("1 reclaimable git worktree ", _hook_line(trees))
+
+    def test_a_partly_unmeasured_total_says_so_instead_of_understating_itself(
+        self,
+    ) -> None:
+        """A sum over a set with a hole in it is a number that can lie by
+        omission -- so it names the hole, in the direction that keeps the notice
+        harder rather than easier to ignore."""
+        sized = _tree("SAFE", 30)
+        unsized = Tree(
+            path=Path("/wt/two"),
+            branch="feature",
+            head="c0ffee2",
+            verdict="SAFE",
+            idle_days=30,
+            megabytes=UNKNOWN,
+            reason="fixture",
+        )
+        self.assertEqual(_total_megabytes([sized]), "112 MB")
+        self.assertEqual(_total_megabytes([sized, unsized]), "112+ MB (1 unmeasured)")
+        self.assertIn("112+ MB (1 unmeasured)", _hook_line([sized, unsized]))
+
+
+class HookSilenceTests(unittest.TestCase):
+    """Silence is the answer this repository gives today, and it is the whole
+    reason the hook is worth installing: any output at all is the signal."""
+
+    def test_todays_repo_injects_nothing_at_all(self) -> None:
+        code, out, err = _hook(_payload("startup"), _todays_runner())
+        self.assertEqual((code, out, err), (0, "", ""))
+
+    def test_no_linked_trees_at_all_is_silent(self) -> None:
+        runner = FakeRunner(
+            [
+                completed(
+                    stdout=f"worktree {REPO}\nHEAD {MAIN_SHA}\nbranch refs/heads/main\n\n"
+                ),
+                completed(stdout=REFS),
+            ]
+        )
+        self.assertEqual(_hook(_payload("startup"), runner), (0, "", ""))
+
+
+class HookSourceGateTests(unittest.TestCase):
+    """`source` ∈ startup|resume|clear|compact|fork. Only the first two speak.
+
+    Every case here scripts an EMPTY runner, so `calls == []` is the assertion
+    that matters: a gated source must not even ask git, or a compacting session
+    pays for a report it will never be shown.
+    """
+
+    def _gated(self, payload: str) -> None:
+        runner = FakeRunner([])
+        self.assertEqual(_hook(payload, runner), (0, "", ""))
+        self.assertEqual(runner.calls, [])
+
+    def test_a_compaction_does_not_re_inject_the_notice(self) -> None:
+        self._gated(_payload("compact"))
+
+    def test_clear_and_fork_are_also_gated(self) -> None:
+        self._gated(_payload("clear"))
+        self._gated(_payload("fork"))
+
+    def test_a_payload_with_no_source_key_is_gated(self) -> None:
+        self._gated(json.dumps({"hook_event_name": "SessionStart"}))
+
+    def test_an_unknown_source_is_gated_rather_than_assumed_to_be_startup(
+        self,
+    ) -> None:
+        self._gated(_payload("teleport"))
+
+    def test_a_non_string_source_is_gated(self) -> None:
+        self._gated(json.dumps({"source": ["startup"]}))
+
+
+class HookNeverFailsTests(unittest.TestCase):
+    """Exit 0 unconditionally. A hook that paints an error notice on every
+    session start gets the whole hook disabled -- and then the one morning it
+    would have been right, it is not installed."""
+
+    def test_malformed_stdin_exits_0_with_no_traceback(self) -> None:
+        runner = FakeRunner([])
+        self.assertEqual(_hook("not json", runner), (0, "", ""))
+        self.assertEqual(runner.calls, [])
+
+    def test_empty_stdin_exits_0(self) -> None:
+        self.assertEqual(_hook("", FakeRunner([])), (0, "", ""))
+
+    def test_json_that_is_not_an_object_exits_0(self) -> None:
+        """`json.load` succeeds on a bare list or string; `.get` would not."""
+        self.assertEqual(_hook("[1, 2]", FakeRunner([])), (0, "", ""))
+        self.assertEqual(_hook('"startup"', FakeRunner([])), (0, "", ""))
+        self.assertEqual(_hook("null", FakeRunner([])), (0, "", ""))
+
+    def test_a_git_failure_is_swallowed_rather_than_reported(self) -> None:
+        """`WorktreeProbeFailed` is the right answer at a terminal -- `classify`
+        still raises it there -- and the wrong one here."""
+        runner = FakeRunner(
+            [completed(stderr="fatal: not a git repository", returncode=128)]
+        )
+        self.assertEqual(_hook(_payload("startup"), runner), (0, "", ""))
+        self.assertEqual(len(runner.calls), 1)
+
+    def test_a_missing_git_binary_is_swallowed_too(self) -> None:
+        """The runner raises rather than returning non-zero. Nothing about a
+        session start should depend on this reporter being installable."""
+        runner = FakeRunner([FileNotFoundError("git")])
+        self.assertEqual(_hook(_payload("startup"), runner), (0, "", ""))
+
+    def test_a_hung_git_that_times_out_is_swallowed(self) -> None:
+        runner = FakeRunner([subprocess.TimeoutExpired(cmd=["git"], timeout=60.0)])
+        self.assertEqual(_hook(_payload("startup"), runner), (0, "", ""))
+
+    def test_the_terminal_path_still_raises_where_the_hook_would_not(self) -> None:
+        """Same failure, two answers, and the difference is who asked."""
+        with self.assertRaises(WorktreeProbeFailed):
+            classify(
+                FakeRunner(
+                    [completed(stderr="fatal: not a git repository", returncode=128)]
+                ),
+                repo=REPO,
+                now=NOW,
+            )
+
+
+class HookModeExclusivityTests(unittest.TestCase):
+    def test_hook_and_reclaimable_only_are_modes_not_filters(self) -> None:
+        """Asking for both is a mistake in a settings file worth naming loudly at
+        the terminal, not silently resolving in one mode's favour."""
+        with (
+            self.assertRaises(SystemExit) as ctx,
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(io.StringIO()),
+        ):
+            main(["--hook", "--reclaimable-only"], runner=_todays_runner())
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_the_help_text_lists_the_hook_mode(self) -> None:
+        out = io.StringIO()
+        with self.assertRaises(SystemExit) as ctx, redirect_stdout(out):
+            main(["--help"], runner=_todays_runner())
+        self.assertEqual(ctx.exception.code, 0)
+        self.assertIn("--hook", out.getvalue())
