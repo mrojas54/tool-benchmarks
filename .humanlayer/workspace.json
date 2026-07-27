@@ -1,0 +1,19 @@
+{
+  "disabled": false,
+  "pathTemplate": "~/.humanlayer/workspaces/{{ TASKSLUG }}/{{ REPOBASENAME }}",
+  "branchTemplate": "ai-humanlayer-cc/{{ TASKSLUG }}",
+  "repos": [
+    {
+      "localPath": ".",
+      "description": "tool-benchmarks — offline stdlib-only Python CLI harness (uv-managed, Python >=3.13)",
+      "sourceRef": "HEAD",
+      "setupCommand": "uv sync",
+      "copyGlobs": [
+        ".env*",
+        ".claude/settings.local.json",
+        "CLAUDE.local.md",
+        ".humanlayer/workspace.local.json"
+      ]
+    }
+  ]
+}
