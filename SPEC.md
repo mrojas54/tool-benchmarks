@@ -69,8 +69,9 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   breaks during the pagination that follows -- a nonzero exit, a hang
   (`AgentsViewTimeout`, TB-32), or a schema-invalid listing payload
   (`MalformedAgentsViewResponse` / `ValueError`: invalid JSON, non-object
-  payload, `sessions` not a list, row missing non-empty `id`/`agent`/`project`,
-  bad `next_cursor`/`total`) -- also degrades `auto` to raw,
+  payload, `sessions` not a list, row missing required `id`/`agent`/`project`,
+  non-empty `id`/`agent` — empty `project` is valid for projectless/global
+  sessions — bad `next_cursor`/`total`) -- also degrades `auto` to raw,
   discarding whatever partial agentsview listing that attempt had collected and
   rescanning the corpus wholesale from the filesystem rather than splicing the
   two (TB-38; TB-22's identity/fingerprint precedent is why nothing is spliced).
@@ -347,7 +348,9 @@ and re-exports the public symbols historical imports expect.
   callouts only.
 - **S20 — stdlib runtime, uv project.** The shipped `toolbench` package
   imports nothing third-party; the project is uv-managed (`pyproject.toml`
-  + `uv.lock`, empty runtime deps, `dev` group `ruff`/`mypy`/`pytest`).
+  + `uv.lock`, empty runtime deps). The `dev` group holds the gate tools
+  (`ruff` / `mypy` / `pytest`) plus optional parallel-run tooling
+  (`logfire`); none of that is imported by the shipped package.
 - **S21 — entry points.** Runnable as `uv run toolbench passive` /
   `uv run toolbench probe` (unified console script via `cli.py`) or
   `uv run python -m toolbench.passive` / `… toolbench.probe`; tests via
