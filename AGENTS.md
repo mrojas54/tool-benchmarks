@@ -26,6 +26,13 @@ the source of truth for routine commands.
 - Create tasks only with `lattice create`; never write `.lattice/tasks/*.json`
   directly. Snapshots without a `task_created`-headed event log cannot be
   rebuilt reliably.
+- Reclaim a stale worktree with `git worktree remove <path>` **then**
+  `git branch -d <branch>` — the order is required, since git refuses to delete
+  a branch a linked worktree holds checked out. Select candidates with
+  `git for-each-ref --format='%(refname:short)|%(upstream:track)|%(worktreepath)' refs/heads/`.
+  Do not rely on `commit-commands:clean_gone`: it greps `git branch -v` for the
+  literal `[gone]`, but real output is `[origin/<name>: gone]`, so it matches
+  nothing here and reports success having removed nothing.
 - Reports are generated under gitignored `reports/`.
 
 ## Analyzer and probe constraints

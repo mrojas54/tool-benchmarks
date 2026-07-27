@@ -52,3 +52,8 @@ corpus/manifest.json
 .humanlayer/tasks/
 # machine-local workspace overrides; .humanlayer/workspace.json IS committed
 .humanlayer/workspace.local.json
+
+# Linked git worktrees created by agent tooling: machine-local checkouts,
+# never committed state. Previously suppressed only by .git/info/exclude,
+# which no clone inherits.
+.claude/worktrees/
