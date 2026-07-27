@@ -26,6 +26,12 @@ the source of truth for routine commands.
 - Create tasks only with `lattice create`; never write `.lattice/tasks/*.json`
   directly. Snapshots without a `task_created`-headed event log cannot be
   rebuilt reliably.
+- `uv run toolbench worktrees` reports every linked worktree with a verdict and
+  its idle age; `--reclaimable-only` narrows it to trees that are clean,
+  unlocked, fully reachable, unclaimed by a live upstream, and idle past the
+  threshold. A `SessionStart` hook (`.claude/settings.json`) runs it and stays
+  silent unless something is reclaimable. It never deletes anything — reclaim
+  with the procedure below.
 - Reclaim a stale worktree with `git worktree remove <path>` **then**
   `git branch -d <branch>` — the order is required, since git refuses to delete
   a branch a linked worktree holds checked out. Select candidates with

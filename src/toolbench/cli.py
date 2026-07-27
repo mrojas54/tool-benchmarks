@@ -1,15 +1,16 @@
 """Unified `toolbench` console entry point.
 
-`toolbench passive ...` and `toolbench probe ...` hand their remaining argv to
-the existing sub-CLIs (`toolbench.passive.main`, `toolbench.probe.main`)
-VERBATIM. The dispatcher parses nothing beyond the subcommand name: the
-sub-CLIs own their flags, including `--help`. argparse's REMAINDER is avoided
-on purpose -- it mishandles a leading option (python/cpython#61252), which is
-the shape of every real invocation (`toolbench passive --agent all`).
+`toolbench passive ...`, `toolbench probe ...` and `toolbench worktrees ...`
+hand their remaining argv to the sub-CLIs (`toolbench.passive.main`,
+`toolbench.probe.main`, `toolbench.worktrees.main`) VERBATIM. The dispatcher
+parses nothing beyond the subcommand name: the sub-CLIs own their flags,
+including `--help`. argparse's REMAINDER is avoided on purpose -- it mishandles
+a leading option (python/cpython#61252), which is the shape of every real
+invocation (`toolbench passive --agent all`).
 
 Imports are lazy per subcommand: `toolbench.probe` imports `toolbench.complex`,
 which loads the DEFECTS fixtures at import time -- a broken fixture must fail
-`toolbench probe`, never `toolbench passive` or `--help`.
+`toolbench probe`, never `toolbench passive`, `toolbench worktrees` or `--help`.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ Tool-benchmark harness.
 commands:
   passive   Passive tool-usage analyzer (delegates to toolbench.passive).
   probe     Active tool-vs-Bash probe comparison (delegates to toolbench.probe).
+  worktrees Linked git worktree inventory with a reclaim verdict per tree.
 
 Run `toolbench <command> --help` for that command's options.
 """
@@ -48,6 +50,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         probe.main(rest)  # returns None; success is "did not raise"
         return 0
+    if command == "worktrees":
+        from toolbench import worktrees
+
+        return worktrees.main(rest)
     print(f"toolbench: unknown command {command!r}\n\n{_HELP}", file=sys.stderr, end="")
     return 2
 

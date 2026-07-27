@@ -20,12 +20,13 @@ class HelpAndErrorTests(unittest.TestCase):
             self.assertEqual(main([]), 2)
         self.assertIn("usage: toolbench", err.getvalue())
 
-    def test_help_flag_prints_both_subcommands_to_stdout_and_returns_0(self) -> None:
+    def test_help_flag_prints_every_subcommand_to_stdout_and_returns_0(self) -> None:
         out = io.StringIO()
         with redirect_stdout(out):
             self.assertEqual(main(["--help"]), 0)
         self.assertIn("passive", out.getvalue())
         self.assertIn("probe", out.getvalue())
+        self.assertIn("worktrees", out.getvalue())
 
     def test_unknown_subcommand_is_named_on_stderr_and_returns_2(self) -> None:
         err = io.StringIO()
@@ -44,6 +45,24 @@ class DispatchTests(unittest.TestCase):
         with unittest.mock.patch("toolbench.probe.main", return_value=None) as sub:
             self.assertEqual(main(["probe", "--allow-seeded"]), 0)
         sub.assert_called_once_with(["--allow-seeded"])
+
+    def test_worktrees_gets_remaining_argv_verbatim_and_its_exit_code_returns(
+        self,
+    ) -> None:
+        with unittest.mock.patch("toolbench.worktrees.main", return_value=0) as sub:
+            self.assertEqual(main(["worktrees"]), 0)
+        sub.assert_called_once_with([])
+
+    def test_worktrees_is_imported_lazily_so_a_broken_probe_fixture_cannot_break_it(
+        self,
+    ) -> None:
+        # The dispatcher's documented convention: `toolbench.probe` loads the
+        # DEFECTS fixtures at import time, and that must never be on the path to
+        # a worktree report.
+        with unittest.mock.patch.dict("sys.modules", {"toolbench.probe": None}):
+            with unittest.mock.patch("toolbench.worktrees.main", return_value=0) as sub:
+                self.assertEqual(main(["worktrees", "--help"]), 0)
+        sub.assert_called_once_with(["--help"])
 
     def test_a_leading_option_is_never_parsed_by_the_dispatcher(self) -> None:
         # A REMAINDER-based dispatcher drops or rejects a leading option
