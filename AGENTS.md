@@ -34,7 +34,9 @@ the source of truth for routine commands.
   `git for-each-ref --format='%(refname:short)|%(upstream:track)|%(worktreepath)' refs/heads/`.
   Do not rely on `commit-commands:clean_gone`: it greps `git branch -v` for the
   literal `[gone]`, but real output is `[origin/<name>: gone]`, so it matches
-  nothing here and reports success having removed nothing.
+  nothing here and reports success having removed nothing. Nested agent
+  worktrees land under gitignored `.claude/worktrees/` (tracked in `.gitignore`,
+  not only `.git/info/exclude`).
 - Reports are generated under gitignored `reports/`. Parallel-run artifacts
   under `.bmad-loop/` and `.humanlayer/tasks/` (plus
   `.humanlayer/workspace.local.json`) are also gitignored;
