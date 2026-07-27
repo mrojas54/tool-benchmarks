@@ -8,6 +8,13 @@ The fixture below is the state at `2ff6ed2` -- the main checkout plus the three
 foreign trees PR #88 deliberately left in place. It is the reference the
 structure outline's four-row table records, and the idle ages and sizes asserted
 here are the ones measured there (1 d / 15 d / 16 d, 112 / 103 / 103 MB).
+
+Two assertions in this file are the design made falsifiable rather than merely
+stated. `test_todays_repo_has_nothing_to_report` pins the number the whole
+reporter is built on -- today's reclaimable count is zero, so the hook is silent.
+`test_the_five_trees_pr_88_removed_are_all_reclaimable` pins the other end: the
+predicate reproduces a decision a human already made by hand. A change that
+breaks either has changed what the reporter means, not just how it is written.
 """
 
 from __future__ import annotations
@@ -20,14 +27,18 @@ from pathlib import Path
 
 from tests.fakes import FakeRunner, completed
 from toolbench.worktrees import (
+    IDLE_DAYS,
     UNKNOWN,
     Tree,
+    Verdict,
     WorktreeProbeFailed,
     _parse_upstreams,
     _parse_worktree_list,
     _render,
     classify,
+    is_claimed,
     main,
+    reclaimable,
 )
 
 REPO = Path("/Users/michellerojas/tool-benchmarks")
@@ -110,43 +121,114 @@ def _probe(
     gitdir: str,
     mtime: int,
     kilobytes: int,
+    upstream_live: bool | None = None,
 ) -> list[subprocess.CompletedProcess[str]]:
-    """The five responses one clean linked tree consumes, in issue order:
-    status, reachability, admin-dir lookup, gitdir mtime, size."""
-    return [
-        completed(stdout=dirty),
-        completed(stdout=contains),
+    """The responses one clean linked tree consumes, in issue order.
+
+    Five for a tree whose branch records no upstream -- status, reachability,
+    admin-dir lookup, gitdir mtime, size. Six when `upstream_live` is set, which
+    inserts the `rev-parse --verify` that decides CLAIMED after the reachability
+    call. `None` means "no verify is issued": either the branch has no recorded
+    upstream, or the head is unreachable and UNIQUE-WORK settles it first.
+    """
+    responses = [completed(stdout=dirty), completed(stdout=contains)]
+    if upstream_live is not None:
+        responses.append(
+            completed(stdout="e092d9e73427b9504721c1747a2028ac9f30b507\n")
+            if upstream_live
+            else completed(
+                stderr="fatal: Needed a single revision", returncode=128
+            )
+        )
+    responses += [
         completed(stdout=f"{gitdir}\n"),
         completed(stdout=f"{mtime}\n"),
         completed(stdout=f"{kilobytes}\t{gitdir}\n"),
     ]
+    return responses
 
 
 def _todays_runner() -> FakeRunner:
-    """The four-tree fixture: main plus the three trees left in place at `2ff6ed2`."""
+    """The four-tree fixture: main plus the three trees left in place at `2ff6ed2`.
+
+    All three record a live upstream, so all three verify and land on CLAIMED --
+    which is the whole point: the two idlest trees in the repository are the two
+    that must never be named.
+    """
     return FakeRunner(
         [
             completed(stdout=LISTING),
             completed(stdout=REFS),
             *_probe(
                 contains="refs/remotes/origin/codex-harbor-wids-d2-task\n",
+                upstream_live=True,
                 gitdir=f"{ADMIN}/tool-benchmarks-harbor-wids-d2",
                 mtime=1784961121,
                 kilobytes=113928,
             ),
             *_probe(
                 contains="refs/remotes/origin/fix/raw-discovery-project-attribution\n",
+                upstream_live=True,
                 gitdir=f"{ADMIN}/0y57",
                 mtime=1783749011,
                 kilobytes=105164,
             ),
             *_probe(
                 contains="refs/remotes/origin/refactor/single-pass-probe-passive-split\n",
+                upstream_live=True,
                 gitdir=f"{ADMIN}/ms0r",
                 mtime=1783741578,
                 kilobytes=105452,
             ),
         ]
+    )
+
+
+# The five trees PR #88 removed by hand at `5e93ba6`: four Agent-tool trees whose
+# `tb-*` branches were merged and whose origin refs were deleted at merge time,
+# and the detached Claude Desktop tree. Sizes and dates are that PR's measured
+# ones (112 MB each; gitdir mtimes 2026-07-14 and 2026-07-15).
+NESTED = f"{REPO}/.claude/worktrees"
+PR88_TREES = (
+    ("agent-a33e68186dd938d6d", "fix/tb-38-auto-fallback-mid-listing", "c921771"),
+    ("agent-ad6bf2d495e07d7a7", "feat/tb-37-freeze-manifest-census", "52c45bf"),
+    ("agent-ae85e382135ef3cf3", "chore/tb-36-probe-argv-sole-builder", "036a704"),
+    ("agent-afee11e321190041b", "fix/tb-34-zero-match-census-disclosure", "b782e75"),
+)
+DETACHED_SHA = "ff102df8ba8f3659df14b7930f4d569aba0f960e"
+MB_112 = 114688
+
+
+def _pr88_runner() -> FakeRunner:
+    """The five removed trees replayed as a fixture, at the ages they were removed."""
+    listing = f"worktree {REPO}\nHEAD {MAIN_SHA}\nbranch refs/heads/main\n\n"
+    refs: list[str] = []
+    probes: list[subprocess.CompletedProcess[str]] = []
+    for name, branch, sha in PR88_TREES:
+        listing += f"worktree {NESTED}/{name}\nHEAD {sha}\nbranch refs/heads/{branch}\n\n"
+        # A recorded upstream whose remote ref is gone: non-empty %(upstream),
+        # failing rev-parse. This is the shape `clean_gone` meant to catch and
+        # could not, and it is NOT a claim.
+        refs.append(_ref(branch, sha, f"refs/remotes/origin/{branch}"))
+        probes += _probe(
+            contains="refs/heads/main\n",
+            upstream_live=False,
+            gitdir=f"{ADMIN}/{name}",
+            mtime=int(NOW) - 86400 * 13,
+            kilobytes=MB_112,
+        )
+    listing += (
+        f"worktree {NESTED}/tech-debt-assessment-routine-fcf1e6\n"
+        f"HEAD {DETACHED_SHA}\ndetached\n\n"
+    )
+    probes += _probe(
+        contains="refs/heads/main\nrefs/remotes/origin/main\n",
+        gitdir=f"{ADMIN}/tech-debt-assessment-routine-fcf1e6",
+        mtime=int(NOW) - 86400 * 12,
+        kilobytes=MB_112,
+    )
+    return FakeRunner(
+        [completed(stdout=listing), completed(stdout="\n".join(refs) + "\n"), *probes]
     )
 
 
@@ -165,6 +247,20 @@ def _one_tree(
     )
 
 
+def _tree(verdict: Verdict, idle_days: int) -> Tree:
+    """A classified tree built directly, for predicate cases where the git output
+    that produced the verdict is beside the point."""
+    return Tree(
+        path=Path("/wt/one"),
+        branch="feature",
+        head="c0ffee1",
+        verdict=verdict,
+        idle_days=idle_days,
+        megabytes=112,
+        reason="fixture",
+    )
+
+
 class TodaysInventoryTests(unittest.TestCase):
     def test_the_main_checkout_is_excluded_and_the_three_foreign_trees_classify(
         self,
@@ -175,13 +271,25 @@ class TodaysInventoryTests(unittest.TestCase):
         )
         self.assertNotIn(str(REPO), [str(t.path) for t in trees])
 
-    def test_all_three_are_safe_because_their_work_lives_on_a_remote_ref(self) -> None:
-        """SAFE here is a claim about the WORK, not about ownership: none of the
-        three holds a commit that exists nowhere else. Whether the tree is
-        somebody's live checkout is the CLAIMED verdict, which Phase 2 adds."""
+    def test_all_three_are_claimed_because_a_live_upstream_still_backs_them(
+        self,
+    ) -> None:
+        """Their WORK is safe -- none holds a commit that exists nowhere else --
+        but the tree is somebody's live checkout, and that is the fact that
+        decides whether this reporter is entitled to name it."""
         trees = classify(_todays_runner(), repo=REPO, now=NOW)
-        self.assertEqual([t.verdict for t in trees], ["SAFE", "SAFE", "SAFE"])
+        self.assertEqual([t.verdict for t in trees], ["CLAIMED", "CLAIMED", "CLAIMED"])
         self.assertIn("refs/remotes/origin/codex-harbor-wids-d2-task", trees[0].reason)
+        self.assertIn("never a candidate at any age", trees[0].reason)
+
+    def test_todays_repo_has_nothing_to_report(self) -> None:
+        """The number the whole feature is built on. Three trees, 318 MB, two of
+        them the idlest things registered against this clone -- and zero of them
+        reclaimable. If this fails, either the repository genuinely acquired a
+        stale tree or the predicate regressed; both are worth a red suite."""
+        trees = classify(_todays_runner(), repo=REPO, now=NOW)
+        self.assertEqual(len(trees), 3)
+        self.assertEqual(reclaimable(trees), [])
 
     def test_idle_age_and_size_match_the_measured_table(self) -> None:
         trees = classify(_todays_runner(), repo=REPO, now=NOW)
@@ -201,10 +309,12 @@ class TodaysInventoryTests(unittest.TestCase):
 
     def test_no_unexpected_git_call_is_issued(self) -> None:
         """FakeRunner raises on exhaustion, so a classifier that grew a call would
-        fail here rather than silently shell out during a report."""
+        fail here rather than silently shell out during a report. Six calls per
+        claimed tree: the sixth is the liveness check, and it is issued once per
+        tree rather than once per branch in the repository."""
         runner = _todays_runner()
         classify(runner, repo=REPO, now=NOW)
-        self.assertEqual(len(runner.calls), 2 + 3 * 5)
+        self.assertEqual(len(runner.calls), 2 + 3 * 6)
         self.assertEqual(
             runner.calls[:2],
             [
@@ -220,7 +330,7 @@ class TodaysInventoryTests(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            runner.calls[2:7],
+            runner.calls[2:8],
             [
                 ["git", "-C", HARBOR, "status", "--porcelain"],
                 [
@@ -234,11 +344,178 @@ class TodaysInventoryTests(unittest.TestCase):
                     "refs/heads/main",
                     "refs/remotes/",
                 ],
+                [
+                    "git",
+                    "-C",
+                    str(REPO),
+                    "rev-parse",
+                    "--verify",
+                    "refs/remotes/origin/codex-harbor-wids-d2-task",
+                ],
                 ["git", "-C", HARBOR, "rev-parse", "--absolute-git-dir"],
                 ["stat", "-f", "%m", f"{ADMIN}/tool-benchmarks-harbor-wids-d2/gitdir"],
                 ["du", "-sk", HARBOR],
             ],
         )
+
+
+class IsClaimedTests(unittest.TestCase):
+    """The ownership predicate on its own. `%(upstream)` establishes that an
+    upstream was recorded; only `rev-parse --verify` establishes that it still
+    exists, and the gap between those two is exactly the `[gone]` case."""
+
+    def test_a_live_remote_tracking_ref_claims_the_branch(self) -> None:
+        runner = FakeRunner([completed(stdout=f"{CURSOR_0Y57_SHA}\n")])
+        self.assertTrue(
+            is_claimed(
+                runner,
+                "feature",
+                repo=REPO,
+                upstreams={"feature": "refs/remotes/origin/feature"},
+            )
+        )
+        self.assertEqual(
+            runner.calls,
+            [
+                [
+                    "git",
+                    "-C",
+                    str(REPO),
+                    "rev-parse",
+                    "--verify",
+                    "refs/remotes/origin/feature",
+                ]
+            ],
+        )
+
+    def test_a_gone_upstream_is_recorded_but_not_live_so_it_is_not_a_claim(
+        self,
+    ) -> None:
+        """The four `tb-*` branches PR #88 deleted: `%(upstream)` non-empty, remote
+        ref absent. Reading the recorded field alone would exempt every one of
+        them forever."""
+        runner = FakeRunner(
+            [completed(stderr="fatal: Needed a single revision", returncode=128)]
+        )
+        self.assertFalse(
+            is_claimed(
+                runner,
+                "feature",
+                repo=REPO,
+                upstreams={"feature": "refs/remotes/origin/feature"},
+            )
+        )
+
+    def test_no_upstream_at_all_is_unclaimed_and_asks_git_nothing(self) -> None:
+        """The `worktree-agent-*` shape. FakeRunner raises on any call, so this
+        also pins that a branch with no upstream costs no subprocess."""
+        runner = FakeRunner([])
+        self.assertFalse(
+            is_claimed(runner, "feature", repo=REPO, upstreams={"feature": ""})
+        )
+        self.assertEqual(runner.calls, [])
+
+    def test_a_detached_head_has_no_branch_to_claim(self) -> None:
+        runner = FakeRunner([])
+        self.assertFalse(is_claimed(runner, None, repo=REPO, upstreams={}))
+        self.assertEqual(runner.calls, [])
+
+    def test_a_branch_absent_from_the_ref_scan_is_unclaimed(self) -> None:
+        runner = FakeRunner([])
+        self.assertFalse(is_claimed(runner, "ghost", repo=REPO, upstreams={}))
+        self.assertEqual(runner.calls, [])
+
+    def test_a_local_tracking_upstream_is_not_a_remote_claim(self) -> None:
+        """`branch.<name>.remote = .` records an upstream under refs/heads/. That
+        ref is live, but it is evidence about this clone, not about somebody
+        else's checkout -- and it is never verified, so no call is issued."""
+        runner = FakeRunner([])
+        self.assertFalse(
+            is_claimed(
+                runner, "feature", repo=REPO, upstreams={"feature": "refs/heads/main"}
+            )
+        )
+        self.assertEqual(runner.calls, [])
+
+
+class ReclaimableTests(unittest.TestCase):
+    def test_the_five_trees_pr_88_removed_are_all_reclaimable(self) -> None:
+        """The predicate reproduces a decision that was made by hand: four
+        `[gone]`-upstream Agent trees and one detached Desktop tree, 560 MB."""
+        trees = classify(_pr88_runner(), repo=REPO, now=NOW)
+        self.assertEqual(len(trees), 5)
+        self.assertEqual([t.verdict for t in trees], ["SAFE"] * 5)
+        self.assertEqual(reclaimable(trees), trees)
+        self.assertEqual(sum(t.megabytes for t in trees), 560)
+
+    def test_a_claimed_tree_is_exempt_four_hundred_days_later(self) -> None:
+        """A claim never expires, and this is the rule most likely to be
+        'simplified' away later. The eldest tree here is already 16 days idle and
+        deliberately left in place, so any expiry at or below 16 flags it today
+        and any number above it fails on a later morning."""
+        far_future = NOW + 86400 * 400
+        trees = classify(_todays_runner(), repo=REPO, now=far_future)
+        self.assertEqual([t.verdict for t in trees], ["CLAIMED"] * 3)
+        self.assertEqual([t.idle_days for t in trees], [401, 415, 416])
+        self.assertEqual(reclaimable(trees), [])
+
+    def test_dirty_locked_and_unique_work_are_never_reclaimable_at_any_age(
+        self,
+    ) -> None:
+        """They are not silent either -- the table still prints them, because
+        'I could not prove this one safe' is what a human sweeping by hand needs.
+        They simply never drive the count."""
+        aged = [
+            _tree("DIRTY", 900),
+            _tree("LOCKED", 900),
+            _tree("UNIQUE-WORK", 900),
+            _tree("CLAIMED", 900),
+        ]
+        self.assertEqual(reclaimable(aged), [])
+
+    def test_an_unmeasurable_idle_age_is_not_evidence_that_a_tree_is_old(
+        self,
+    ) -> None:
+        self.assertEqual(reclaimable([_tree("SAFE", UNKNOWN)]), [])
+
+    def test_an_empty_inventory_reclaims_nothing(self) -> None:
+        self.assertEqual(reclaimable([]), [])
+
+
+class ThresholdTests(unittest.TestCase):
+    """`IDLE_DAYS` gates unclaimed trees only, and its job is narrow: don't name
+    a tree somebody created an hour ago."""
+
+    def _unclaimed_at(self, mtime: int) -> FakeRunner:
+        return FakeRunner(
+            [
+                completed(stdout=_one_tree("/wt/fresh", "abc1234")),
+                completed(stdout=_ref("feature", "abc1234") + "\n"),
+                *_probe(
+                    contains="refs/heads/main\n",
+                    gitdir=f"{ADMIN}/fresh",
+                    mtime=mtime,
+                    kilobytes=MB_112,
+                ),
+            ]
+        )
+
+    def test_an_unclaimed_tree_below_the_threshold_is_reported_but_not_reclaimable(
+        self,
+    ) -> None:
+        trees = classify(
+            self._unclaimed_at(int(NOW) - 86400 * (IDLE_DAYS - 1)), repo=REPO, now=NOW
+        )
+        self.assertEqual(trees[0].verdict, "SAFE")
+        self.assertEqual(trees[0].idle_days, IDLE_DAYS - 1)
+        self.assertEqual(reclaimable(trees), [])
+
+    def test_the_same_tree_past_the_threshold_is_reclaimable(self) -> None:
+        trees = classify(
+            self._unclaimed_at(int(NOW) - 86400 * IDLE_DAYS), repo=REPO, now=NOW
+        )
+        self.assertEqual(trees[0].idle_days, IDLE_DAYS)
+        self.assertEqual(reclaimable(trees), trees)
 
 
 class UpstreamAmbiguityTests(unittest.TestCase):
@@ -264,6 +541,7 @@ class UpstreamAmbiguityTests(unittest.TestCase):
                 completed(stdout=refs),
                 *_probe(
                     contains="refs/remotes/origin/live-upstream\n",
+                    upstream_live=True,
                     gitdir=f"{ADMIN}/live",
                     mtime=int(NOW),
                     kilobytes=1024,
@@ -282,7 +560,7 @@ class UpstreamAmbiguityTests(unittest.TestCase):
         live upstream, the other has no upstream whatsoever, and the classifier
         must not confuse them."""
         trees = classify(self._two_branches(), repo=REPO, now=NOW)
-        self.assertEqual([t.verdict for t in trees], ["SAFE", "UNIQUE-WORK"])
+        self.assertEqual([t.verdict for t in trees], ["CLAIMED", "UNIQUE-WORK"])
 
     def test_the_classifier_never_asks_git_for_the_track_field(self) -> None:
         runner = self._two_branches()
@@ -304,6 +582,7 @@ class ReachabilityTests(unittest.TestCase):
         contains: str,
         upstream: str = "",
         branch: str | None = "feature",
+        upstream_live: bool | None = None,
     ) -> list[Tree]:
         runner = FakeRunner(
             [
@@ -315,6 +594,7 @@ class ReachabilityTests(unittest.TestCase):
                 ),
                 *_probe(
                     contains=contains,
+                    upstream_live=upstream_live,
                     gitdir=f"{ADMIN}/one",
                     mtime=int(NOW) - 86400 * 3,
                     kilobytes=2048,
@@ -328,7 +608,9 @@ class ReachabilityTests(unittest.TestCase):
         no longer exists, and the work is merged. Nothing contains the head except
         main, and that is enough."""
         trees = self._single(
-            contains="refs/heads/main\n", upstream="refs/remotes/origin/feature"
+            contains="refs/heads/main\n",
+            upstream="refs/remotes/origin/feature",
+            upstream_live=False,
         )
         self.assertEqual(trees[0].verdict, "SAFE")
         self.assertIn("refs/heads/main", trees[0].reason)
@@ -341,6 +623,16 @@ class ReachabilityTests(unittest.TestCase):
     def test_an_unreachable_head_is_unique_work(self) -> None:
         trees = self._single(contains="")
         self.assertEqual(trees[0].verdict, "UNIQUE-WORK")
+
+    def test_unique_work_outranks_a_live_upstream_and_skips_the_claim_check(
+        self,
+    ) -> None:
+        """A tree ahead of its own live upstream holds the only copy of something.
+        That is the more urgent thing to tell a human, and it is settled before
+        ownership is asked -- so no verify call is issued at all."""
+        trees = self._single(contains="", upstream="refs/remotes/origin/feature")
+        self.assertEqual(trees[0].verdict, "UNIQUE-WORK")
+        self.assertEqual(reclaimable(trees), [])
 
     def test_a_detached_head_has_no_branch_and_is_judged_on_reachability_alone(
         self,
@@ -375,6 +667,26 @@ class NonCandidateTests(unittest.TestCase):
         self.assertEqual(trees[0].verdict, "DIRTY")
         self.assertIn("2 modified or untracked entries", trees[0].reason)
         self.assertNotIn("--contains", [arg for call in runner.calls for arg in call])
+
+    def test_a_dirty_tree_with_a_live_upstream_stays_dirty_not_claimed(self) -> None:
+        """Precedence: DIRTY outranks CLAIMED. Both are non-candidates, but the
+        one that names what git itself would refuse is the more useful row."""
+        runner = FakeRunner(
+            [
+                completed(stdout=_one_tree("/wt/dirty", "d1d1d1d")),
+                completed(
+                    stdout=_ref("feature", "d1d1d1d", "refs/remotes/origin/feature")
+                    + "\n"
+                ),
+                completed(stdout=" M src/toolbench/report.py\n"),
+                completed(stdout=f"{ADMIN}/dirty\n"),
+                completed(stdout=f"{int(NOW) - 86400 * 90}\n"),
+                completed(stdout="4096\t/wt/dirty\n"),
+            ]
+        )
+        trees = classify(runner, repo=REPO, now=NOW)
+        self.assertEqual(trees[0].verdict, "DIRTY")
+        self.assertEqual(reclaimable(trees), [])
 
     def test_untracked_files_alone_make_a_tree_dirty(self) -> None:
         """`git worktree remove` refuses on untracked files alone, so a verdict
@@ -414,6 +726,7 @@ class NonCandidateTests(unittest.TestCase):
         self.assertEqual(trees[0].verdict, "LOCKED")
         self.assertIn("on a network share", trees[0].reason)
         self.assertEqual(trees[0].idle_days, 40)
+        self.assertEqual(reclaimable(trees), [])
         self.assertNotIn("status", [arg for call in runner.calls for arg in call])
 
     def test_a_locked_stanza_without_a_reason_still_locks(self) -> None:
@@ -452,6 +765,9 @@ class NonCandidateTests(unittest.TestCase):
         self.assertEqual(trees[0].idle_days, UNKNOWN)
         self.assertEqual(trees[0].megabytes, UNKNOWN)
         self.assertEqual(len(runner.calls), 3)
+        # Unmeasurable age, so the threshold cannot be satisfied: `git worktree
+        # prune` already reclaims this one, and the reporter does not guess.
+        self.assertEqual(reclaimable(trees), [])
 
 
 class DegradationTests(unittest.TestCase):
@@ -476,7 +792,7 @@ class DegradationTests(unittest.TestCase):
 
     def test_an_unmeasurable_age_or_size_is_unknown_not_zero(self) -> None:
         """A tree of unknown age must not read as touched today: 0 would be a
-        number Phase 2's idle threshold would then trust."""
+        number the idle threshold would then trust."""
         runner = FakeRunner(
             [
                 completed(stdout=_one_tree("/wt/one", "c0ffee1")),
@@ -491,6 +807,7 @@ class DegradationTests(unittest.TestCase):
         self.assertEqual(tree.idle_days, UNKNOWN)
         self.assertEqual(tree.megabytes, UNKNOWN)
         self.assertEqual(tree.verdict, "SAFE")
+        self.assertEqual(reclaimable([tree]), [])
 
     def test_a_failed_status_refuses_to_issue_a_verdict(self) -> None:
         """A verdict is a claim. Guessing one for a tree we could not inspect is
@@ -572,8 +889,17 @@ class RenderTests(unittest.TestCase):
         table = _render(_parse_worktree_list(LISTING)[0], trees)
         self.assertIn("15 d", table)
         self.assertIn("103", table)
-        self.assertIn("SAFE", table)
+        self.assertIn("CLAIMED", table)
         self.assertIn("fix/raw-discovery-project-attribution", table)
+
+    def test_a_non_candidate_still_prints_even_though_it_never_drives_the_count(
+        self,
+    ) -> None:
+        """The table reports everything; `reclaimable` narrows it. 'I could not
+        prove this one safe' is information, not noise."""
+        table = _render(None, [_tree("UNIQUE-WORK", 40), _tree("LOCKED", 40)])
+        self.assertIn("UNIQUE-WORK", table)
+        self.assertIn("LOCKED", table)
 
     def test_the_home_prefix_is_abbreviated(self) -> None:
         """Cosmetic, and only in the table: every command is issued with the
@@ -599,7 +925,7 @@ class RenderTests(unittest.TestCase):
         tree = Tree(
             path=Path("/wt/detached"),
             branch=None,
-            head="ff102df8ba8f3659df14b7930f4d569aba0f960e",
+            head=DETACHED_SHA,
             verdict="SAFE",
             idle_days=12,
             megabytes=112,
@@ -629,7 +955,7 @@ class MainTests(unittest.TestCase):
         printed = out.getvalue().splitlines()
         self.assertEqual(printed[0].split()[0], "PATH")
         self.assertEqual(len(printed), 1 + 4)  # header + one row per stanza
-        self.assertIn("SAFE", out.getvalue())
+        self.assertIn("CLAIMED", out.getvalue())
 
     def test_main_reports_from_the_current_directory(self) -> None:
         runner = _todays_runner()
@@ -645,3 +971,33 @@ class MainTests(unittest.TestCase):
         ):
             main(["--delete"], runner=_todays_runner())
         self.assertEqual(ctx.exception.code, 2)
+
+
+class ReclaimableOnlyTests(unittest.TestCase):
+    def test_nothing_reclaimable_prints_nothing_at_all_and_exits_0(self) -> None:
+        """Not a header, not "none found" -- an empty stdout, so any output at all
+        is the signal. This is what earns the reporter the right to speak."""
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(
+                main(["--reclaimable-only"], runner=_todays_runner()), 0
+            )
+        self.assertEqual(out.getvalue(), "")
+
+    def test_candidates_print_as_a_table_without_the_main_checkout_row(self) -> None:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(main(["--reclaimable-only"], runner=_pr88_runner()), 0)
+        printed = out.getvalue().splitlines()
+        self.assertEqual(printed[0].split()[0], "PATH")
+        self.assertEqual(len(printed), 1 + 5)
+        self.assertNotIn("main checkout; never a candidate", out.getvalue())
+        self.assertIn("agent-a33e68186dd938d6d", out.getvalue())
+
+    def test_the_full_table_still_reports_the_trees_the_flag_filters_out(self) -> None:
+        """Same inventory, two questions: `--reclaimable-only` answers "what may I
+        remove", the bare command answers "what is registered and why"."""
+        out = io.StringIO()
+        with redirect_stdout(out):
+            main([], runner=_todays_runner())
+        self.assertEqual(out.getvalue().count("CLAIMED"), 3)

@@ -5,7 +5,7 @@ which of the trees hanging off this clone could be reclaimed, and which are
 somebody's live checkout. It prints; it never removes, never prompts, and never
 touches a ref -- reclamation stays the hand-run `AGENTS.md` procedure.
 
-Three decisions are load-bearing.
+Four decisions are load-bearing.
 
 **Select with plumbing, never by grepping porcelain.** The vendored
 `commit-commands:clean_gone` skill is a silent no-op in this repository because
@@ -18,8 +18,14 @@ prose.
 is empty BOTH for a branch in sync with a live upstream and for a branch with no
 upstream at all -- eleven branches and `feat/s41` respectively, measured here.
 Collapsing the two is the same class of error as the `[gone]` bug. This module
-asks for `%(upstream)` (existence) and for the refs that actually contain a
-head, so the ambiguity has nowhere to enter.
+asks for `%(upstream)` (existence) and then for the remote-tracking ref itself
+(liveness, via `rev-parse --verify`), so the ambiguity has nowhere to enter.
+
+**Ownership, not age, decides who gets named.** A live upstream makes a tree
+CLAIMED and exempts it forever; `IDLE_DAYS` gates only unclaimed trees. The two
+idlest trees registered against this clone are the two that must stay silent, so
+a predicate built on age would be wrong on day one -- and a reporter that is
+wrong every morning is disabled inside a week, which is worse than no reporter.
 
 **Everything comes through the `Runner` seam** (`sources.Runner`), including the
 two non-git calls -- `du` for size and `stat` for the admin `gitdir` mtime, which
@@ -41,25 +47,39 @@ import argparse
 import math
 import subprocess
 import time
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from toolbench.sources import Runner
 
-# CLAIMED is declared but not yet produced: the ownership predicate ("a live
-# remote-tracking ref still backs this branch") lands in Phase 2. Declaring it
-# here keeps the verdict vocabulary in one place instead of widening the type
-# later at every call site.
+# CLAIMED is the ownership verdict -- "a live remote-tracking ref still backs
+# this branch" -- and it answers a different question from the other four. Those
+# ask whether the WORK survives removing a tree; CLAIMED asks whether the TREE is
+# ours to remove. It is the discriminator the whole reporter rests on: the two
+# idlest trees registered against this clone are precisely the two that must stay
+# silent, so age alone would flag them on day one and every day after.
 Verdict = Literal["SAFE", "DIRTY", "LOCKED", "UNIQUE-WORK", "CLAIMED"]
 
 # Idle age / size we could not measure. Never 0 and never a plausible number: a
-# tree of unknown age must not read as "touched today", and the threshold that
-# Phase 2 applies to idle age must not fire on a measurement that never happened.
+# tree of unknown age must not read as "touched today", and `reclaimable`'s idle
+# threshold must not fire on a measurement that never happened.
 UNKNOWN = -1
 
 SECONDS_PER_DAY = 86400.0
+
+# How long an UNCLAIMED tree must sit untouched before it counts as reclaimable.
+#
+# It gates unclaimed trees ONLY, and a claim never expires. The arithmetic is
+# why: the eldest tree here is 16 days idle and deliberately left in place, so
+# any claim expiry at or below 16 flags it today -- and picking 17 to dodge that
+# is a threshold that fails again tomorrow. A live upstream is therefore a
+# standing exemption, and this number's job is narrow: don't name a tree somebody
+# created an hour ago. If a long-idle CLAIMED tree ever needs attention it can be
+# read off the printed table, where it already appears; do not add an expiry here
+# speculatively.
+IDLE_DAYS = 7
 
 # One bound for every call, matching `sources.AGENTSVIEW_TIMEOUT_S`'s reasoning:
 # no single call here is unbounded work (one listing, one ref scan, one status,
@@ -189,8 +209,8 @@ def _parse_upstreams(stdout: str) -> dict[str, str]:
     """Map short branch name -> its recorded upstream ref (`""` when it has none).
 
     Recorded, not live: whether the remote-tracking ref still exists is a
-    separate question, answered by the refs that actually contain a head (and,
-    in Phase 2, by an explicit `rev-parse --verify`).
+    separate question, and `is_claimed` answers it with an explicit
+    `rev-parse --verify` rather than inferring it from this field.
     """
     upstreams: dict[str, str] = {}
     for line in stdout.splitlines():
@@ -232,6 +252,42 @@ def _containing_refs(runner: Runner, repo: Path, head: str) -> list[str]:
     ]
     out = _check(runner(argv), argv)
     return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def is_claimed(
+    runner: Runner,
+    branch: str | None,
+    *,
+    repo: Path,
+    upstreams: Mapping[str, str],
+) -> bool:
+    """True when a live remote-tracking ref still backs this branch.
+
+    Reads %(upstream), not %(upstream:track): an empty track field means
+    'in sync' for a live upstream and 'no upstream at all' otherwise, and
+    a [gone] upstream is non-empty but its remote ref no longer exists.
+
+    So the question is asked in two halves, and both are needed. `upstreams`
+    carries the first -- the RECORDED `%(upstream)`, already parsed from the one
+    `for-each-ref` `_collect` issues, rather than re-asked once per tree. The
+    second half, liveness, is asked of git directly: `rev-parse --verify` exits
+    non-zero exactly in the `[gone]` case, which is the case a recorded upstream
+    cannot distinguish on its own. Measured here: the four `tb-*` branches PR #88
+    deleted recorded upstreams whose remote refs were gone; the three surviving
+    foreign trees record upstreams that still resolve.
+
+    A detached HEAD has no branch and so no upstream: nobody's checkout by this
+    definition, judged on reachability alone.
+    """
+    if branch is None:
+        return False
+    upstream = upstreams.get(branch, "")
+    # A local-tracking branch (`branch.<name>.remote = .`) records an upstream
+    # under refs/heads/. That ref is live, but it is not a REMOTE-tracking ref,
+    # so it is evidence about this clone rather than about another checkout.
+    if not upstream.startswith(REMOTES):
+        return False
+    return runner(["git", "-C", str(repo), "rev-parse", "--verify", upstream]).returncode == 0
 
 
 def _dirty_count(runner: Runner, path: Path) -> int:
@@ -296,10 +352,12 @@ def _megabytes(runner: Runner, path: Path) -> int:
 def _verdict(
     runner: Runner, repo: Path, stanza: _Stanza, upstreams: dict[str, str]
 ) -> tuple[Verdict, str]:
-    """LOCKED > DIRTY > UNIQUE-WORK > SAFE, in that precedence.
+    """LOCKED > DIRTY > UNIQUE-WORK > CLAIMED > SAFE, in that precedence.
 
     The order is the design predicate's: stop at the first condition that makes
     a tree something other than a candidate, and report it rather than force it.
+    Ownership sits second-to-last because it is the last thing that can disqualify
+    an otherwise-removable tree, and only SAFE survives to `reclaimable`.
     """
     if stanza.locked:
         why = stanza.lock_reason or "no reason recorded"
@@ -322,14 +380,26 @@ def _verdict(
 def _reachability(
     runner: Runner, repo: Path, stanza: _Stanza, upstreams: dict[str, str]
 ) -> tuple[Verdict, str]:
-    """Does the work survive removing this tree? Cleanliness is the caller's
-    claim to make -- a prunable entry has no working directory to be clean."""
+    """Does the work survive removing this tree, and is the tree ours to remove?
+
+    Cleanliness is the caller's claim to make -- a prunable entry has no working
+    directory to be clean. Ownership is asked only once the work is known to
+    survive, so CLAIMED implies reachability and its reason need not restate it.
+    UNIQUE-WORK outranks CLAIMED because "this holds the only copy" is the more
+    urgent thing to tell a human; neither is ever reclaimable.
+    """
+    upstream = upstreams.get(stanza.branch or "", "")
     containing = _containing_refs(runner, repo, stanza.head)
     if containing:
         first = containing[0]
         more = f" (+{len(containing) - 1} more)" if len(containing) > 1 else ""
+        if is_claimed(runner, stanza.branch, repo=repo, upstreams=upstreams):
+            return (
+                "CLAIMED",
+                f"live upstream {upstream} still backs the branch; somebody's "
+                "checkout, never a candidate at any age",
+            )
         return "SAFE", f"head is in {first}{more}"
-    upstream = upstreams.get(stanza.branch or "", "")
     recorded = (
         f"upstream {upstream} does not contain it"
         if upstream
@@ -392,12 +462,32 @@ def _collect(
 def classify(runner: Runner, *, repo: Path, now: float) -> list[Tree]:
     """Classify every LINKED worktree of `repo`. The main checkout is excluded.
 
-    Phase 1 issues SAFE, DIRTY, LOCKED and UNIQUE-WORK. CLAIMED -- "a live
-    remote-tracking ref still backs this branch" -- is Phase 2; until then a tree
-    whose work survives only on its live upstream is reported SAFE, which is true
-    of the work and says nothing yet about who owns the tree.
+    Every tree gets a verdict; `reclaimable` is what narrows them to the ones the
+    reporter is entitled to name. Both are printed, because "I could not prove
+    this one safe" is exactly the information a human sweeping by hand needs.
     """
     return _collect(runner, repo=repo, now=now)[1]
+
+
+def reclaimable(trees: Iterable[Tree]) -> list[Tree]:
+    """SAFE, idle past the threshold, and unclaimed. Never DIRTY/LOCKED/
+    UNIQUE-WORK -- those are reported to a human, never counted as reclaimable.
+
+    "Unclaimed" is carried by the verdict rather than re-tested here: CLAIMED and
+    SAFE are mutually exclusive, so one place decides ownership and the printed
+    table shows the same answer this predicate acts on.
+
+    UNKNOWN idle age fails the threshold rather than passing it, and is spelled
+    out rather than left to the sign of the sentinel: a tree whose age we could
+    not measure is not evidence that the tree is old.
+    """
+    return [
+        tree
+        for tree in trees
+        if tree.verdict == "SAFE"
+        and tree.idle_days != UNKNOWN
+        and tree.idle_days >= IDLE_DAYS
+    ]
 
 
 def _display_path(path: Path) -> str:
@@ -475,12 +565,28 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None) -> 
             "branch, or touches a ref."
         ),
     )
-    # No flags yet by design: `--reclaimable-only` and `--hook` arrive with the
-    # predicate and the hook that need them. argparse is here for `--help` and
-    # so an unknown flag fails loudly instead of being ignored.
-    parser.parse_args(argv)
+    parser.add_argument(
+        "--reclaimable-only",
+        action="store_true",
+        help=(
+            "Print only trees that are clean, unlocked, fully reachable, "
+            f"unclaimed by a live upstream, and idle {IDLE_DAYS}+ days -- and "
+            "print nothing at all when there are none. Silence is the answer "
+            "on a repository with nothing to reclaim, not an error."
+        ),
+    )
+    # `--hook` arrives with the SessionStart wiring that needs it.
+    args = parser.parse_args(argv)
 
     main_checkout, trees = _collect(runner or _run, repo=Path.cwd(), now=time.time())
+    if args.reclaimable_only:
+        candidates = reclaimable(trees)
+        # No header, no "nothing to report" line, no main-checkout row: an empty
+        # stdout is what lets a caller treat any output at all as the signal.
+        if not candidates:
+            return 0
+        print(_render(None, candidates), end="")
+        return 0
     print(_render(main_checkout, trees), end="")
     return 0
 
