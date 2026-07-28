@@ -47,13 +47,13 @@ raw roots + AgentsView exports
           │
    adapters (adapters.py + registry.py)  ── SessionRef → ParseResult
           │
-     ┌────┴──────────────────┬────────────────────┐
- passive.py (CLI / scan)   probe.py          complex.py + complex_runner.py
-     │                         │             (library: locate-then-fix)
- reducer.py → report.py        │  (ClaudeParser keep_raw + track_turns)
- freeze.py (opt-in pin)        │
- run_manifest.py (S40 opt-in)  │
-     └──────────┬──────────────┴────────────────────┘
+     ┌────┴──────────────────┬────────────────────┬──────────────────┐
+ passive.py (CLI / scan)   probe.py          complex.py +       worktrees.py
+     │                         │             complex_runner.py   (reclaim
+ reducer.py → report.py        │             (library only)      inventory;
+ freeze.py (opt-in pin)        │                                 prints only)
+ run_manifest.py (S40)         │
+     └──────────┬──────────────┴────────────────────┴──────────────────┘
           reports/*.md   (complex profile is rendered in-process; no CLI yet)
 ```
 
@@ -113,9 +113,12 @@ rather than silently absent (S38 / TB-24).
   break the `hermes.py` ↔ `adapters.py` import cycle. Adding an agent means
   adding an entry here, never editing a dispatcher.
 - **`cli.py`** — unified console entry (`toolbench passive …` /
-  `toolbench probe …`). Dispatches remaining argv verbatim to the sub-CLIs;
-  imports are lazy per subcommand so a broken complex fixture cannot break
-  `passive` or `--help`.
+  `toolbench probe …` / `toolbench worktrees …`). Dispatches remaining argv
+  verbatim to the sub-CLIs; imports are lazy per subcommand so a broken complex
+  fixture cannot break `passive`, `worktrees`, or `--help`.
+- **`worktrees.py`** — linked git worktree inventory with a reclaim verdict per
+  tree (S42). Reports only — never removes a tree, deletes a branch, or touches
+  a ref. See [Worktree reclaim reporter](#worktree-reclaim-reporter).
 - **`sources.py`** — multi-agent discovery plus the loaders. Either scans raw
   local transcript roots or pages the AgentsView CLI (`--index-source auto |
   agentsview | raw`). `auto` tries AgentsView first and falls back to raw
@@ -242,6 +245,43 @@ packaged manifest there so the vendored tree stays self-describing). Design:
 Call the library from tests or a future CLI; do not shell a real `claude` from
 the hermetic suite — `launch` / `oracle` are injectable (S24 pattern).
 
+## Worktree reclaim reporter
+
+`toolbench worktrees` answers which linked checkouts hanging off this clone
+could be reclaimed, and which are somebody's live tree. It **prints only** —
+reclamation stays the hand-run procedure in `AGENTS.md` § Repository integrity
+(`git worktree remove <path>` **then** `git branch -d <branch>`).
+
+| Piece | Role |
+|---|---|
+| `classify()` | Parse `git worktree list --porcelain`, join `for-each-ref`, one verdict per **linked** tree (main checkout excluded) |
+| `reclaimable()` | Narrow to `SAFE` + idle ≥ `IDLE_DAYS` (7); never DIRTY / LOCKED / UNIQUE-WORK / CLAIMED |
+| `--reclaimable-only` | Print only reclaimable rows; **empty stdout** when there are none |
+| `--hook` | SessionStart mode: one-line JSON context envelope, or silence; always exit 0 |
+| `.claude/settings.json` | Tracked `SessionStart` registration (`uv run … toolbench worktrees --hook`, `--no-sync`, timeout 10s) |
+
+**Verdict precedence** (`LOCKED > DIRTY > UNIQUE-WORK > CLAIMED > SAFE`): stop at
+the first condition that disqualifies a tree and report it rather than force it.
+
+- **LOCKED** — porcelain `locked`; needs `--force` twice to remove.
+- **DIRTY** — modified or untracked entries (`git worktree remove` refuses).
+- **UNIQUE-WORK** — tip is in no trunk/`refs/remotes/` ref; the only copy.
+- **CLAIMED** — a live remote-tracking upstream still backs the branch
+  (`%(upstream)` existence + `rev-parse --verify` liveness). A claim does **not**
+  expire; `IDLE_DAYS` gates unclaimed trees only. Never reads
+  `%(upstream:track)` (empty means both "in sync" and "no upstream" — the same
+  class of bug that made `commit-commands:clean_gone` a silent no-op).
+- **SAFE** — clean, unlocked, tip reachable from `refs/heads/main` or a live
+  remote-tracking ref, and unclaimed.
+
+Idle age comes from the admin `gitdir` mtime (git's own `--expire` signal), not
+a commit date. Unknown idle/size degrade to `?` and fail the reclaimable
+threshold rather than pass it. Verdict-bearing git failures raise
+`WorktreeProbeFailed` on the terminal path; `--hook` swallows every failure and
+exits 0 (a broken SessionStart reporter must not tax every session). `--hook`
+and `--reclaimable-only` are mutually exclusive output modes. The hook speaks
+only on `startup` / `resume` (`compact` is gated so long sessions do not re-nag).
+
 ## Status
 
 **Implemented.** `src/toolbench/` ships all of tickets **T1–T6** in
@@ -273,18 +313,21 @@ apportionment (**S41** / **TB-33** / **TB-35**) — including census on the
 zero-match path (**TB-34**) and freeze-time census in manifest v2 with a
 subagent-population filter guard (**TB-37**) — are shipped. The complex debug probe library (`complex.py` /
 `complex_runner.py`) is implemented as a library (fixtures under
-`src/toolbench/probes/complex/`; no CLI yet). CQ follow-ons split passive into
-`reducer`/`report`, fold probe into `ClaudeParser`
-(`keep_raw_input` / `track_turns`), and stamp inefficiency tags at emit.
-The strict gate (`uv run ruff check .`, `uv run mypy --strict src/toolbench tests`,
-`uv run pytest -q`) is green — **617** tests passing (3 skipped when the
-live hermes archive / optional live paths are absent). `mypy --strict`
-covers `tests` as well as `src/toolbench`. The same three commands run in CI
+`src/toolbench/probes/complex/`; no CLI yet). The linked-worktree reclaim
+reporter (`worktrees.py`, **S42** / PR #90) ships as a third console
+subcommand — table, `--reclaimable-only`, and SessionStart `--hook`. CQ
+follow-ons split passive into `reducer`/`report`, fold probe into
+`ClaudeParser` (`keep_raw_input` / `track_turns`), and stamp inefficiency
+tags at emit. The strict gate (`uv run ruff check .`,
+`uv run mypy --strict src/toolbench tests`, `uv run pytest -q`) is green —
+**700** tests passing (3 skipped when the live hermes archive / optional
+live paths are absent). `mypy --strict` covers `tests` as well as
+`src/toolbench`. The same three commands run in CI
 (`.github/workflows/ci.yml`) on every PR and on pushes to `main`.
 
 Source-of-truth documents:
 
-- [`SPEC.md`](SPEC.md) — 41 numbered acceptance criteria (S1–S41).
+- [`SPEC.md`](SPEC.md) — 42 numbered acceptance criteria (S1–S42).
 - [`EVALUATION.md`](EVALUATION.md) — verification map for every criterion.
 - [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the T1–T6 tickets
   plus post-merge TB/T rows.
@@ -374,12 +417,14 @@ uv run python -m toolbench.probe --allow-seeded   # baseline table only; measure
 # the checkout).
 uv run python -m toolbench.passive --agent claude --run-manifest run.json --tickets 12
 
-# Linked git worktrees, with a reclaim verdict per tree. Reports only — it never
-# removes a tree, deletes a branch, or touches a ref (procedure: AGENTS.md
-# § Repository integrity). `--reclaimable-only` prints nothing at all when
-# nothing is reclaimable; a SessionStart hook runs that form and stays silent.
+# Linked git worktrees, with a reclaim verdict per tree (S42). Reports only —
+# it never removes a tree, deletes a branch, or touches a ref (procedure:
+# AGENTS.md § Repository integrity). `--reclaimable-only` prints nothing at
+# all when nothing is reclaimable. `--hook` is the SessionStart mode (tracked
+# in `.claude/settings.json`); mutually exclusive with `--reclaimable-only`.
 uv run toolbench worktrees
 uv run toolbench worktrees --reclaimable-only
+# uv run toolbench worktrees --hook   # stdin = SessionStart payload; exit 0
 
 # Tests
 uv run pytest -q
@@ -621,6 +666,10 @@ line means the run headline may understate what the orchestration spent.
 | `--exclude-subagents` still includes nested subagents / freeze replay ignores the flag | Pre-TB-29 discovery checked `rel.parts[1] == "subagents"` (flat layout that does not exist on disk); freeze manifests could pin stale `"is_subagent": false` | Current code matches `"subagents" in rel.parts[1:-1]` and ORs path re-derivation on freeze replay. Re-run on current `main`; rewrite the freeze manifest only if you intentionally want a new pin. |
 | Complex trial raises `UnsafeDepsCache` | Dep cache shares a walkable ancestor with the corpus, is a symlink (including dangling — checked before `resolve()`), or is not private to this uid | Pass `deps_base=` (or set `$TMPDIR`) so cache and corpus diverge at `/`; never point the cache at a replaceable symlink. |
 | Complex trial raises `UnprovisionedWorktree` | `run_trial` was called without `provision_worktree` (no `PROMPT.md`) | Call `provision_worktree` first. There is no fallback prompt — the rationale would leak the predicted winner. |
+| `toolbench worktrees` flags a long-idle tree you meant to keep | The branch has no live remote-tracking upstream, so it is not `CLAIMED` | Push/set an upstream, or leave it — reclaimable requires `SAFE` + idle ≥7d. A live upstream is a standing exemption at any age. |
+| `toolbench worktrees` raises `WorktreeProbeFailed` | A verdict-bearing git call failed (listing, refs, status, reachability) | Fix the git/mount problem and re-run. `--hook` never raises — it exits 0 silently so a broken reporter does not disable SessionStart. |
+| SessionStart never mentions reclaimable trees | Zero reclaimable candidates, gated `source` (`compact`/`clear`/`fork`), or a swallowed probe failure | Run `uv run toolbench worktrees` for the full table. Silence is the answer when nothing is reclaimable. |
+| `commit-commands:clean_gone` reports success but removes nothing | It greps `git branch -v` for literal `[gone]`; real output is `[origin/<name>: gone]` | Use `uv run toolbench worktrees --reclaimable-only`, then the AGENTS.md reclaim procedure. Do not trust `%(upstream:track)` emptiness either. |
 ## Quality gate
 
 Before any PR: `uv run ruff check .`, `uv run mypy --strict src/toolbench tests`,

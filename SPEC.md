@@ -347,13 +347,17 @@ and re-exports the public symbols historical imports expect.
   callouts only.
 - **S20 — stdlib runtime, uv project.** The shipped `toolbench` package
   imports nothing third-party; the project is uv-managed (`pyproject.toml`
-  + `uv.lock`, empty runtime deps, `dev` group `ruff`/`mypy`/`pytest`).
+  + `uv.lock`, empty runtime deps, `dev` group `ruff`/`mypy`/`pytest` plus
+  optional `logfire` for parallel-run tooling — not imported by the shipped
+  package).
 - **S21 — entry points.** Runnable as `uv run toolbench passive` /
-  `uv run toolbench probe` (unified console script via `cli.py`) or
-  `uv run python -m toolbench.passive` / `… toolbench.probe`; tests via
+  `uv run toolbench probe` / `uv run toolbench worktrees` (unified console
+  script via `cli.py`) or `uv run python -m toolbench.passive` /
+  `… toolbench.probe` / `… toolbench.worktrees`; tests via
   `uv run pytest -q` (S31). Run-grain grouping (`--run-manifest` / `--tickets`)
   is a dimension on `toolbench.passive` itself (S40) — the analyzer owns run
-  grain, not a third CLI.
+  grain, not a fourth analyzer CLI. Worktree reclaim inventory is a separate
+  subcommand (S42), not a passive flag.
 - **S22 — strict gate.** `uv run ruff check .`, `uv run mypy --strict
   src/toolbench tests`, and the full pytest suite are green before any PR.
 - **S23 — error handling.** Empty session selection → clear message,
@@ -363,6 +367,23 @@ and re-exports the public symbols historical imports expect.
   `RuntimeError` including `NonTranscriptExport`, and `UnicodeDecodeError`)
   demote that session into skipped roots and continue the corpus scan —
   one bad export must not abort the run.
+
+## Worktree reclaim — `src/toolbench/worktrees.py`
+
+- **S42 — linked-worktree reclaim reporter.** `toolbench worktrees` classifies
+  every **linked** worktree of the current clone (main checkout excluded and
+  labelled never-a-candidate). Verdict precedence is
+  `LOCKED > DIRTY > UNIQUE-WORK > CLAIMED > SAFE`. Ownership (`CLAIMED`) is a
+  live remote-tracking upstream (`%(upstream)` + `rev-parse --verify`); it
+  never reads `%(upstream:track)` and never expires. `reclaimable()` returns
+  only `SAFE` trees idle ≥ `IDLE_DAYS` (7); unknown idle age fails the
+  threshold. The command **prints only** — it never removes a tree, deletes a
+  branch, or touches a ref. `--reclaimable-only` prints nothing when empty.
+  `--hook` (mutually exclusive) is SessionStart mode: speak only on
+  `startup`/`resume`, emit one context line or silence, always exit 0, swallow
+  every failure. Registered in tracked `.claude/settings.json`. Terminal path
+  raises `WorktreeProbeFailed` on verdict-bearing git failures rather than
+  guessing SAFE/DIRTY.
 
 ## Testing
 
