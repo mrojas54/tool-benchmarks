@@ -41,7 +41,8 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   literal `[gone]`, but real output is `[origin/<name>: gone]`, so it matches
   nothing here and reports success having removed nothing. The classifier never
   reads `%(upstream:track)` either — empty means both "in sync" and "no
-  upstream".
+  upstream". Nested agent worktrees land under gitignored `.claude/worktrees/`
+  (tracked in `.gitignore`, not only `.git/info/exclude`).
 - Reports are generated under gitignored `reports/`.
 
 ## Analyzer and probe constraints
@@ -81,7 +82,8 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
 Aggregation is in `reducer.py`; markdown/fingerprints in `report.py`; freeze I/O
 in `freeze.py`; run-manifest I/O in `run_manifest.py`. `passive.py` owns CLI
 orchestration and compatibility re-exports. The complex debug probe is
-`complex.py` (defects, scoring, profile render) plus `complex_runner.py`
+`complex.py` (defects, scoring, profile render) plus `shell_safety.py`
+(arm / read-scope audits; re-exported from `complex`) plus `complex_runner.py`
 (worktree, deps cache, trial driver) — library only, no CLI yet.
 `worktrees.py` owns the linked-worktree inventory CLI (`classify` /
 `reclaimable` / `--hook`); it prints only and never removes a tree or ref.
