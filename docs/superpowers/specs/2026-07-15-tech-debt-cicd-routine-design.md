@@ -5,8 +5,9 @@
 **CI gate shipped** (`.github/workflows/ci.yml`, merged with the design): every
 PR and every push to `main` runs `uv sync --frozen --python 3.13`, then the
 documented gate (`ruff check .`, `mypy --strict src/toolbench tests`, `pytest -q`).
-The assessment tool remains local-only under `~/tech-debt-work/` (not in this
-repo).
+`[tool.mypy]` in `pyproject.toml` pins the same scope so a bare local `mypy`
+mirrors CI (and does not type-check `tools/`). The assessment tool remains
+local-only under `~/tech-debt-work/` (not in this repo).
 
 ## Problem
 
@@ -76,7 +77,10 @@ needed to reach the gate tools. The gate runs `ruff check .`, **not** `ruff form
 --check`, and mypy over `src/toolbench tests` and no wider — it reproduces the gate the
 repo already documents, it does not invent a stricter one. (Before the src-layout
 move the mypy path was `toolbench tests`; CI and live operator docs now use
-`src/toolbench`.)
+`src/toolbench`.) Locally, `[tool.mypy]` in `pyproject.toml` pins the same
+`files` + `strict` so a bare `uv run mypy` mirrors CI and does not descend into
+the `tools/` probe corpus; CI still passes explicit paths + `--strict` on the
+command line (those take precedence).
 
 ### 2. `~/tech-debt-work/tech_debt_report.py` — the shared assessment tool
 
