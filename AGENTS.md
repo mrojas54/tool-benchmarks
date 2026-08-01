@@ -9,12 +9,14 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
 
 - The project is `uv`-managed and requires Python >=3.13. Run tools from this
   repository root via `uv run`; use `uv sync` when explicit provisioning is
-  needed.
+  needed. Runtime deps stay empty (stdlib-only); the `dev` group adds the
+  gate tools plus optional parallel-run tooling (`logfire`).
 - Before a PR, run `uv run ruff check .`,
   `uv run python -m toolbench.complexity_gate --base origin/main`,
   `uv run mypy --strict src/toolbench tests`, and `uv run pytest -q`. Do not
   substitute `unittest discover`: it misses module-level pytest tests and
-  executes module-level report code.
+  executes module-level report code. A bare `uv run mypy` also mirrors that
+  scope via `[tool.mypy]` in `pyproject.toml` (does not descend into `tools/`).
 - Optional live dependencies (`agentsview`, Claude/Codex archives, Hermes) are
   not required for the gate; skips for absent live archives are expected (the
   hermetic suite is ~700 passing, with 3 skips when live paths are missing).
@@ -45,7 +47,10 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   nothing here and reports success having removed nothing. Nested agent
   worktrees land under gitignored `.claude/worktrees/` (tracked in
   `.gitignore`, not only `.git/info/exclude`).
-- Reports are generated under gitignored `reports/`.
+- Reports are generated under gitignored `reports/`. Parallel-run artifacts
+  under `.bmad-loop/` and `.humanlayer/tasks/` (plus
+  `.humanlayer/workspace.local.json`) are also gitignored;
+  `.humanlayer/workspace.json` stays committable.
 
 ## Analyzer and probe constraints
 
@@ -81,10 +86,11 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
 
 ## Module ownership
 
-Aggregation is in `reducer.py`; markdown/fingerprints in `report.py`; freeze I/O
-in `freeze.py`; run-manifest I/O in `run_manifest.py`. `passive.py` owns CLI
-orchestration and compatibility re-exports. The complex debug probe is
-`complex.py` (defects, scoring, profile render) plus `shell_safety.py`
+Aggregation is in `reducer.py`; markdown/fingerprints in `report.py`
+(per-section `_render_*` helpers); freeze I/O in `freeze.py`; run-manifest I/O
+in `run_manifest.py`. `passive.py` owns CLI orchestration (`_resolve_corpus`
+for replay-vs-discover) and compatibility re-exports. The complex debug probe
+is `complex.py` (defects, scoring, profile render) plus `shell_safety.py`
 (arm / read-scope audits; re-exported from `complex`) plus `complex_runner.py`
 (worktree, deps cache, trial driver) — library only, no CLI yet.
 `worktrees.py` owns the linked-worktree inventory CLI (`classify` /

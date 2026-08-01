@@ -26,10 +26,11 @@ raw roots + AgentsView exports
 ```
 
 - **Runtime:** Python stdlib only (`subprocess` shells to the AgentsView CLI).
-- **Project:** uv-managed; `pyproject.toml` + `uv.lock`; dev group
-  `ruff`/`mypy`/`pytest`; runtime deps empty. `[tool.mypy]` pins
-  `files` + `strict` so a bare local `mypy` mirrors the CI gate
-  (`src/toolbench` + `tests`) and does not type-check `tools/`.
+- **Project:** uv-managed; `pyproject.toml` + `uv.lock`; runtime deps empty.
+  The `dev` group holds gate tools (`ruff`/`mypy`/`pytest`) plus optional
+  parallel-run tooling (`logfire`). `[tool.mypy]` pins `files` + `strict` so
+  a bare local `mypy` mirrors the CI gate (`src/toolbench` + `tests`) and
+  does not type-check `tools/`.
 - **Parser seam (decided):** callers open lines and use `ClaudeParser.parse`
   or `registry.pick_adapter` → `SessionAdapter.parse`. Path-based
   `parse_session` was retired (CQ 1.3). Probe reuses the same pass via

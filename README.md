@@ -99,12 +99,13 @@ rather than silently absent (S38 / TB-24).
   `pick_adapter(ref).parse(ref)`.
 - **`parsers.py`** — one class per schema. `ClaudeParser` joins each assistant
   `tool_use` block to its result by id, stamps inefficiency tags at emit
-  (CQ 3.1), and sums session-grain cache read/creation (S39). Optional
-  `keep_raw_input` / `track_turns` (CQ 7.1) let probe reuse this pass instead
-  of a second Claude-shaped walker. `HermesTraceParser` subclasses it for
-  the claude-shaped hermes trace export and stamps every call
-  `ABSENT_BY_EXPORT` (S29). Malformed lines are counted and skipped, never
-  fatal.
+  (CQ 3.1), and sums session-grain cache read/creation (S39). Usage and turn
+  accounting live in module-level `_account_usage` / `_track_turn` (local
+  `_UsageTally`, no instance state on `parse`). Optional `keep_raw_input` /
+  `track_turns` (CQ 7.1) let probe reuse this pass instead of a second
+  Claude-shaped walker. `HermesTraceParser` subclasses it for the
+  claude-shaped hermes trace export and stamps every call `ABSENT_BY_EXPORT`
+  (S29). Malformed lines are counted and skipped, never fatal.
 - **`adapters.py`** — `detect_parser`, `UnknownSchema`, `AmbiguousSchema`, and
   `ComposedAdapter` (the terminal fallback). `PARSERS` currently holds
   `ClaudeParser`, `HermesTraceParser`, and `CodexParser`; Claude and HermesTrace
@@ -139,16 +140,17 @@ rather than silently absent (S38 / TB-24).
   surfaced on `ParseResult` for the Agent Breakdown caveat (S32 / TB-20),
   never attributed per call.
 - **`passive.py`** — CLI and scan orchestration only: argparse, discovery /
-  `--freeze` replay, per-ref parse, date-range filter, typed skips. Re-exports
-  reducer/report symbols so historical `from toolbench.passive import …`
-  imports keep working.
+  `--freeze` replay via `_resolve_corpus`, per-ref parse, date-range filter,
+  typed skips. Re-exports reducer/report symbols so historical
+  `from toolbench.passive import …` imports keep working.
 - **`reducer.py`** — incremental corpus aggregation (S11). Folds each
   session's `ParseResult` into per-agent / per-tool counters and discards the
   call list — never a whole-corpus `list[ToolCall]`. Schema-neutral: it only
   counts tags already stamped at parse time.
 - **`report.py`** — five-section markdown render (S14) plus corpus fingerprint
   helpers (S36) and sampling disclosure (S41: `sampled` column, uneven-
-  sampling apportionment). Sections: agent breakdown (session-grain cache
+  sampling apportionment). `render_report` orchestrates per-section
+  `_render_*` helpers. Sections: agent breakdown (session-grain cache
   caveats + census fractions), tool leaderboard (`cache_assisted` as `yes` /
   `no` / `n/a` / `n/a*`), model breakdown, inefficiency callouts, summary
   (discovery reconcile, unjoinable records, S39 cache totals).
@@ -390,7 +392,9 @@ bug this adapter exists for is
 ## Usage
 
 The project is [uv](https://docs.astral.sh/uv/)-managed (`pyproject.toml` +
-`uv.lock`, empty runtime deps, `dev` group `ruff`/`mypy`/`pytest`).
+`uv.lock`, empty runtime deps). The `dev` group installs the gate tools
+(`ruff` / `mypy` / `pytest`) plus optional parallel-run tooling (`logfire`);
+the shipped package stays stdlib-only.
 Requires Python ≥3.13.
 
 ```sh
