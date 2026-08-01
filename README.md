@@ -47,13 +47,13 @@ raw roots + AgentsView exports
           │
    adapters (adapters.py + registry.py)  ── SessionRef → ParseResult
           │
-     ┌────┴──────────────────┬────────────────────┐
- passive.py (CLI / scan)   probe.py          complex.py + shell_safety.py
-     │                         │             + complex_runner.py
- reducer.py → report.py        │  (ClaudeParser keep_raw + track_turns)
- freeze.py (opt-in pin)        │             (library: locate-then-fix)
- run_manifest.py (S40 opt-in)  │
-     └──────────┬──────────────┴────────────────────┘
+     ┌────┴──────────────────┬────────────────────┬──────────────────┐
+ passive.py (CLI / scan)   probe.py          complex.py +       worktrees.py
+     │                         │             shell_safety.py +   (reclaim
+ reducer.py → report.py        │             complex_runner.py   inventory;
+ freeze.py (opt-in pin)        │             (library only)      prints only)
+ run_manifest.py (S40)         │
+     └──────────┬──────────────┴────────────────────┴──────────────────┘
           reports/*.md   (complex profile is rendered in-process; no CLI yet)
 ```
 
@@ -99,12 +99,10 @@ rather than silently absent (S38 / TB-24).
   `pick_adapter(ref).parse(ref)`.
 - **`parsers.py`** — one class per schema. `ClaudeParser` joins each assistant
   `tool_use` block to its result by id, stamps inefficiency tags at emit
-  (CQ 3.1), and sums session-grain cache read/creation (S39). Usage accounting
-  and turn tracking are module-level helpers (`_account_usage`, `_track_turn`)
-  so `parse()` mutates no instance state — `HermesTraceParser` inherits the
-  same path. Optional `keep_raw_input` / `track_turns` (CQ 7.1) let probe reuse
-  this pass instead of a second Claude-shaped walker. `HermesTraceParser`
-  subclasses it for the claude-shaped hermes trace export and stamps every call
+  (CQ 3.1), and sums session-grain cache read/creation (S39). Optional
+  `keep_raw_input` / `track_turns` (CQ 7.1) let probe reuse this pass instead
+  of a second Claude-shaped walker. `HermesTraceParser` subclasses it for
+  the claude-shaped hermes trace export and stamps every call
   `ABSENT_BY_EXPORT` (S29). Malformed lines are counted and skipped, never
   fatal.
 - **`adapters.py`** — `detect_parser`, `UnknownSchema`, `AmbiguousSchema`, and
@@ -115,9 +113,12 @@ rather than silently absent (S38 / TB-24).
   break the `hermes.py` ↔ `adapters.py` import cycle. Adding an agent means
   adding an entry here, never editing a dispatcher.
 - **`cli.py`** — unified console entry (`toolbench passive …` /
-  `toolbench probe …`). Dispatches remaining argv verbatim to the sub-CLIs;
-  imports are lazy per subcommand so a broken complex fixture cannot break
-  `passive` or `--help`.
+  `toolbench probe …` / `toolbench worktrees …`). Dispatches remaining argv
+  verbatim to the sub-CLIs; imports are lazy per subcommand so a broken complex
+  fixture cannot break `passive`, `worktrees`, or `--help`.
+- **`worktrees.py`** — linked git worktree inventory with a reclaim verdict per
+  tree (S42). Reports only — never removes a tree, deletes a branch, or touches
+  a ref. See [Worktree reclaim reporter](#worktree-reclaim-reporter).
 - **`sources.py`** — multi-agent discovery plus the loaders. Either scans raw
   local transcript roots or pages the AgentsView CLI (`--index-source auto |
   agentsview | raw`). `auto` tries AgentsView first and falls back to raw
@@ -138,18 +139,16 @@ rather than silently absent (S38 / TB-24).
   surfaced on `ParseResult` for the Agent Breakdown caveat (S32 / TB-20),
   never attributed per call.
 - **`passive.py`** — CLI and scan orchestration only: argparse, discovery /
-  `--freeze` replay, per-ref parse, date-range filter, typed skips. Corpus
-  resolution (replay vs discover + census cascade) lives in `_resolve_corpus`.
-  Re-exports reducer/report symbols so historical
-  `from toolbench.passive import …` imports keep working.
+  `--freeze` replay, per-ref parse, date-range filter, typed skips. Re-exports
+  reducer/report symbols so historical `from toolbench.passive import …`
+  imports keep working.
 - **`reducer.py`** — incremental corpus aggregation (S11). Folds each
   session's `ParseResult` into per-agent / per-tool counters and discards the
   call list — never a whole-corpus `list[ToolCall]`. Schema-neutral: it only
   counts tags already stamped at parse time.
 - **`report.py`** — five-section markdown render (S14) plus corpus fingerprint
   helpers (S36) and sampling disclosure (S41: `sampled` column, uneven-
-  sampling apportionment). `render_report` orchestrates per-section
-  `_render_*` helpers. Sections: agent breakdown (session-grain cache
+  sampling apportionment). Sections: agent breakdown (session-grain cache
   caveats + census fractions), tool leaderboard (`cache_assisted` as `yes` /
   `no` / `n/a` / `n/a*`), model breakdown, inefficiency callouts, summary
   (discovery reconcile, unjoinable records, S39 cache totals).
@@ -183,6 +182,7 @@ rather than silently absent (S38 / TB-24).
   `complex_runner.py` provisions worktrees and drives trials. See
   [Complex debug probe](#complex-debug-probe-library) below; design lives under
   [`docs/superpowers/specs/2026-07-12-complex-debug-probe-design.md`](docs/superpowers/specs/2026-07-12-complex-debug-probe-design.md).
+
 ## Probe corpus
 
 Five files are vendored under [`tools/`](tools/) — a log-spaced size spread
@@ -220,7 +220,7 @@ packaged manifest there so the vendored tree stays self-describing). Design:
 
 | Piece | Role |
 |---|---|
-| `complex.py` | Load defects from fixtures, score a trial (`LOCATED:` + oracle), build/render a routing profile |
+| `complex.py` | Load defects from fixtures, score a trial (`LOCATED:` + oracle), build/render a routing profile; re-exports shell-safety symbols |
 | `shell_safety.py` | Bash tokenization, path-containment, and gate-escape audits (`arm_violations`, `read_escapes`, `BANNED_TOOLS`); re-exported by `complex` |
 | `complex_runner.py` | Provision a hermetic worktree, shared deps cache, injectable `launch`/`oracle`, `run_trial` |
 | `src/toolbench/probes/complex/<repo>-<id>-*/` | `defect.patch`, `truth.json`, `prediction.md`, `oracle.json`, `prompt.md` |
@@ -251,6 +251,43 @@ packaged manifest there so the vendored tree stays self-describing). Design:
 Call the library from tests or a future CLI; do not shell a real `claude` from
 the hermetic suite — `launch` / `oracle` are injectable (S24 pattern).
 
+## Worktree reclaim reporter
+
+`toolbench worktrees` answers which linked checkouts hanging off this clone
+could be reclaimed, and which are somebody's live tree. It **prints only** —
+reclamation stays the hand-run procedure in `AGENTS.md` § Repository integrity
+(`git worktree remove <path>` **then** `git branch -d <branch>`).
+
+| Piece | Role |
+|---|---|
+| `classify()` | Parse `git worktree list --porcelain`, join `for-each-ref`, one verdict per **linked** tree (main checkout excluded) |
+| `reclaimable()` | Narrow to `SAFE` + idle ≥ `IDLE_DAYS` (7); never DIRTY / LOCKED / UNIQUE-WORK / CLAIMED |
+| `--reclaimable-only` | Print only reclaimable rows; **empty stdout** when there are none |
+| `--hook` | SessionStart mode: one-line JSON context envelope, or silence; always exit 0 |
+| `.claude/settings.json` | Tracked `SessionStart` registration (`uv run … toolbench worktrees --hook`, `--no-sync`, timeout 10s) |
+
+**Verdict precedence** (`LOCKED > DIRTY > UNIQUE-WORK > CLAIMED > SAFE`): stop at
+the first condition that disqualifies a tree and report it rather than force it.
+
+- **LOCKED** — porcelain `locked`; needs `--force` twice to remove.
+- **DIRTY** — modified or untracked entries (`git worktree remove` refuses).
+- **UNIQUE-WORK** — tip is in no trunk/`refs/remotes/` ref; the only copy.
+- **CLAIMED** — a live remote-tracking upstream still backs the branch
+  (`%(upstream)` existence + `rev-parse --verify` liveness). A claim does **not**
+  expire; `IDLE_DAYS` gates unclaimed trees only. Never reads
+  `%(upstream:track)` (empty means both "in sync" and "no upstream" — the same
+  class of bug that made `commit-commands:clean_gone` a silent no-op).
+- **SAFE** — clean, unlocked, tip reachable from `refs/heads/main` or a live
+  remote-tracking ref, and unclaimed.
+
+Idle age comes from the admin `gitdir` mtime (git's own `--expire` signal), not
+a commit date. Unknown idle/size degrade to `?` and fail the reclaimable
+threshold rather than pass it. Verdict-bearing git failures raise
+`WorktreeProbeFailed` on the terminal path; `--hook` swallows every failure and
+exits 0 (a broken SessionStart reporter must not tax every session). `--hook`
+and `--reclaimable-only` are mutually exclusive output modes. The hook speaks
+only on `startup` / `resume` (`compact` is gated so long sessions do not re-nag).
+
 ## Status
 
 **Implemented.** `src/toolbench/` ships all of tickets **T1–T6** in
@@ -280,23 +317,25 @@ bounds + operator ceiling (**TB-32** / **TB-39**), mid-listing `auto` fallback
 without splicing (**TB-38**), and per-agent sampling disclosure with
 apportionment (**S41** / **TB-33** / **TB-35**) — including census on the
 zero-match path (**TB-34**) and freeze-time census in manifest v2 with a
-subagent-population filter guard (**TB-37**) — are shipped. The complex debug probe library (`complex.py` /
-`shell_safety.py` / `complex_runner.py`) is implemented as a library (fixtures under
-`src/toolbench/probes/complex/`; no CLI yet). CQ follow-ons split passive into
-`reducer`/`report`, fold probe into `ClaudeParser`
-(`keep_raw_input` / `track_turns`), and stamp inefficiency tags at emit.
-The strict gate (`uv run ruff check .`, `uv run mypy --strict src/toolbench tests`,
-`uv run pytest -q`) is green — **619** tests passing (3 skipped when the
-live hermes archive / optional live paths are absent). `mypy --strict`
-covers `tests` as well as `src/toolbench`. The same three commands run in CI
-(`.github/workflows/ci.yml`) on every PR and on pushes to `main`. A bare
-`uv run mypy` also mirrors that scope via `[tool.mypy]` in `pyproject.toml`
-(`files = ["src/toolbench", "tests"]`, `strict = true`) so a local run does
-not descend into the `tools/` probe corpus.
+subagent-population filter guard (**TB-37**) — are shipped. The complex debug
+probe library (`complex.py` / `shell_safety.py` / `complex_runner.py`) is
+implemented as a library (fixtures under `src/toolbench/probes/complex/`; no
+CLI yet). The linked-worktree reclaim reporter (`worktrees.py`, **S42** /
+PR #90) ships as a third console subcommand — table, `--reclaimable-only`, and
+SessionStart `--hook`. CQ follow-ons split passive into `reducer`/`report`,
+fold probe into `ClaudeParser` (`keep_raw_input` / `track_turns`), and stamp
+inefficiency tags at emit. The strict gate (`uv run ruff check .`,
+`uv run mypy --strict src/toolbench tests`, `uv run pytest -q`) is green —
+**700** tests passing (3 skipped when the live hermes archive / optional
+live paths are absent). `mypy --strict` covers `tests` as well as
+`src/toolbench`. A bare `uv run mypy` also mirrors that scope via
+`[tool.mypy]` in `pyproject.toml` (it does not descend into `tools/`). The
+same three commands run in CI (`.github/workflows/ci.yml`) on every PR and on
+pushes to `main`.
 
 Source-of-truth documents:
 
-- [`SPEC.md`](SPEC.md) — 41 numbered acceptance criteria (S1–S41).
+- [`SPEC.md`](SPEC.md) — 42 numbered acceptance criteria (S1–S42).
 - [`EVALUATION.md`](EVALUATION.md) — verification map for every criterion.
 - [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the T1–T6 tickets
   plus post-merge TB/T rows.
@@ -385,6 +424,15 @@ uv run python -m toolbench.probe --allow-seeded   # baseline table only; measure
 # .claude/skills/cache-token-metrics/SKILL.md (module resolve fails outside
 # the checkout).
 uv run python -m toolbench.passive --agent claude --run-manifest run.json --tickets 12
+
+# Linked git worktrees, with a reclaim verdict per tree (S42). Reports only —
+# it never removes a tree, deletes a branch, or touches a ref (procedure:
+# AGENTS.md § Repository integrity). `--reclaimable-only` prints nothing at
+# all when nothing is reclaimable. `--hook` is the SessionStart mode (tracked
+# in `.claude/settings.json`); mutually exclusive with `--reclaimable-only`.
+uv run toolbench worktrees
+uv run toolbench worktrees --reclaimable-only
+# uv run toolbench worktrees --hook   # stdin = SessionStart payload; exit 0
 
 # Tests
 uv run pytest -q
@@ -629,22 +677,52 @@ line means the run headline may understate what the orchestration spent.
 | `--exclude-subagents` still includes nested subagents / freeze replay ignores the flag | Pre-TB-29 discovery checked `rel.parts[1] == "subagents"` (flat layout that does not exist on disk); freeze manifests could pin stale `"is_subagent": false` | Current code matches `"subagents" in rel.parts[1:-1]` and ORs path re-derivation on freeze replay. Re-run on current `main`; rewrite the freeze manifest only if you intentionally want a new pin. |
 | Complex trial raises `UnsafeDepsCache` | Dep cache shares a walkable ancestor with the corpus, is a symlink (including dangling — checked before `resolve()`), or is not private to this uid | Pass `deps_base=` (or set `$TMPDIR`) so cache and corpus diverge at `/`; never point the cache at a replaceable symlink. |
 | Complex trial raises `UnprovisionedWorktree` | `run_trial` was called without `provision_worktree` (no `PROMPT.md`) | Call `provision_worktree` first. There is no fallback prompt — the rationale would leak the predicted winner. |
+| `toolbench worktrees` flags a long-idle tree you meant to keep | The branch has no live remote-tracking upstream, so it is not `CLAIMED` | Push/set an upstream, or leave it — reclaimable requires `SAFE` + idle ≥7d. A live upstream is a standing exemption at any age. |
+| `toolbench worktrees` raises `WorktreeProbeFailed` | A verdict-bearing git call failed (listing, refs, status, reachability) | Fix the git/mount problem and re-run. `--hook` never raises — it exits 0 silently so a broken reporter does not disable SessionStart. |
+| SessionStart never mentions reclaimable trees | Zero reclaimable candidates, gated `source` (`compact`/`clear`/`fork`), or a swallowed probe failure | Run `uv run toolbench worktrees` for the full table. Silence is the answer when nothing is reclaimable. |
+| `commit-commands:clean_gone` reports success but removes nothing | It greps `git branch -v` for literal `[gone]`; real output is `[origin/<name>: gone]` | Use `uv run toolbench worktrees --reclaimable-only`, then the AGENTS.md reclaim procedure. Do not trust `%(upstream:track)` emptiness either. |
+| Stale linked worktrees under `.claude/worktrees/` fill the disk and block `git branch -d` | Nested agent worktrees keep their branches checked out; `git worktree prune` / `commit-commands:clean_gone` are no-ops while directories exist | `git worktree remove <path>` **then** `git branch -d <branch>`. Select with `uv run toolbench worktrees --reclaimable-only`. The ignore boundary is tracked in `.gitignore` (`.claude/worktrees/`). |
+
 ## Quality gate
 
-Before any PR: `uv run ruff check .`, `uv run mypy --strict src/toolbench tests`,
-and `uv run pytest -q` must be green (S31 — the documented command must
-collect every test, including module-level `test_*` functions that
-`unittest discover` silently misses). A bare `uv run mypy` is also safe:
-`[tool.mypy]` in `pyproject.toml` pins `files` + `strict` to the same scope,
-so a local run does not type-check the `tools/` probe corpus (~88 by-design
-strict errors CI never sees). CI still passes explicit paths + `--strict` on
-the command line.
+Before any PR, run:
+
+```bash
+uv run ruff check .
+uv run python -m toolbench.complexity_gate --base origin/main
+uv run mypy --strict src/toolbench tests
+uv run pytest -q
+```
+
+The complexity command uses Ruff's `C901` measurement and compares changed
+Python functions under `src/` and `tests/` by file plus qualified function name.
+The configured maximum is 10:
+
+- a new function above 10 or an existing function crossing 10 fails;
+- an already-baselined function above 10 passes when unchanged or reduced, but
+  fails if it gets worse;
+- an increase of 2 or more that remains at or below 10 emits a review warning;
+- `# noqa: C901` does not hide a function from the regression comparison.
+
+This keeps legacy hotspots visible without making old debt an unrelated PR
+failure. Renaming or moving a function changes its comparison identity, so a
+moved hotspot above 10 is treated as new and should be reduced or deliberately
+reviewed. For an optional ranked report, run
+`uvx radon cc src --show-complexity --average --min C`; Radon is diagnostic only
+and is not part of the lockfile or merge gate.
+
+The pytest command must collect every test, including module-level `test_*`
+functions that `unittest discover` silently misses (S31).
 
 GitHub Actions runs that same gate on every pull request and every push to
 `main` (`.github/workflows/ci.yml`: `uv sync --frozen --python 3.13`, then
-ruff / mypy --strict / pytest). The workflow is least-privilege
+Ruff / complexity regression / mypy strict / pytest). PRs compare with the
+pull request's base SHA; pushes compare with the pre-push SHA. The workflow
+fetches full Git history so both commits are available. It remains least-privilege
 (`permissions: contents: read`) and does not broaden the gate (no
-`ruff format --check`, no mypy over `tools/`). Design:
+`ruff format --check`, no mypy over `tools/`). `[tool.mypy]` in
+`pyproject.toml` pins `files` + `strict` to the same scope, so a bare local
+`uv run mypy` mirrors CI. Design:
 [`docs/superpowers/specs/2026-07-15-tech-debt-cicd-routine-design.md`](docs/superpowers/specs/2026-07-15-tech-debt-cicd-routine-design.md).
 The periodic *assessment* half of that routine (marker/suppression census)
 is a separate local tool under `~/tech-debt-work/` — it is not in this repo
