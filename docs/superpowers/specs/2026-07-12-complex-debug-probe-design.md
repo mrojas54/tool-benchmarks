@@ -6,7 +6,7 @@ yet. Fixtures under `src/toolbench/probes/complex/`; pinned corpora under
 `corpus/` (packaged manifest at `src/toolbench/corpus/manifest.json`, copied
 by `corpus/vendor.sh`). Pre-registered predictions committed; no live trial
 matrix run yet.
-**Date:** 2026-07-12 (status refreshed 2026-07-23)
+**Date:** 2026-07-12 (status refreshed 2026-07-29)
 
 ## Implementation map (as shipped)
 

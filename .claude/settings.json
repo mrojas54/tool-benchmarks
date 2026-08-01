@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --project \"$CLAUDE_PROJECT_DIR\" --no-sync toolbench worktrees --hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
