@@ -29,6 +29,10 @@ from toolbench.sources import AgentCensus, SessionRef
 MANIFEST_VERSION = "toolbench-freeze-2"
 
 
+class MalformedFreezeManifest(RuntimeError):
+    """The freeze manifest is unreadable or cannot define a frozen corpus."""
+
+
 @dataclass
 class CorpusManifest:
     """A frozen corpus: the discovered refs plus the fingerprint they hashed to.
@@ -159,7 +163,25 @@ def read_manifest(path: str) -> CorpusManifest:
     mistaken for a crash. Same tolerant-read shape as `_is_subagent_from_manifest`
     above -- absence is handled, never rejected.
     """
-    data = json.loads(Path(path).expanduser().read_text())
+    try:
+        text = Path(path).expanduser().read_text(encoding="utf-8")
+    except OSError as exc:
+        raise MalformedFreezeManifest(f"{path} could not be read: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise MalformedFreezeManifest(f"{path} is not valid UTF-8: {exc}") from exc
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise MalformedFreezeManifest(f"{path} is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise MalformedFreezeManifest(f"{path} must contain a JSON object")
+    raw_refs = data.get("refs")
+    if not isinstance(raw_refs, list):
+        raise MalformedFreezeManifest(f"{path} field `refs` must be a list")
+    try:
+        refs = [_ref_from_dict(r) for r in raw_refs]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise MalformedFreezeManifest(f"{path} has an invalid ref entry: {exc}") from exc
     raw_census = data.get("census")
     census = _census_from_dict(raw_census) if isinstance(raw_census, dict) else None
     raw_census_includes_subagents = data.get("census_includes_subagents")
@@ -168,11 +190,14 @@ def read_manifest(path: str) -> CorpusManifest:
         if isinstance(raw_census_includes_subagents, bool)
         else None
     )
-    return CorpusManifest(
-        version=str(data["version"]),
-        fingerprint=str(data["fingerprint"]),
-        count=int(data["count"]),
-        refs=[_ref_from_dict(r) for r in data["refs"]],
-        census=census,
-        census_includes_subagents=census_includes_subagents,
-    )
+    try:
+        return CorpusManifest(
+            version=str(data["version"]),
+            fingerprint=str(data["fingerprint"]),
+            count=int(data["count"]),
+            refs=refs,
+            census=census,
+            census_includes_subagents=census_includes_subagents,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise MalformedFreezeManifest(f"{path} is missing a required field: {exc}") from exc

@@ -622,6 +622,38 @@ class RunManifestMainTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("not valid UTF-8", err.getvalue())
 
+
+class FreezeManifestMainTests(unittest.TestCase):
+    def test_malformed_freeze_manifest_replay_exits_1_with_a_clear_message(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "freeze.json"
+            path.write_text("not json\n", encoding="utf-8")
+            err = io.StringIO()
+            with redirect_stderr(err), redirect_stdout(io.StringIO()):
+                code = main(["--index-source", "raw", "--all", "--freeze", str(path)])
+            self.assertEqual(code, 1)
+            self.assertIn("fatal freeze error", err.getvalue())
+            self.assertIn("not valid JSON", err.getvalue())
+
+    def test_non_utf8_freeze_manifest_replay_exits_1_with_a_clear_message(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "freeze.json"
+            path.write_bytes(b"\xff\xfe\x00invalid")
+            err = io.StringIO()
+            with redirect_stderr(err), redirect_stdout(io.StringIO()):
+                code = main(["--index-source", "raw", "--all", "--freeze", str(path)])
+            self.assertEqual(code, 1)
+            self.assertIn("not valid UTF-8", err.getvalue())
+
+    def test_existing_directory_as_freeze_path_exits_1_with_a_clear_message(self) -> None:
+        with TemporaryDirectory() as tmp:
+            err = io.StringIO()
+            with redirect_stderr(err), redirect_stdout(io.StringIO()):
+                code = main(["--index-source", "raw", "--all", "--freeze", tmp])
+            self.assertEqual(code, 1)
+            self.assertIn("not a regular file", err.getvalue())
+
+
 class NonTranscriptExportTests(unittest.TestCase):
     """Binary payloads demote to skipped_roots, keeping `Malformed lines` honest (TB-10).
 

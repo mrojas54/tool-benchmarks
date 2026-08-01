@@ -16,7 +16,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from toolbench.adapters import UnknownSchema
-from toolbench.freeze import read_manifest, write_manifest
+from toolbench.freeze import MalformedFreezeManifest, read_manifest, write_manifest
 from toolbench.reducer import (
     OVERSIZED_OUTPUT_TOKENS,
     UNKNOWN_MODEL,
@@ -514,7 +514,11 @@ def _resolve_corpus(
     frozen_census_note: str | None = None
     if replaying:
         assert freeze_path is not None
-        manifest = read_manifest(freeze_path)
+        try:
+            manifest = read_manifest(freeze_path)
+        except MalformedFreezeManifest as exc:
+            print(f"toolbench.passive: fatal freeze error: {exc}", file=sys.stderr)
+            return None
         refs, fallback_reason, skips = manifest.refs, None, []
         if manifest.census is None:
             # A freeze pins the REF LIST, not the archive it was drawn from (TB-22): a v1
@@ -595,13 +599,21 @@ def _resolve_corpus(
             print(f"toolbench.passive: fatal source error: {exc}", file=sys.stderr)
             return None
         if freeze_path is not None:
-            write_manifest(
-                freeze_path,
-                refs,
-                corpus_fingerprint(r.session_id for r in refs).digest,
-                census=census,
-                census_includes_subagents=not args.exclude_subagents,
-            )
+            try:
+                write_manifest(
+                    freeze_path,
+                    refs,
+                    corpus_fingerprint(r.session_id for r in refs).digest,
+                    census=census,
+                    census_includes_subagents=not args.exclude_subagents,
+                )
+            except OSError as exc:
+                print(
+                    f"toolbench.passive: fatal freeze error: could not write "
+                    f"{freeze_path}: {exc}",
+                    file=sys.stderr,
+                )
+                return None
     return _ResolvedCorpus(
         refs,
         fallback_reason,
@@ -624,7 +636,15 @@ def main(
     # once; present manifest -> replay it, bypassing live discovery so the input
     # set cannot drift between runs (TB-22, S37).
     freeze_path = args.freeze
-    replaying = freeze_path is not None and Path(freeze_path).expanduser().exists()
+    freeze_p = Path(freeze_path).expanduser() if freeze_path is not None else None
+    if freeze_p is not None and freeze_p.exists() and not freeze_p.is_file():
+        print(
+            f"toolbench.passive: fatal freeze error: {freeze_path} exists but is "
+            "not a regular file",
+            file=sys.stderr,
+        )
+        return 1
+    replaying = freeze_p is not None and freeze_p.is_file()
 
     # Bind --agentsview-timeout to the DEFAULT runner, once, here (TB-39). This is the sole
     # place the default is chosen: both consumers (iter_sessions, and AgentsViewLoader via
