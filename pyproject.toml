@@ -22,6 +22,12 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.ruff]
+target-version = "py313"
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
 # Pin the type-check scope so a bare local `mypy` mirrors the CI gate
 # (`mypy --strict src/toolbench tests`). Without this, a bare `mypy .` descends
 # into the `tools/` probe corpus -- vendored benchmark fixtures that are excluded

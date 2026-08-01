@@ -685,18 +685,42 @@ line means the run headline may understate what the orchestration spent.
 
 ## Quality gate
 
-Before any PR: `uv run ruff check .`, `uv run mypy --strict src/toolbench tests`,
-and `uv run pytest -q` must be green (S31 — the documented command must
-collect every test, including module-level `test_*` functions that
-`unittest discover` silently misses).
+Before any PR, run:
+
+```bash
+uv run ruff check .
+uv run python -m toolbench.complexity_gate --base origin/main
+uv run mypy --strict src/toolbench tests
+uv run pytest -q
+```
+
+The complexity command uses Ruff's `C901` measurement and compares changed
+Python functions under `src/` and `tests/` by file plus qualified function name.
+The configured maximum is 10:
+
+- a new function above 10 or an existing function crossing 10 fails;
+- an already-baselined function above 10 passes when unchanged or reduced, but
+  fails if it gets worse;
+- an increase of 2 or more that remains at or below 10 emits a review warning;
+- `# noqa: C901` does not hide a function from the regression comparison.
+
+This keeps legacy hotspots visible without making old debt an unrelated PR
+failure. Renaming or moving a function changes its comparison identity, so a
+moved hotspot above 10 is treated as new and should be reduced or deliberately
+reviewed. For an optional ranked report, run
+`uvx radon cc src --show-complexity --average --min C`; Radon is diagnostic only
+and is not part of the lockfile or merge gate.
+
+The pytest command must collect every test, including module-level `test_*`
+functions that `unittest discover` silently misses (S31).
 
 GitHub Actions runs that same gate on every pull request and every push to
 `main` (`.github/workflows/ci.yml`: `uv sync --frozen --python 3.13`, then
-ruff / mypy --strict / pytest). The workflow is least-privilege
+Ruff / complexity regression / mypy strict / pytest). PRs compare with the
+pull request's base SHA; pushes compare with the pre-push SHA. The workflow
+fetches full Git history so both commits are available. It remains least-privilege
 (`permissions: contents: read`) and does not broaden the gate (no
-`ruff format --check`, no mypy over `tools/`). `[tool.mypy]` in
-`pyproject.toml` pins `files` + `strict` to the same scope, so a bare local
-`uv run mypy` mirrors CI. Design:
+`ruff format --check`, no mypy over `tools/`). Design:
 [`docs/superpowers/specs/2026-07-15-tech-debt-cicd-routine-design.md`](docs/superpowers/specs/2026-07-15-tech-debt-cicd-routine-design.md).
 The periodic *assessment* half of that routine (marker/suppression census)
 is a separate local tool under `~/tech-debt-work/` — it is not in this repo

@@ -11,6 +11,7 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   repository root via `uv run`; use `uv sync` when explicit provisioning is
   needed.
 - Before a PR, run `uv run ruff check .`,
+  `uv run python -m toolbench.complexity_gate --base origin/main`,
   `uv run mypy --strict src/toolbench tests`, and `uv run pytest -q`. Do not
   substitute `unittest discover`: it misses module-level pytest tests and
   executes module-level report code.
