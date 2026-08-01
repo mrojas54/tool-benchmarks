@@ -16,7 +16,7 @@ which loads the DEFECTS fixtures at import time -- a broken fixture must fail
 from __future__ import annotations
 
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 _HELP = """\
 usage: toolbench <command> [options]
@@ -30,6 +30,19 @@ commands:
 
 Run `toolbench <command> --help` for that command's options.
 """
+
+
+def _run_command(
+    command: str,
+    operation: Callable[[], int],
+    *,
+    trace: bool,
+) -> int:
+    if trace:
+        from toolbench.tracing import run_traced
+
+        operation = run_traced(command)(operation)
+    return operation()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -47,11 +60,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         def operation() -> int:
             return passive.main(rest)
 
-        if argv is None:
-            from toolbench.tracing import run_traced
-
-            operation = run_traced(command)(operation)
-        return operation()
+        return _run_command(command, operation, trace=argv is None)
     if command == "probe":
         from toolbench import probe
 
@@ -59,22 +68,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             probe.main(rest)  # returns None; success is "did not raise"
             return 0
 
-        if argv is None:
-            from toolbench.tracing import run_traced
-
-            run_probe = run_traced(command)(run_probe)
-        return run_probe()
+        return _run_command(command, run_probe, trace=argv is None)
     if command == "worktrees":
         from toolbench import worktrees
 
         def run_worktrees() -> int:
             return worktrees.main(rest)
 
-        if argv is None:
-            from toolbench.tracing import run_traced
-
-            run_worktrees = run_traced(command)(run_worktrees)
-        return run_worktrees()
+        return _run_command(command, run_worktrees, trace=argv is None)
     print(f"toolbench: unknown command {command!r}\n\n{_HELP}", file=sys.stderr, end="")
     return 2
 
