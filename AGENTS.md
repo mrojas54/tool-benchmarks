@@ -19,7 +19,7 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   scope via `[tool.mypy]` in `pyproject.toml` (does not descend into `tools/`).
 - Optional live dependencies (`agentsview`, Claude/Codex archives, Hermes) are
   not required for the gate; skips for absent live archives are expected (the
-  hermetic suite is ~700 passing, with 3 skips when live paths are missing).
+  hermetic suite is ~707 passing, with 3 skips when live paths are missing).
 
 ## Repository integrity
 
@@ -95,3 +95,6 @@ is `complex.py` (defects, scoring, profile render) plus `shell_safety.py`
 (worktree, deps cache, trial driver) — library only, no CLI yet.
 `worktrees.py` owns the linked-worktree inventory CLI (`classify` /
 `reclaimable` / `--hook`); it prints only and never removes a tree or ref.
+`complexity_gate.py` owns the cyclomatic-complexity regression check
+(`compare_complexity` / `evaluate_repository`); invoke via
+`python -m toolbench.complexity_gate`, not the console script.

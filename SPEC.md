@@ -359,8 +359,18 @@ and re-exports the public symbols historical imports expect.
   is a dimension on `toolbench.passive` itself (S40) — the analyzer owns run
   grain, not a fourth analyzer CLI. Worktree reclaim inventory is a separate
   subcommand (S42), not a passive flag.
-- **S22 — strict gate.** `uv run ruff check .`, `uv run mypy --strict
-  src/toolbench tests`, and the full pytest suite are green before any PR.
+- **S22 — strict gate.** `uv run ruff check .`,
+  `uv run python -m toolbench.complexity_gate --base <git-ref>`,
+  `uv run mypy --strict src/toolbench tests`, and the full pytest suite are
+  green before any PR. The complexity gate (`src/toolbench/complexity_gate.py`)
+  compares Ruff `C901` scores for changed `src/` and `tests/` Python files
+  against a Git baseline by `(path, qualified name)`. Threshold defaults to 10
+  (`[tool.ruff.lint.mccabe] max-complexity`): a new function above 10, a
+  function crossing 10, or a legacy hotspot that increases all fail; an
+  increase of ≥2 that stays ≤10 is a warning only. `# noqa: C901` does not
+  hide a symbol (`--ignore-noqa`). CI uses the PR base SHA (or the pre-push
+  SHA) with `fetch-depth: 0`. Renaming/moving a function changes its identity,
+  so a moved hotspot above 10 is treated as new.
 - **S23 — error handling.** Empty session selection → clear message,
   exit 0. Missing selected raw root → exit 1 for a strict source; but
   `--agent all --index-source auto` continues with other sources and

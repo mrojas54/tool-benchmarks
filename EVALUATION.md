@@ -23,8 +23,9 @@ One row per SPEC criterion, each tagged by how it is verified:
   AgentsView daemon. Not hermetic; operator-run. Tests that read a live
   archive are gated on `TOOLBENCH_LIVE=1` and skip out of the fast suite;
   run them with `TOOLBENCH_LIVE=1 uv run pytest -q`.
-- **lint / types** — `uv run ruff check .`; `uv run mypy --strict src/toolbench
-  tests`.
+- **lint / types / complexity** — `uv run ruff check .`;
+  `uv run python -m toolbench.complexity_gate --base origin/main` (or the PR
+  base SHA); `uv run mypy --strict src/toolbench tests`.
 
 ## Criteria map
 
@@ -53,7 +54,7 @@ One row per SPEC criterion, each tagged by how it is verified:
 | S19 | context-cost ranking; cache caveat-only | `autonomous` | `test` |
 | S20 | stdlib runtime; uv project shape (`dev` includes optional `logfire`, not a runtime dep) | `autonomous` | `test` + import-scan + `pyproject.toml` |
 | S21 | entry points run (`toolbench` console script + `python -m` for `passive` / `probe` / `worktrees`) | `autonomous` | smoke via `uv run toolbench …` / `uv run python -m …`; `test_cli.py` |
-| S22 | strict gate green | `autonomous` | ruff + mypy + `test` |
+| S22 | strict gate green (ruff + complexity regression + mypy + pytest) | `autonomous` | ruff; `python -m toolbench.complexity_gate --base …`; mypy; `test` (`test_complexity_gate.py` policy/CI pins; CI step uses PR base / pre-push SHA) |
 | S23 | exit-code contract; per-session skip continues the run | `autonomous` | `test` (argv, tmp roots, binary/non-UTF-8) |
 | S24 | fixtures + fake runner present | `autonomous` | `test` |
 | S25 | acceptance smoke completes | `operator-assisted` / `external-oracle` | `test:full` |
