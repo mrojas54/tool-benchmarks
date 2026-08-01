@@ -11,6 +11,7 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   repository root via `uv run`; use `uv sync` when explicit provisioning is
   needed.
 - Before a PR, run `uv run ruff check .`,
+  `uv run python -m toolbench.complexity_gate --base origin/main`,
   `uv run mypy --strict src/toolbench tests`, and `uv run pytest -q`. Do not
   substitute `unittest discover`: it misses module-level pytest tests and
   executes module-level report code.
@@ -36,13 +37,14 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
 - Reclaim a stale worktree with `git worktree remove <path>` **then**
   `git branch -d <branch>` — the order is required, since git refuses to delete
   a branch a linked worktree holds checked out. Select candidates with
-  `git for-each-ref --format='%(refname:short)|%(upstream:track)|%(worktreepath)' refs/heads/`.
+  `uv run toolbench worktrees --reclaimable-only` (full table:
+  `uv run toolbench worktrees`). Do not select by grepping
+  `%(upstream:track)` emptiness — empty means both "in sync" and "no upstream".
   Do not rely on `commit-commands:clean_gone`: it greps `git branch -v` for the
   literal `[gone]`, but real output is `[origin/<name>: gone]`, so it matches
-  nothing here and reports success having removed nothing. The classifier never
-  reads `%(upstream:track)` either — empty means both "in sync" and "no
-  upstream". Nested agent worktrees land under gitignored `.claude/worktrees/`
-  (tracked in `.gitignore`, not only `.git/info/exclude`).
+  nothing here and reports success having removed nothing. Nested agent
+  worktrees land under gitignored `.claude/worktrees/` (tracked in
+  `.gitignore`, not only `.git/info/exclude`).
 - Reports are generated under gitignored `reports/`.
 
 ## Analyzer and probe constraints
