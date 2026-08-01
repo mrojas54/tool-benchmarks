@@ -147,7 +147,6 @@ class DispatchTests(unittest.TestCase):
         with (
             unittest.mock.patch(
                 "toolbench.tracing.run_traced",
-                side_effect=lambda _command, operation: operation(),
             ) as trace,
             unittest.mock.patch("toolbench.probe.main", return_value=None),
             unittest.mock.patch("toolbench.worktrees.main", return_value=0),

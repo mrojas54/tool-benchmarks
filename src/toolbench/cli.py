@@ -43,29 +43,38 @@ def main(argv: Sequence[str] | None = None) -> int:
     command, rest = args[0], args[1:]
     if command == "passive":
         from toolbench import passive
-        from toolbench.tracing import run_traced
 
         def operation() -> int:
             return passive.main(rest)
 
-        return run_traced(command, operation) if argv is None else operation()
+        if argv is None:
+            from toolbench.tracing import run_traced
+
+            operation = run_traced(command)(operation)
+        return operation()
     if command == "probe":
         from toolbench import probe
-        from toolbench.tracing import run_traced
 
         def run_probe() -> int:
             probe.main(rest)  # returns None; success is "did not raise"
             return 0
 
-        return run_traced(command, run_probe) if argv is None else run_probe()
+        if argv is None:
+            from toolbench.tracing import run_traced
+
+            run_probe = run_traced(command)(run_probe)
+        return run_probe()
     if command == "worktrees":
         from toolbench import worktrees
-        from toolbench.tracing import run_traced
 
         def run_worktrees() -> int:
             return worktrees.main(rest)
 
-        return run_traced(command, run_worktrees) if argv is None else run_worktrees()
+        if argv is None:
+            from toolbench.tracing import run_traced
+
+            run_worktrees = run_traced(command)(run_worktrees)
+        return run_worktrees()
     print(f"toolbench: unknown command {command!r}\n\n{_HELP}", file=sys.stderr, end="")
     return 2
 
