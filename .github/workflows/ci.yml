@@ -1,13 +1,15 @@
 # Continuous integration — the tech-debt gate.
 #
-# Runs the quality gate documented in README.md and AGENTS.md — ruff, mypy
-# --strict, pytest — on every pull request and on pushes to main, so new
-# lint / type / test debt can't land unnoticed. This is the enforcement half of
-# the tech-debt routine; the periodic *assessment* is a separate local tool
-# (see docs/superpowers/specs/2026-07-15-tech-debt-cicd-routine-design.md).
+# Runs the quality gate documented in README.md and AGENTS.md — ruff,
+# complexity regression, mypy --strict, pytest — on every pull request and on
+# pushes to main, so new lint / complexity / type / test debt can't land
+# unnoticed. This is the enforcement half of the tech-debt routine; the
+# periodic *assessment* is a separate local tool (see
+# docs/superpowers/specs/2026-07-15-tech-debt-cicd-routine-design.md).
 #
-# Security note: every run: block below is a static string; no github.event.*
-# input is interpolated, so this workflow is not exposed to script-injection.
+# Security note: the event-derived complexity base is a Git SHA placed in an
+# environment variable and quoted by the static run command; event text is not
+# interpolated into shell source.
 # https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
 
 name: CI
@@ -22,13 +24,15 @@ permissions:
 
 jobs:
   gate:
-    name: python (ruff + mypy --strict + pytest)
+    name: python (ruff + complexity + mypy --strict + pytest)
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -46,6 +50,14 @@ jobs:
 
       - name: Lint (ruff)
         run: uv run ruff check .
+
+      - name: Cyclomatic complexity regressions
+        env:
+          COMPLEXITY_BASE_SHA: >-
+            ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: >-
+          uv run python -m toolbench.complexity_gate
+          --base "$COMPLEXITY_BASE_SHA"
 
       - name: Type-check (mypy --strict)
         run: uv run mypy --strict src/toolbench tests
