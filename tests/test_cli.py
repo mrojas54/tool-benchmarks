@@ -155,3 +155,19 @@ class DispatchTests(unittest.TestCase):
             self.assertEqual(main(["worktrees"]), 0)
 
         trace.assert_not_called()
+
+    def test_real_worktree_hook_dispatch_does_not_emit_a_laminar_trace(self) -> None:
+        with (
+            unittest.mock.patch(
+                "toolbench.tracing.run_traced",
+            ) as trace,
+            unittest.mock.patch.object(
+                sys,
+                "argv",
+                ["toolbench", "worktrees", "--hook"],
+            ),
+            unittest.mock.patch("toolbench.worktrees.main", return_value=0),
+        ):
+            self.assertEqual(main(), 0)
+
+        trace.assert_not_called()

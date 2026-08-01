@@ -75,7 +75,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         def run_worktrees() -> int:
             return worktrees.main(rest)
 
-        return _run_command(command, run_worktrees, trace=argv is None)
+        return _run_command(
+            command,
+            run_worktrees,
+            trace=argv is None and "--hook" not in rest,
+        )
     print(f"toolbench: unknown command {command!r}\n\n{_HELP}", file=sys.stderr, end="")
     return 2
 
