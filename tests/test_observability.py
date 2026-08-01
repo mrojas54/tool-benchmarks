@@ -73,3 +73,47 @@ class SetupTracingTests(unittest.TestCase):
             events,
             [("initialize", "test-project-key", frozenset())],
         )
+
+    def test_setup_tracing_stays_disabled_without_the_optional_sdk(self) -> None:
+        fake_missing_sdk: types.ModuleType | None = None
+
+        with (
+            unittest.mock.patch.dict(
+                os.environ, {"LMNR_PROJECT_API_KEY": "test-project-key"}, clear=True
+            ),
+            unittest.mock.patch.dict(sys.modules, {"lmnr": fake_missing_sdk}),
+        ):
+            module = importlib.import_module(
+                "toolbench.observability.setup_tracing"
+            )
+            self.assertFalse(module.setup_tracing())
+
+    def test_setup_tracing_stays_disabled_when_laminar_rejects_the_key(self) -> None:
+        events: list[tuple[object, ...]] = []
+
+        class RejectingLaminar:
+            @classmethod
+            def initialize(
+                cls, *, project_api_key: str, instruments: set[object]
+            ) -> None:
+                events.append(("initialize", project_api_key, frozenset(instruments)))
+                raise ValueError("invalid project key")
+
+        fake_lmnr = types.ModuleType("lmnr")
+        fake_lmnr.Laminar = RejectingLaminar  # type: ignore[attr-defined]
+
+        with (
+            unittest.mock.patch.dict(
+                os.environ, {"LMNR_PROJECT_API_KEY": "test-project-key"}, clear=True
+            ),
+            unittest.mock.patch.dict(sys.modules, {"lmnr": fake_lmnr}),
+        ):
+            module = importlib.import_module(
+                "toolbench.observability.setup_tracing"
+            )
+            self.assertFalse(module.setup_tracing())
+
+        self.assertEqual(
+            events,
+            [("initialize", "test-project-key", frozenset())],
+        )
