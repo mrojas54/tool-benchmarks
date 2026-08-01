@@ -720,7 +720,9 @@ Ruff / complexity regression / mypy strict / pytest). PRs compare with the
 pull request's base SHA; pushes compare with the pre-push SHA. The workflow
 fetches full Git history so both commits are available. It remains least-privilege
 (`permissions: contents: read`) and does not broaden the gate (no
-`ruff format --check`, no mypy over `tools/`). Design:
+`ruff format --check`, no mypy over `tools/`). `[tool.mypy]` in
+`pyproject.toml` pins `files` + `strict` to the same scope, so a bare local
+`uv run mypy` mirrors CI. Design:
 [`docs/superpowers/specs/2026-07-15-tech-debt-cicd-routine-design.md`](docs/superpowers/specs/2026-07-15-tech-debt-cicd-routine-design.md).
 The periodic *assessment* half of that routine (marker/suppression census)
 is a separate local tool under `~/tech-debt-work/` — it is not in this repo
