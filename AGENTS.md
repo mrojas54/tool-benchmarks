@@ -1,9 +1,9 @@
 # AGENTS.md
 
 `toolbench` is an offline, standard-library-only Python CLI harness. There is no
-server or database. Use the `passive` and `probe` CLIs; treat the hermetic test
-suite plus strict gate as end-to-end coverage. README and `pyproject.toml` are
-the source of truth for routine commands.
+server or database. Use the `passive`, `probe`, and `worktrees` CLIs; treat the
+hermetic test suite plus strict gate as end-to-end coverage. README and
+`pyproject.toml` are the source of truth for routine commands.
 
 ## Toolchain and gate
 
@@ -16,7 +16,7 @@ the source of truth for routine commands.
   executes module-level report code.
 - Optional live dependencies (`agentsview`, Claude/Codex archives, Hermes) are
   not required for the gate; skips for absent live archives are expected (the
-  hermetic suite is ~617 passing, with 3 skips when live paths are missing).
+  hermetic suite is ~700 passing, with 3 skips when live paths are missing).
 
 ## Repository integrity
 
@@ -27,18 +27,23 @@ the source of truth for routine commands.
   directly. Snapshots without a `task_created`-headed event log cannot be
   rebuilt reliably.
 - `uv run toolbench worktrees` reports every linked worktree with a verdict and
-  its idle age; `--reclaimable-only` narrows it to trees that are clean,
-  unlocked, fully reachable, unclaimed by a live upstream, and idle past the
-  threshold. A `SessionStart` hook (`.claude/settings.json`) runs it and stays
-  silent unless something is reclaimable. It never deletes anything — reclaim
-  with the procedure below.
+  its idle age (precedence `LOCKED > DIRTY > UNIQUE-WORK > CLAIMED > SAFE`).
+  `--reclaimable-only` narrows it to `SAFE` trees that are idle ≥`IDLE_DAYS`
+  (7); a live upstream is a standing `CLAIMED` exemption that never expires.
+  `--hook` is a mutually exclusive SessionStart mode (registered in tracked
+  `.claude/settings.json`): silent unless something is reclaimable, always
+  exit 0, never deletes. Reclaim with the procedure below.
 - Reclaim a stale worktree with `git worktree remove <path>` **then**
   `git branch -d <branch>` — the order is required, since git refuses to delete
   a branch a linked worktree holds checked out. Select candidates with
-  `git for-each-ref --format='%(refname:short)|%(upstream:track)|%(worktreepath)' refs/heads/`.
+  `uv run toolbench worktrees --reclaimable-only` (full table:
+  `uv run toolbench worktrees`). Do not select by grepping
+  `%(upstream:track)` emptiness — empty means both "in sync" and "no upstream".
   Do not rely on `commit-commands:clean_gone`: it greps `git branch -v` for the
   literal `[gone]`, but real output is `[origin/<name>: gone]`, so it matches
-  nothing here and reports success having removed nothing.
+  nothing here and reports success having removed nothing. Nested agent
+  worktrees land under gitignored `.claude/worktrees/` (tracked in
+  `.gitignore`, not only `.git/info/exclude`).
 - Reports are generated under gitignored `reports/`.
 
 ## Analyzer and probe constraints
@@ -78,5 +83,8 @@ the source of truth for routine commands.
 Aggregation is in `reducer.py`; markdown/fingerprints in `report.py`; freeze I/O
 in `freeze.py`; run-manifest I/O in `run_manifest.py`. `passive.py` owns CLI
 orchestration and compatibility re-exports. The complex debug probe is
-`complex.py` (defects, scoring, profile render) plus `complex_runner.py`
+`complex.py` (defects, scoring, profile render) plus `shell_safety.py`
+(arm / read-scope audits; re-exported from `complex`) plus `complex_runner.py`
 (worktree, deps cache, trial driver) — library only, no CLI yet.
+`worktrees.py` owns the linked-worktree inventory CLI (`classify` /
+`reclaimable` / `--hook`); it prints only and never removes a tree or ref.
