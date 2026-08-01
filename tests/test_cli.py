@@ -150,7 +150,9 @@ class DispatchTests(unittest.TestCase):
                 side_effect=lambda _command, operation: operation(),
             ) as trace,
             unittest.mock.patch("toolbench.probe.main", return_value=None),
+            unittest.mock.patch("toolbench.worktrees.main", return_value=0),
         ):
             self.assertEqual(main(["probe", "--allow-seeded"]), 0)
+            self.assertEqual(main(["worktrees"]), 0)
 
         trace.assert_not_called()

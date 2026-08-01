@@ -12,6 +12,30 @@ from pathlib import Path
 
 
 class SetupTracingTests(unittest.TestCase):
+    def test_setup_tracing_stays_disabled_without_a_project_key(self) -> None:
+        events: list[tuple[object, ...]] = []
+
+        class RecordingLaminar:
+            @classmethod
+            def initialize(
+                cls, *, project_api_key: str | None, instruments: set[object]
+            ) -> None:
+                events.append(("initialize", project_api_key, frozenset(instruments)))
+
+        fake_lmnr = types.ModuleType("lmnr")
+        fake_lmnr.Laminar = RecordingLaminar  # type: ignore[attr-defined]
+
+        with (
+            unittest.mock.patch.dict(os.environ, {}, clear=True),
+            unittest.mock.patch.dict(sys.modules, {"lmnr": fake_lmnr}),
+        ):
+            module = importlib.import_module(
+                "toolbench.observability.setup_tracing"
+            )
+            self.assertFalse(module.setup_tracing())
+
+        self.assertEqual(events, [])
+
     def test_setup_tracing_initializes_laminar_without_auto_instruments(self) -> None:
         module_path = (
             Path(__file__).parents[1]

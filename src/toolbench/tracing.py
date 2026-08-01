@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from toolbench.observability import setup_tracing
+from toolbench.observability.setup_tracing import _load_laminar
 
 
 def run_traced(command: str, operation: Callable[[], int]) -> int:
@@ -16,7 +17,7 @@ def run_traced(command: str, operation: Callable[[], int]) -> int:
     if not setup_tracing():
         return operation()
 
-    from lmnr import Laminar
+    Laminar = _load_laminar()
 
     try:
         with Laminar.start_as_current_span(

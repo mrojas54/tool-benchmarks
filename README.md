@@ -454,15 +454,16 @@ Initialization lives in
 `toolbench.observability.setup_tracing.setup_tracing`. It returns `False`
 instead of interrupting the CLI when the optional SDK or project key is absent.
 
-Set up the linked project once from the repository root:
+Set up a Laminar project locally from the repository root:
 
 ```sh
 npx lmnr-cli setup
 uv sync --extra tracing
 ```
 
-`setup` writes the project API key to `.env`, which is gitignored. Never commit
-or print that key. `.env.example` documents only the variable name.
+`setup` writes the project link to `.lmnr/project.json` and the project API key
+to `.env`; both are gitignored. Never commit or print that key. `.env.example`
+documents only the variable name.
 
 Run a representative traced command:
 
@@ -487,8 +488,8 @@ and parsed outputs. Laminar auto-instrumentation is disabled because Toolbench
 has no LLM-provider client to capture and its inputs can contain private
 transcripts.
 
-View the linked project's traces at
-[Laminar → Toolbench traces](https://laminar.sh/project/fe81989e-b9da-42fc-a7eb-4b6a92bb0ada/traces).
+Open the project selected by `setup` in the Laminar dashboard to inspect its
+traces.
 
 ### Probe scoring pitfalls
 

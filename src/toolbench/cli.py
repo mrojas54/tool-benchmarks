@@ -60,8 +60,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_traced(command, run_probe) if argv is None else run_probe()
     if command == "worktrees":
         from toolbench import worktrees
+        from toolbench.tracing import run_traced
 
-        return worktrees.main(rest)
+        def run_worktrees() -> int:
+            return worktrees.main(rest)
+
+        return run_traced(command, run_worktrees) if argv is None else run_worktrees()
     print(f"toolbench: unknown command {command!r}\n\n{_HELP}", file=sys.stderr, end="")
     return 2
 
