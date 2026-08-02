@@ -15,6 +15,68 @@ from pathlib import Path
 
 
 class SetupTracingTests(unittest.TestCase):
+    def test_setup_tracing_sanitizes_sdk_inputs_and_restores_state(self) -> None:
+        events: list[tuple[list[str], str | None, str | None]] = []
+
+        class RecordingLaminar:
+            @classmethod
+            def initialize(
+                cls, *, project_api_key: str, instruments: set[object]
+            ) -> None:
+                del project_api_key, instruments
+                events.append(
+                    (
+                        sys.argv[:],
+                        os.environ.get("LMNR_TRACE_METADATA"),
+                        os.environ.get("LMNR_SPAN_CONTEXT"),
+                    )
+                )
+
+        fake_lmnr = types.ModuleType("lmnr")
+        fake_lmnr.Laminar = RecordingLaminar  # type: ignore[attr-defined]
+        original_argv = sys.argv[:]
+        original_environment = {
+            name: os.environ.get(name)
+            for name in ("LMNR_TRACE_METADATA", "LMNR_SPAN_CONTEXT")
+        }
+        configured_environment = {
+            "LMNR_PROJECT_API_KEY": "test-project-key",
+            "LMNR_TRACE_METADATA": "private-metadata",
+            "LMNR_SPAN_CONTEXT": "private-context",
+        }
+        configured_context_environment = {
+            name: configured_environment[name]
+            for name in ("LMNR_TRACE_METADATA", "LMNR_SPAN_CONTEXT")
+        }
+
+        with (
+            unittest.mock.patch.dict(os.environ, configured_environment),
+            unittest.mock.patch.dict(sys.modules, {"lmnr": fake_lmnr}),
+        ):
+            module = importlib.import_module(
+                "toolbench.observability.setup_tracing"
+            )
+            self.assertTrue(module.setup_tracing())
+            self.assertEqual(sys.argv, original_argv)
+            self.assertEqual(
+                {
+                    name: os.environ.get(name)
+                    for name in ("LMNR_TRACE_METADATA", "LMNR_SPAN_CONTEXT")
+                },
+                configured_context_environment,
+            )
+
+        self.assertEqual(
+            events,
+            [(["toolbench", *original_argv[1:]], None, None)],
+        )
+        self.assertEqual(
+            {
+                name: os.environ.get(name) for name in original_environment
+            },
+            original_environment,
+        )
+
     @unittest.skipUnless(
         importlib.util.find_spec("lmnr") is not None,
         "optional tracing extra is not installed",
@@ -82,9 +144,10 @@ Laminar.shutdown()
             attributes["lmnr.association.properties.metadata.command"],
             "probe",
         )
-        self.assertNotIn("private_path", completed.stdout)
-        self.assertNotIn("private-user", completed.stdout)
-        self.assertNotIn("private-session-context", completed.stdout)
+        observed_output = completed.stdout + completed.stderr
+        self.assertNotIn("private_path", observed_output)
+        self.assertNotIn("private-user", observed_output)
+        self.assertNotIn("private-session-context", observed_output)
 
     def test_setup_tracing_stays_disabled_without_a_project_key(self) -> None:
         events: list[tuple[object, ...]] = []

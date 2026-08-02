@@ -7,31 +7,34 @@ import os
 import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from threading import RLock
 from typing import Any, cast
 
 _STABLE_SERVICE_NAME = "toolbench"
 _SDK_CONTEXT_ENV_VARS = ("LMNR_TRACE_METADATA", "LMNR_SPAN_CONTEXT")
+_SDK_ENVIRONMENT_LOCK = RLock()
 
 
 @contextmanager
 def _sanitized_sdk_environment() -> Iterator[None]:
     """Keep SDK-derived resource and context data within the CLI boundary."""
-    original_argv = sys.argv[:]
-    removed_environment = {
-        name: os.environ.pop(name)
-        for name in _SDK_CONTEXT_ENV_VARS
-        if name in os.environ
-    }
-    sys.argv[:] = [_STABLE_SERVICE_NAME, *sys.argv[1:]]
-    try:
-        yield
-    finally:
-        sys.argv[:] = original_argv
-        for name in _SDK_CONTEXT_ENV_VARS:
-            if name in removed_environment:
-                os.environ[name] = removed_environment[name]
-            else:
-                os.environ.pop(name, None)
+    with _SDK_ENVIRONMENT_LOCK:
+        original_argv = sys.argv[:]
+        removed_environment = {
+            name: os.environ.pop(name)
+            for name in _SDK_CONTEXT_ENV_VARS
+            if name in os.environ
+        }
+        sys.argv[:] = [_STABLE_SERVICE_NAME, *sys.argv[1:]]
+        try:
+            yield
+        finally:
+            sys.argv[:] = original_argv
+            for name in _SDK_CONTEXT_ENV_VARS:
+                if name in removed_environment:
+                    os.environ[name] = removed_environment[name]
+                else:
+                    os.environ.pop(name, None)
 
 
 def _load_laminar() -> Any:
