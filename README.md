@@ -169,7 +169,10 @@ rather than silently absent (S38 / TB-24).
   and its subagent-population filter so replay can disclose real historical
   fractions only for the population that denominator measured (TB-37).
   Missing census/filter metadata or a replay with the opposite filter marks
-  fractions unavailable instead.
+  fractions unavailable instead. Unreadable / malformed / non-UTF-8 inputs raise
+  typed `MalformedFreezeManifest`; `passive` maps that (and write failures, or a
+  directory at the freeze path) to exit 1 with `fatal freeze error` (S23 /
+  PR #87).
 - **`run_manifest.py`** — JSON reader for `--run-manifest` (S40). Defines a
   run's branch set (`branches` required; empty/missing is refused). Not
   `.lattice/orchestration/agents.md` — that file drops its Branch column when
@@ -335,8 +338,8 @@ fold probe into `ClaudeParser` (`keep_raw_input` / `track_turns`), and stamp
 inefficiency tags at emit. The strict gate (`uv run ruff check .`,
 `uv run python -m toolbench.complexity_gate --base origin/main`,
 `uv run mypy --strict src/toolbench tests`, `uv run pytest -q`) is green —
-**707** tests passing (3 skipped when the live hermes archive / optional
-live paths are absent). `mypy --strict` covers `tests` as well as
+**737** tests passing (4 skipped when the live hermes archive / optional
+live paths / tracing deps are absent). `mypy --strict` covers `tests` as well as
 `src/toolbench`. A bare `uv run mypy` also mirrors that scope via
 `[tool.mypy]` in `pyproject.toml` (it does not descend into `tools/`). The
 same four commands run in CI (`.github/workflows/ci.yml`) on every PR and on
@@ -613,7 +616,10 @@ moving, not your code (TB-22).
   reports `(<V> vanished since freeze)` for refs whose transcripts have since been
   deleted (`--verbose` names them). Over an unchanged corpus a replay is
   byte-identical; when the tail has moved, the vanished count names the mechanism
-  instead of letting it masquerade as a code effect.
+  instead of letting it masquerade as a code effect. Replay requires a **regular
+  file** at the path (`Path.is_file()`); a directory, unreadable / non-UTF-8 /
+  invalid JSON manifest, or a write failure is a hard stop (`fatal freeze error`,
+  exit 1) — not a traceback and not a silent re-discover (S23 / PR #87).
   - **Manifest v2 + freeze-time census (TB-37).** New freezes write
     `toolbench-freeze-2` and, when the freeze-time census succeeded, persist it
     under a `census` key together with its subagent-population filter. Replay then
@@ -728,6 +734,10 @@ line means the run headline may understate what the orchestration spent.
 | `--freeze` replay reports vanished sessions | Frozen refs' transcripts aged out or AgentsView `source file not found` | Expected when the sliding window deletes mid-corpus. `--verbose` names them; rewrite the manifest only when you intentionally want a new pin. |
 | `--freeze` replay shows "Historical denominator" | Manifest v2 carried a freeze-time census (TB-37) | Expected. Fractions are archive size at freeze time, not today. Do not treat them as a live census. |
 | `--freeze` replay still says fractions unavailable | Manifest has no usable `census` (v1, freeze-time census failure, legacy v2 without population metadata, or replay changed `--exclude-subagents`) | Expected. Use the same subagent filter as the freeze; rewrite a legacy freeze on current `main` if you want historical fractions. |
+| `--freeze` exits 1 with `fatal freeze error` / traceback used to escape | Path is a directory, unreadable, non-UTF-8, or invalid JSON; or the first-write could not create the file | Point `--freeze` at a JSON *file* path (create parent dirs if needed). Same contract as a bad `--run-manifest` (S23 / PR #87). |
+| Complexity gate fails a function you only moved / renamed | Identity is `(path, qualified name)`; a rename looks like a new function | Reduce it under 10, or land the move with a real simplification. `# noqa: C901` will not hide it. |
+| Complexity gate is silent on a hotspot you expected to fail | Only `src/` and `tests/` `*.py` changed vs `--base` are measured; files outside that scope, or unchanged files, are ignored | Diff against the intended base (`origin/main` locally; CI uses the PR base / pre-push SHA). Confirm the path is under `src/` or `tests/`. |
+| Local complexity gate cannot find `--base` | Shallow clone or missing remote-tracking ref | `git fetch origin main` (or deepen the clone). CI sets `fetch-depth: 0` for the same reason. |
 | Agent Breakdown ratios look incomparable across agents | `--limit` truncates in whole-archive recency order (S41) | Read the `sampled` column and the uneven-sampling line. Compare across agents only when that line is absent. |
 | `toolbench` / `-m toolbench.passive` fails from `~` with a system python | The checkout's venv (with the editable install) isn't active | Use `uv run --project ~/tool-benchmarks toolbench passive ...` from any cwd; inside the repo, `uv run toolbench ...` or `uv run python -m toolbench.passive` both work. |
 | `corpus/manifest.json` disappeared after pulling the src-layout change | The manifest now ships inside the package (`src/toolbench/corpus/manifest.json`); the corpus copy is generated / gitignored | Re-run `corpus/vendor.sh` (idempotent — skips existing clones); it copies the packaged manifest back into `corpus/`. Default trial provisioning already uses the packaged pin (#78), so a missing or stale corpus copy no longer changes trial SHAs unless you pass a custom `manifest_path`. |

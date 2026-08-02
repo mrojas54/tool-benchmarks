@@ -19,8 +19,8 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   scope via `[tool.mypy]` in `pyproject.toml` (does not descend into `tools/`).
 - Optional live dependencies (`agentsview`, Claude/Codex archives, Hermes) are
   not required for the gate; skips for absent live archives are expected (the
-  hermetic suite is ~707 passing, with 3 skips when live paths are missing).
-
+  hermetic suite is ~737 passing, with 4 skips when live paths / optional
+  tracing deps are missing).
 ## Repository integrity
 
 - Install the clone-local Lattice guard once with
@@ -75,6 +75,9 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   and matches the replay's `--exclude-subagents` choice. A v1 manifest, a v2
   write without a census, a legacy v2 census missing that key, or a mismatched
   subagent filter each leave fractions unavailable and name the reason.
+  Unreadable / malformed / non-UTF-8 freeze paths, a directory at the path, or
+  a write failure are hard stops (`fatal freeze error`, exit 1) — not
+  tracebacks (S23 / PR #87).
 - `ensure_deps` / `provision_worktree` default to the **packaged** manifest
   (`src/toolbench/corpus/manifest.json`); custom corpora must pass their own
   manifest explicitly so a stale generated `corpus/manifest.json` cannot change
