@@ -44,13 +44,38 @@ def _sanitized_sdk_environment() -> Iterator[None]:
                     os.environ.pop(name, None)
 
 
-def load_laminar() -> Any:
+def _is_missing_module(exc: ModuleNotFoundError, name: str) -> bool:
+    """Return whether `name` itself is missing, not something *it* imports.
+
+    ``importlib.import_module`` raises the same exception type whether the
+    requested module is absent or one of its own internal imports is, so
+    every optional-SDK import site needs this check to avoid mistaking a
+    broken install for a merely-not-installed optional dependency.
+    """
+    return exc.name is not None and (exc.name == name or name.startswith(f"{exc.name}."))
+
+
+def _import_optional_lmnr_module(name: str) -> Any | None:
+    """Import an lmnr submodule, or ``None`` when it genuinely isn't installed."""
+    try:
+        return importlib.import_module(name)
+    except ModuleNotFoundError as exc:
+        if not _is_missing_module(exc, name):
+            raise
+        return None
+
+
+def load_laminar() -> Any | None:
     """Load the optional SDK's ``Laminar`` class without a static dependency.
 
     Shared by ``setup_tracing`` (to initialize the SDK) and
-    ``toolbench.tracing`` (to obtain the class for span creation).
+    ``toolbench.tracing`` (to obtain the class for span creation). Returns
+    ``None`` when the optional ``lmnr`` package itself is not installed.
     """
-    return cast(Any, importlib.import_module("lmnr").Laminar)
+    lmnr = _import_optional_lmnr_module("lmnr")
+    if lmnr is None:
+        return None
+    return cast(Any, lmnr.Laminar)
 
 
 def _project_api_key() -> str | None:
@@ -58,9 +83,8 @@ def _project_api_key() -> str | None:
     if project_api_key := os.getenv("LMNR_PROJECT_API_KEY"):
         return project_api_key
 
-    try:
-        utils = importlib.import_module("lmnr.sdk.utils")
-    except ModuleNotFoundError:
+    utils = _import_optional_lmnr_module("lmnr.sdk.utils")
+    if utils is None:
         return None
 
     from_env = getattr(utils, "from_env", None)
@@ -80,11 +104,8 @@ def setup_tracing() -> bool:
         if not project_api_key:
             return False
 
-        try:
-            Laminar = load_laminar()
-        except ModuleNotFoundError as exc:
-            if exc.name != "lmnr":
-                raise
+        Laminar = load_laminar()
+        if Laminar is None:
             return False
 
         try:

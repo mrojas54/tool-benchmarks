@@ -336,6 +336,27 @@ Laminar.shutdown()
             )
             self.assertFalse(module.setup_tracing())
 
+    def test_setup_tracing_reraises_an_import_error_unrelated_to_lmnr(self) -> None:
+        module = importlib.import_module("toolbench.observability.setup_tracing")
+
+        def failing_import(name: str) -> object:
+            if name == "lmnr":
+                raise ModuleNotFoundError("No module named 'numpy'", name="numpy")
+            raise AssertionError(f"unexpected import: {name}")
+
+        with (
+            unittest.mock.patch.dict(
+                os.environ, {"LMNR_PROJECT_API_KEY": "test-project-key"}, clear=True
+            ),
+            unittest.mock.patch.object(
+                module.importlib, "import_module", side_effect=failing_import
+            ),
+        ):
+            with self.assertRaises(ModuleNotFoundError) as ctx:
+                module.setup_tracing()
+
+        self.assertEqual(ctx.exception.name, "numpy")
+
     def test_setup_tracing_stays_disabled_when_laminar_rejects_the_key(self) -> None:
         events: list[tuple[object, ...]] = []
 
