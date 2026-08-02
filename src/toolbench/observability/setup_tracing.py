@@ -4,8 +4,34 @@ from __future__ import annotations
 
 import importlib
 import os
-from collections.abc import Callable
+import sys
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from typing import Any, cast
+
+_STABLE_SERVICE_NAME = "toolbench"
+_SDK_CONTEXT_ENV_VARS = ("LMNR_TRACE_METADATA", "LMNR_SPAN_CONTEXT")
+
+
+@contextmanager
+def _sanitized_sdk_environment() -> Iterator[None]:
+    """Keep SDK-derived resource and context data within the CLI boundary."""
+    original_argv = sys.argv[:]
+    removed_environment = {
+        name: os.environ.pop(name)
+        for name in _SDK_CONTEXT_ENV_VARS
+        if name in os.environ
+    }
+    sys.argv[:] = [_STABLE_SERVICE_NAME, *sys.argv[1:]]
+    try:
+        yield
+    finally:
+        sys.argv[:] = original_argv
+        for name in _SDK_CONTEXT_ENV_VARS:
+            if name in removed_environment:
+                os.environ[name] = removed_environment[name]
+            else:
+                os.environ.pop(name, None)
 
 
 def _load_laminar() -> Any:
@@ -33,24 +59,25 @@ def setup_tracing() -> bool:
     Returns ``True`` when tracing is ready. A missing optional dependency or
     project key leaves the standard CLI untraced instead of making it fail.
     """
-    project_api_key = _project_api_key()
-    if not project_api_key:
-        return False
+    with _sanitized_sdk_environment():
+        project_api_key = _project_api_key()
+        if not project_api_key:
+            return False
 
-    try:
-        Laminar = _load_laminar()
-    except ModuleNotFoundError as exc:
-        if exc.name != "lmnr":
-            raise
-        return False
+        try:
+            Laminar = _load_laminar()
+        except ModuleNotFoundError as exc:
+            if exc.name != "lmnr":
+                raise
+            return False
 
-    try:
-        Laminar.initialize(
-            project_api_key=project_api_key,
-            instruments=set(),
-        )
-    except ValueError:
-        # Keep tracing optional if the SDK rejects the configured key.
-        return False
+        try:
+            Laminar.initialize(
+                project_api_key=project_api_key,
+                instruments=set(),
+            )
+        except ValueError:
+            # Keep tracing optional if the SDK rejects the configured key.
+            return False
 
     return True

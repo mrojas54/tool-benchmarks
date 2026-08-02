@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
+import json
 import os
+import subprocess
 import sys
 import types
 import unittest
@@ -12,6 +15,77 @@ from pathlib import Path
 
 
 class SetupTracingTests(unittest.TestCase):
+    @unittest.skipUnless(
+        importlib.util.find_spec("lmnr") is not None,
+        "optional tracing extra is not installed",
+    )
+    def test_real_sdk_export_is_sanitized(self) -> None:
+        script = r"""
+import json
+import sys
+
+sys.argv[0] = "/private/checkout/tool-benchmarks/toolbench"
+
+from toolbench.observability.setup_tracing import setup_tracing
+
+assert setup_tracing()
+
+from lmnr import Laminar
+from lmnr.opentelemetry_lib.tracing import TracerWrapper
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+processor = TracerWrapper.instance._span_processor
+old_instance = processor.instance
+old_instance.shutdown()
+exporter = InMemorySpanExporter()
+processor.exporter = exporter
+processor.instance = SimpleSpanProcessor(exporter)
+
+with Laminar.start_as_current_span("toolbench.cli", tags=["toolbench", "probe"]):
+    Laminar.set_trace_metadata({"command": "probe"})
+    Laminar.set_span_output({"exit_code": 0})
+Laminar.flush()
+
+finished = exporter.get_finished_spans()
+assert len(finished) == 1, finished
+span = finished[0]
+print(json.dumps({"resource": dict(span.resource.attributes), "attributes": dict(span.attributes)}))
+Laminar.shutdown()
+"""
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "LMNR_PROJECT_API_KEY": "test-project-key",
+                "LMNR_TRACE_METADATA": json.dumps(
+                    {
+                        "private_path": "/private/transcripts/member-session.jsonl",
+                        "user_id": "private-user",
+                    }
+                ),
+                "LMNR_SPAN_CONTEXT": "private-session-context",
+            }
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            check=False,
+            env=environment,
+            text=True,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["resource"]["service.name"], "toolbench")
+        attributes = payload["attributes"]
+        self.assertEqual(
+            attributes["lmnr.association.properties.metadata.command"],
+            "probe",
+        )
+        self.assertNotIn("private_path", completed.stdout)
+        self.assertNotIn("private-user", completed.stdout)
+        self.assertNotIn("private-session-context", completed.stdout)
+
     def test_setup_tracing_stays_disabled_without_a_project_key(self) -> None:
         events: list[tuple[object, ...]] = []
 
