@@ -675,6 +675,7 @@ def main(
 ) -> int:
     parser = argparse.ArgumentParser(
         prog="toolbench worktrees",
+        allow_abbrev=False,
         description=(
             "Report every linked git worktree with a reclaim verdict, its idle "
             "age and its size. Prints only: it never removes a tree, deletes a "

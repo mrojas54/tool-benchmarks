@@ -16,7 +16,7 @@ which loads the DEFECTS fixtures at import time -- a broken fixture must fail
 from __future__ import annotations
 
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 _HELP = """\
 usage: toolbench <command> [options]
@@ -32,6 +32,19 @@ Run `toolbench <command> --help` for that command's options.
 """
 
 
+def _run_command(
+    command: str,
+    operation: Callable[[], int],
+    *,
+    trace: bool,
+) -> int:
+    if trace:
+        from toolbench.tracing import run_traced
+
+        operation = run_traced(command)(operation)
+    return operation()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args:
@@ -44,16 +57,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     if command == "passive":
         from toolbench import passive
 
-        return passive.main(rest)
+        def operation() -> int:
+            return passive.main(rest)
+
+        return _run_command(command, operation, trace=argv is None)
     if command == "probe":
         from toolbench import probe
 
-        probe.main(rest)  # returns None; success is "did not raise"
-        return 0
+        def run_probe() -> int:
+            probe.main(rest)  # returns None; success is "did not raise"
+            return 0
+
+        return _run_command(command, run_probe, trace=argv is None)
     if command == "worktrees":
         from toolbench import worktrees
 
-        return worktrees.main(rest)
+        def run_worktrees() -> int:
+            return worktrees.main(rest)
+
+        return _run_command(
+            command,
+            run_worktrees,
+            trace=argv is None and "--hook" not in rest,
+        )
     print(f"toolbench: unknown command {command!r}\n\n{_HELP}", file=sys.stderr, end="")
     return 2
 
