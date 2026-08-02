@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import stat
 import subprocess
 import sys
@@ -316,6 +315,32 @@ def _deps_root(deps_base: Path, repo: str) -> Path:
     return deps_base / repo
 
 
+def _git_show_text(repo_path: Path, sha: str, rel_path: str) -> str:
+    """Read `rel_path` at `sha` from `repo_path` without mutating its checkout."""
+    proc = subprocess.run(
+        ["git", "-C", str(repo_path), "show", f"{sha}:{rel_path}"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return proc.stdout
+
+
+def _extract_pinned_tree(repo_path: Path, sha: str, dest: Path) -> None:
+    """Export the tree at `sha` into `dest` (plain files, no history)."""
+    archive = subprocess.run(
+        ["git", "-C", str(repo_path), "archive", sha],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["tar", "-x", "-C", str(dest)],
+        input=archive.stdout,
+        check=True,
+        capture_output=True,
+    )
+
+
 def _load_manifest(manifest_path: Path | None) -> dict[str, Any]:
     """Read the packaged manifest unless a custom corpus opts into its own."""
     path = MANIFEST_PATH if manifest_path is None else manifest_path
@@ -352,6 +377,7 @@ def ensure_deps(
     deps_base = deps_base or _default_deps_base()
     manifest = _load_manifest(manifest_path)
     entry = manifest[repo]
+    sha = str(entry["sha"])
     repo_src = corpus_root / repo
     deps_root = _deps_root(deps_base, repo)
 
@@ -368,8 +394,13 @@ def ensure_deps(
             subdir = dep["npm_ci"]
             cache_subdir = deps_root / subdir
             cache_subdir.mkdir(parents=True, exist_ok=True)
+            prefix = f"{subdir}/" if subdir else ""
             for name in ("package.json", "package-lock.json"):
-                shutil.copy2(repo_src / subdir / name, cache_subdir / name)
+                rel = f"{prefix}{name}"
+                (cache_subdir / name).write_text(
+                    _git_show_text(repo_src, sha, rel),
+                    encoding="utf-8",
+                )
             subprocess.run(
                 ["npm", "ci", "--no-audit", "--no-fund"],
                 cwd=cache_subdir,
@@ -402,11 +433,22 @@ def ensure_deps(
         else:  # pragma: no cover - guards against a malformed manifest dep
             raise ValueError(f"{repo}: dep {dep!r} declares no known build kind")
 
-    for step in entry.get("warmup", []):
+    warmup = entry.get("warmup", [])
+    if warmup:
         # Warm-up populates a GLOBAL cache (e.g. ~/.cargo) rather than a tree path,
         # so the rust oracle can build in the trial tree without a network fetch
         # inside the trial. It has no symlink; it is pure environment setup.
-        subprocess.run(list(step), cwd=repo_src, check=True, capture_output=True, text=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            pinned_root = Path(tmp)
+            _extract_pinned_tree(repo_src, sha, pinned_root)
+            for step in warmup:
+                subprocess.run(
+                    list(step),
+                    cwd=pinned_root,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
 
 
 def _link_deps(entry: dict[str, object], deps_base: Path, repo: str, dest: Path) -> None:
