@@ -59,8 +59,10 @@ def _project_api_key() -> str | None:
     except ModuleNotFoundError:
         return None
 
-    from_env = cast(Callable[[str], str | None], getattr(utils, "from_env"))
-    return from_env("LMNR_PROJECT_API_KEY")
+    from_env = getattr(utils, "from_env", None)
+    if from_env is None:
+        return None
+    return cast(Callable[[str], str | None], from_env)("LMNR_PROJECT_API_KEY")
 
 
 def setup_tracing() -> bool:
