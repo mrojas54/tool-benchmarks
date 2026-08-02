@@ -34,13 +34,6 @@ def _system_exit_code(error: SystemExit) -> int:
     return error.code if isinstance(error.code, int) else 1
 
 
-def _tracing_is_available() -> bool:
-    try:
-        return setup_tracing()
-    except (Exception, SystemExit):
-        return False
-
-
 def _load_laminar_best_effort() -> Any | None:
     try:
         return _load_laminar()
@@ -167,6 +160,19 @@ def run_traced(command: str) -> Callable[[Callable[P, R]], Callable[P, R]]:
     The async wrapper keeps the span open until the decorated coroutine has
     finished, rather than tracing only the coroutine object's construction.
     """
+    # Laminar initialization is process-wide; reuse a successful setup for
+    # subsequent calls through this traced operation.
+    tracing_on = False
+
+    def tracing_is_available() -> bool:
+        nonlocal tracing_on
+        if tracing_on:
+            return True
+        try:
+            tracing_on = setup_tracing()
+        except (Exception, SystemExit):
+            tracing_on = False
+        return tracing_on
 
     def decorator(operation: Callable[P, R]) -> Callable[P, R]:
         operation_object: object = operation
@@ -175,7 +181,7 @@ def run_traced(command: str) -> Callable[[Callable[P, R]], Callable[P, R]]:
 
             @wraps(operation)
             async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> int:
-                if not _tracing_is_available():
+                if not tracing_is_available():
                     return _require_exit_code(await async_operation(*args, **kwargs))
                 return await _run_async(command, async_operation, *args, **kwargs)
 
@@ -185,7 +191,7 @@ def run_traced(command: str) -> Callable[[Callable[P, R]], Callable[P, R]]:
 
         @wraps(operation)
         def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> int:
-            if not _tracing_is_available():
+            if not tracing_is_available():
                 return _require_exit_code(sync_operation(*args, **kwargs))
             return _run_sync(command, sync_operation, *args, **kwargs)
 

@@ -16,6 +16,64 @@ from toolbench.tracing import run_traced
 
 
 class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
+    def test_successful_setup_is_reused_by_a_traced_operation(self) -> None:
+        calls: list[str] = []
+
+        class RecordingLaminar:
+            @classmethod
+            @contextmanager
+            def start_as_current_span(
+                cls, name: str, *, tags: list[str]
+            ) -> Iterator[None]:
+                del cls, name, tags
+                yield
+
+            @classmethod
+            def set_trace_metadata(cls, metadata: dict[str, str]) -> None:
+                del cls, metadata
+
+            @classmethod
+            def set_span_output(cls, output: dict[str, int]) -> None:
+                del cls, output
+
+            @classmethod
+            def flush(cls) -> None:
+                del cls
+
+        with (
+            unittest.mock.patch(
+                "toolbench.tracing.setup_tracing", return_value=True
+            ) as setup_tracing,
+            unittest.mock.patch(
+                "toolbench.tracing._load_laminar", return_value=RecordingLaminar
+            ),
+        ):
+
+            @run_traced("probe")
+            def operation() -> int:
+                calls.append("operation")
+                return 7
+
+            self.assertEqual(operation(), 7)
+            self.assertEqual(operation(), 7)
+
+        setup_tracing.assert_called_once_with()
+        self.assertEqual(calls, ["operation", "operation"])
+
+    def test_failed_setup_is_retried_until_tracing_is_available(self) -> None:
+        with unittest.mock.patch(
+            "toolbench.tracing.setup_tracing", side_effect=[False, True]
+        ) as setup_tracing:
+
+            @run_traced("probe")
+            def operation() -> int:
+                return 11
+
+            self.assertEqual(operation(), 11)
+            self.assertEqual(operation(), 11)
+
+        self.assertEqual(setup_tracing.call_count, 2)
+
     async def test_async_operation_stays_inside_the_trace_until_it_finishes(
         self,
     ) -> None:
