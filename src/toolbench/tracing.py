@@ -35,12 +35,13 @@ def _system_exit_code(error: SystemExit) -> int:
 
 
 class _TracingState:
-    """Cache successful process-wide tracing setup for one traced operation."""
+    """Track best-effort tracing setup for one traced operation."""
 
     def __init__(self) -> None:
         self.on = False
 
-    def is_available(self) -> bool:
+    def is_available_best_effort(self) -> bool:
+        """Return whether tracing is available without affecting the CLI."""
         if self.on:
             return True
         try:
@@ -185,7 +186,7 @@ def run_traced(command: str) -> Callable[[Callable[P, R]], Callable[P, R]]:
 
             @wraps(operation)
             async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> int:
-                if not tracing_state.is_available():
+                if not tracing_state.is_available_best_effort():
                     return _require_exit_code(await async_operation(*args, **kwargs))
                 return await _run_async(command, async_operation, *args, **kwargs)
 
@@ -195,7 +196,7 @@ def run_traced(command: str) -> Callable[[Callable[P, R]], Callable[P, R]]:
 
         @wraps(operation)
         def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> int:
-            if not tracing_state.is_available():
+            if not tracing_state.is_available_best_effort():
                 return _require_exit_code(sync_operation(*args, **kwargs))
             return _run_sync(command, sync_operation, *args, **kwargs)
 
