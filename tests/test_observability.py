@@ -12,47 +12,10 @@ import tempfile
 import types
 import unittest
 import unittest.mock
-from contextlib import chdir
 from pathlib import Path
 
 
 class SetupTracingTests(unittest.TestCase):
-    def test_tracing_configured_reports_an_environment_key_without_exposing_it(
-        self,
-    ) -> None:
-        with unittest.mock.patch.dict(
-            os.environ,
-            {"LMNR_PROJECT_API_KEY": "test-project-key"},
-            clear=True,
-        ):
-            module = importlib.import_module(
-                "toolbench.observability.setup_tracing"
-            )
-            self.assertTrue(module._tracing_configured())
-
-    def test_tracing_configured_reads_dotenv_without_the_optional_sdk(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            def load_dotenv(*, dotenv_path: str) -> bool:
-                os.environ["LMNR_PROJECT_API_KEY"] = Path(
-                    dotenv_path
-                ).read_text(encoding="utf-8").split("=", 1)[1].strip()
-                return True
-
-            with (
-                unittest.mock.patch.dict(os.environ, {}, clear=True),
-                unittest.mock.patch.dict(sys.modules, {"lmnr": None}),
-                chdir(temporary_directory),
-            ):
-                Path(temporary_directory, ".env").write_text(
-                    "LMNR_PROJECT_API_KEY=dotenv-project-key\n",
-                    encoding="utf-8",
-                )
-                module = importlib.import_module(
-                    "toolbench.observability.setup_tracing"
-                )
-                with unittest.mock.patch.object(module, "_DOTENV_LOADER", load_dotenv):
-                    self.assertTrue(module._tracing_configured())
-
     def test_setup_tracing_sanitizes_sdk_inputs_and_restores_state(self) -> None:
         events: list[tuple[list[str], dict[str, str | None]]] = []
 

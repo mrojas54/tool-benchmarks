@@ -20,16 +20,6 @@ _SDK_CONTEXT_ENV_VARS = (
     "LMNR_DEBUG_CACHE_UNTIL",
 )
 _SDK_ENVIRONMENT_LOCK = RLock()
-_DOTENV_LOADER: Callable[..., object] | None
-try:
-    _DOTENV_LOADER = cast(
-        Callable[..., object],
-        getattr(importlib.import_module("dotenv"), "load_dotenv"),
-    )
-except ModuleNotFoundError as exc:
-    if exc.name != "dotenv":
-        raise
-    _DOTENV_LOADER = None
 
 
 @contextmanager
@@ -60,8 +50,7 @@ def _load_laminar() -> Any:
 
 
 def _project_api_key() -> str | None:
-    """Load local dotenv configuration, then read the project key."""
-    _load_dotenv()
+    """Read the project key from the environment or SDK lookup."""
     if project_api_key := os.getenv("LMNR_PROJECT_API_KEY"):
         return project_api_key
 
@@ -72,21 +61,6 @@ def _project_api_key() -> str | None:
 
     from_env = cast(Callable[[str], str | None], getattr(utils, "from_env"))
     return from_env("LMNR_PROJECT_API_KEY")
-
-
-def _load_dotenv() -> None:
-    """Load the local ``.env`` when python-dotenv is installed."""
-    if _DOTENV_LOADER is not None:
-        _DOTENV_LOADER(dotenv_path=".env")
-
-
-def _tracing_configured() -> bool:
-    """Return whether a Laminar project key is configured without exposing it."""
-    with _sanitized_sdk_environment():
-        try:
-            return bool(_project_api_key())
-        except (Exception, SystemExit):
-            return False
 
 
 def setup_tracing() -> bool:

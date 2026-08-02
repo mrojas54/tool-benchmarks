@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import io
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -10,7 +9,7 @@ import types
 import unittest
 import unittest.mock
 from collections.abc import Iterator
-from contextlib import contextmanager, redirect_stderr
+from contextlib import contextmanager
 from types import TracebackType
 from threading import Event
 from typing import Literal
@@ -19,57 +18,6 @@ from toolbench.tracing import _TracingState, run_traced
 
 
 class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
-    def test_configured_setup_failure_warns_once_and_preserves_operation(
-        self,
-    ) -> None:
-        stderr = io.StringIO()
-
-        with (
-            unittest.mock.patch(
-                "toolbench.tracing.setup_tracing", return_value=False
-            ) as setup_tracing,
-            unittest.mock.patch(
-                "toolbench.tracing._tracing_configured", return_value=True
-            ) as tracing_configured,
-            redirect_stderr(stderr),
-        ):
-
-            @run_traced("probe")
-            def operation() -> int:
-                return 23
-
-            self.assertEqual(operation(), 23)
-            self.assertEqual(operation(), 23)
-
-        self.assertEqual(setup_tracing.call_count, 2)
-        tracing_configured.assert_called_once_with()
-        self.assertEqual(
-            stderr.getvalue(),
-            "toolbench: warning: Laminar tracing is configured but unavailable; "
-            "continuing without tracing.\n",
-        )
-
-    def test_unconfigured_setup_failure_stays_quiet(self) -> None:
-        stderr = io.StringIO()
-
-        with (
-            unittest.mock.patch(
-                "toolbench.tracing.setup_tracing", return_value=False
-            ),
-            unittest.mock.patch(
-                "toolbench.tracing._tracing_configured", return_value=False
-            ),
-            redirect_stderr(stderr),
-        ):
-
-            @run_traced("probe")
-            def operation() -> int:
-                return 29
-
-            self.assertEqual(operation(), 29)
-
-        self.assertEqual(stderr.getvalue(), "")
-
     def test_setup_is_initialized_once_under_concurrent_calls(self) -> None:
         setup_started = Event()
         release_setup = Event()
@@ -84,9 +32,6 @@ class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
             unittest.mock.patch(
                 "toolbench.tracing.setup_tracing", side_effect=setup
             ) as setup_tracing,
-            unittest.mock.patch(
-                "toolbench.tracing._tracing_configured", return_value=False
-            ),
             ThreadPoolExecutor(max_workers=2) as executor,
         ):
             first = executor.submit(state.is_available_best_effort)
@@ -147,9 +92,6 @@ class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
             unittest.mock.patch(
                 "toolbench.tracing.setup_tracing", side_effect=[False, True]
             ) as setup_tracing,
-            unittest.mock.patch(
-                "toolbench.tracing._tracing_configured", return_value=False
-            ),
         ):
 
             @run_traced("probe")

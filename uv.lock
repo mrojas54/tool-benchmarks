@@ -913,7 +913,6 @@ source = { editable = "." }
 [package.optional-dependencies]
 tracing = [
     { name = "lmnr" },
-    { name = "python-dotenv" },
 ]
 
 [package.dev-dependencies]
@@ -925,10 +924,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "lmnr", marker = "extra == 'tracing'", specifier = ">=0.7.56" },
-    { name = "python-dotenv", marker = "extra == 'tracing'", specifier = ">=1.0" },
-]
+requires-dist = [{ name = "lmnr", marker = "extra == 'tracing'", specifier = ">=0.7.56" }]
 provides-extras = ["tracing"]
 
 [package.metadata.requires-dev]
