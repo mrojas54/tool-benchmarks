@@ -17,7 +17,7 @@ from pathlib import Path
 
 class SetupTracingTests(unittest.TestCase):
     def test_setup_tracing_sanitizes_sdk_inputs_and_restores_state(self) -> None:
-        events: list[tuple[list[str], str | None, str | None]] = []
+        events: list[tuple[list[str], dict[str, str | None]]] = []
 
         class RecordingLaminar:
             @classmethod
@@ -28,8 +28,10 @@ class SetupTracingTests(unittest.TestCase):
                 events.append(
                     (
                         sys.argv[:],
-                        os.environ.get("LMNR_TRACE_METADATA"),
-                        os.environ.get("LMNR_SPAN_CONTEXT"),
+                        {
+                            name: os.environ.get(name)
+                            for name in context_environment_names
+                        },
                     )
                 )
 
@@ -79,7 +81,12 @@ class SetupTracingTests(unittest.TestCase):
 
         self.assertEqual(
             events,
-            [(["toolbench", *original_argv[1:]], None, None)],
+            [
+                (
+                    ["toolbench", *original_argv[1:]],
+                    {name: None for name in context_environment_names},
+                )
+            ],
         )
         self.assertEqual(
             {
