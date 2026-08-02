@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Awaitable, Callable
 from functools import wraps
 from inspect import iscoroutine, iscoroutinefunction
 from typing import Any, ParamSpec, TypeVar, cast
 
 from toolbench.observability import setup_tracing
-from toolbench.observability.setup_tracing import _load_laminar
+from toolbench.observability.setup_tracing import (
+    _load_laminar,
+    _tracing_configured,
+)
 
 P = ParamSpec("P")
 R = TypeVar("R", int, Awaitable[int])
+_TRACE_UNAVAILABLE_WARNING = (
+    "toolbench: warning: Laminar tracing is configured but unavailable; "
+    "continuing without tracing."
+)
 
 
 def _is_async_operation(operation: object) -> bool:
@@ -35,10 +43,11 @@ def _system_exit_code(error: SystemExit) -> int:
 
 
 class _TracingState:
-    """Track best-effort tracing setup for one traced operation."""
+    """Track best-effort tracing setup and warning state for one operation."""
 
     def __init__(self) -> None:
         self.on = False
+        self.warning_emitted = False
 
     def is_available_best_effort(self) -> bool:
         """Return whether tracing is available without affecting the CLI."""
@@ -48,6 +57,9 @@ class _TracingState:
             self.on = setup_tracing()
         except (Exception, SystemExit):
             self.on = False
+        if not self.on and not self.warning_emitted and _tracing_configured():
+            self.warning_emitted = True
+            _safe_warn(_TRACE_UNAVAILABLE_WARNING)
         return self.on
 
 
@@ -68,6 +80,13 @@ def _safe_report(laminar: Any, method_name: str, value: object) -> None:
 def _safe_flush(laminar: Any) -> None:
     try:
         laminar.flush()
+    except (Exception, SystemExit):
+        pass
+
+
+def _safe_warn(message: str) -> None:
+    try:
+        print(message, file=sys.stderr)
     except (Exception, SystemExit):
         pass
 

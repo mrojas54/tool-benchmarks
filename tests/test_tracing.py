@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import os
 import sys
 import types
 import unittest
 import unittest.mock
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr
 from types import TracebackType
 from typing import Literal
 
@@ -16,6 +17,57 @@ from toolbench.tracing import run_traced
 
 
 class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
+    def test_configured_setup_failure_warns_once_and_preserves_operation(
+        self,
+    ) -> None:
+        stderr = io.StringIO()
+
+        with (
+            unittest.mock.patch(
+                "toolbench.tracing.setup_tracing", return_value=False
+            ) as setup_tracing,
+            unittest.mock.patch(
+                "toolbench.tracing._tracing_configured", return_value=True
+            ) as tracing_configured,
+            redirect_stderr(stderr),
+        ):
+
+            @run_traced("probe")
+            def operation() -> int:
+                return 23
+
+            self.assertEqual(operation(), 23)
+            self.assertEqual(operation(), 23)
+
+        self.assertEqual(setup_tracing.call_count, 2)
+        tracing_configured.assert_called_once_with()
+        self.assertEqual(
+            stderr.getvalue(),
+            "toolbench: warning: Laminar tracing is configured but unavailable; "
+            "continuing without tracing.\n",
+        )
+
+    def test_unconfigured_setup_failure_stays_quiet(self) -> None:
+        stderr = io.StringIO()
+
+        with (
+            unittest.mock.patch(
+                "toolbench.tracing.setup_tracing", return_value=False
+            ),
+            unittest.mock.patch(
+                "toolbench.tracing._tracing_configured", return_value=False
+            ),
+            redirect_stderr(stderr),
+        ):
+
+            @run_traced("probe")
+            def operation() -> int:
+                return 29
+
+            self.assertEqual(operation(), 29)
+
+        self.assertEqual(stderr.getvalue(), "")
+
     def test_successful_setup_is_reused_by_a_traced_operation(self) -> None:
         calls: list[str] = []
 
@@ -61,9 +113,14 @@ class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, ["operation", "operation"])
 
     def test_failed_setup_is_retried_until_tracing_is_available(self) -> None:
-        with unittest.mock.patch(
-            "toolbench.tracing.setup_tracing", side_effect=[False, True]
-        ) as setup_tracing:
+        with (
+            unittest.mock.patch(
+                "toolbench.tracing.setup_tracing", side_effect=[False, True]
+            ) as setup_tracing,
+            unittest.mock.patch(
+                "toolbench.tracing._tracing_configured", return_value=False
+            ),
+        ):
 
             @run_traced("probe")
             def operation() -> int:

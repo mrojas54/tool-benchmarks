@@ -63,6 +63,15 @@ def _project_api_key() -> str | None:
     return from_env("LMNR_PROJECT_API_KEY")
 
 
+def _tracing_configured() -> bool:
+    """Return whether a Laminar project key is configured without exposing it."""
+    with _sanitized_sdk_environment():
+        try:
+            return bool(_project_api_key())
+        except (Exception, SystemExit):
+            return False
+
+
 def setup_tracing() -> bool:
     """Initialize Laminar when its SDK and project key are available.
 

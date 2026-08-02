@@ -16,6 +16,19 @@ from pathlib import Path
 
 
 class SetupTracingTests(unittest.TestCase):
+    def test_tracing_configured_reports_an_environment_key_without_exposing_it(
+        self,
+    ) -> None:
+        with unittest.mock.patch.dict(
+            os.environ,
+            {"LMNR_PROJECT_API_KEY": "test-project-key"},
+            clear=True,
+        ):
+            module = importlib.import_module(
+                "toolbench.observability.setup_tracing"
+            )
+            self.assertTrue(module._tracing_configured())
+
     def test_setup_tracing_sanitizes_sdk_inputs_and_restores_state(self) -> None:
         events: list[tuple[list[str], dict[str, str | None]]] = []
 
