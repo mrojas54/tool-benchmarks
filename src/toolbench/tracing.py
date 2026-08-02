@@ -28,6 +28,12 @@ def _require_exit_code(result: object) -> int:
     raise TypeError("run_traced operations must return an int exit code")
 
 
+def _system_exit_code(error: SystemExit) -> int:
+    if error.code is None:
+        return 0
+    return error.code if isinstance(error.code, int) else 1
+
+
 def _run_sync(
     command: str,
     operation: Callable[P, int],
@@ -46,6 +52,14 @@ def _run_sync(
                 Laminar.set_trace_metadata({"command": command})
                 result = _require_exit_code(operation(*args, **kwargs))
                 Laminar.set_span_output({"exit_code": result})
+            except SystemExit as exc:
+                result = _system_exit_code(exc)
+                try:
+                    Laminar.set_span_output({"exit_code": result})
+                except BaseException as output_error:
+                    error = output_error
+                else:
+                    error = exc
             except BaseException as exc:
                 error = exc
     finally:
@@ -74,6 +88,14 @@ async def _run_async(
                 Laminar.set_trace_metadata({"command": command})
                 result = _require_exit_code(await operation(*args, **kwargs))
                 Laminar.set_span_output({"exit_code": result})
+            except SystemExit as exc:
+                result = _system_exit_code(exc)
+                try:
+                    Laminar.set_span_output({"exit_code": result})
+                except BaseException as output_error:
+                    error = output_error
+                else:
+                    error = exc
             except BaseException as exc:
                 error = exc
     finally:

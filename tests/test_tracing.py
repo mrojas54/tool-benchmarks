@@ -142,6 +142,75 @@ class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn(private_path, repr(events))
 
+    def test_system_exit_records_a_safe_exit_code_before_reraising(self) -> None:
+        events: list[tuple[object, ...]] = []
+
+        class RecordingSpan:
+            def __enter__(self) -> None:
+                pass
+
+            def __exit__(
+                self,
+                exc_type: type[BaseException] | None,
+                exc_value: BaseException | None,
+                traceback: TracebackType | None,
+            ) -> Literal[False]:
+                events.append(("end", exc_type))
+                return False
+
+        class RecordingLaminar:
+            @classmethod
+            def start_as_current_span(
+                cls, name: str, *, tags: list[str]
+            ) -> RecordingSpan:
+                events.append(("span", name, tuple(tags)))
+                return RecordingSpan()
+
+            @classmethod
+            def set_trace_metadata(cls, metadata: dict[str, str]) -> None:
+                events.append(("metadata", metadata))
+
+            @classmethod
+            def set_span_output(cls, output: dict[str, int]) -> None:
+                events.append(("output", output))
+
+            @classmethod
+            def flush(cls) -> None:
+                events.append(("flush",))
+
+        with (
+            unittest.mock.patch("toolbench.tracing.setup_tracing", return_value=True),
+            unittest.mock.patch(
+                "toolbench.tracing._load_laminar", return_value=RecordingLaminar
+            ),
+        ):
+            for code in (0, 2):
+                with self.subTest(code=code):
+
+                    @run_traced("probe")
+                    def operation() -> int:
+                        raise SystemExit(code)
+
+                    with self.assertRaises(SystemExit) as raised:
+                        operation()
+                    self.assertEqual(raised.exception.code, code)
+
+        self.assertEqual(
+            events,
+            [
+                ("span", "toolbench.cli", ("toolbench", "probe")),
+                ("metadata", {"command": "probe"}),
+                ("output", {"exit_code": 0}),
+                ("end", None),
+                ("flush",),
+                ("span", "toolbench.cli", ("toolbench", "probe")),
+                ("metadata", {"command": "probe"}),
+                ("output", {"exit_code": 2}),
+                ("end", None),
+                ("flush",),
+            ],
+        )
+
     async def test_async_callable_object_stays_inside_the_trace(self) -> None:
         events: list[str] = []
 
