@@ -31,8 +31,9 @@ slow / retry-churn feed the inefficiency callouts only.
 - **No live token-API calls** — all numbers derive from on-disk transcripts.
 - **Read-only** — never mutates transcripts or the probe corpus's source
   projects.
-- **Python standard library only** — no third-party runtime dependencies.
-  Runtime needs a stdlib Python ≥3.13 (provisioned via `uv`; see Usage).
+- **Python standard library by default** — normal runs have no third-party
+  runtime dependencies. The opt-in `tracing` extra adds Laminar observability
+  without changing the default install.
 - **No web-chat benchmarking** — local/agentic surfaces with inspectable
   sessions only.
 
@@ -392,10 +393,10 @@ bug this adapter exists for is
 ## Usage
 
 The project is [uv](https://docs.astral.sh/uv/)-managed (`pyproject.toml` +
-`uv.lock`, empty runtime deps). The `dev` group installs the gate tools
-(`ruff` / `mypy` / `pytest`) plus optional parallel-run tooling (`logfire`);
-the shipped package stays stdlib-only.
-Requires Python ≥3.13.
+`uv.lock`, empty default runtime deps, and optional `tracing` extra). The `dev`
+group installs the gate tools (`ruff` / `mypy` / `pytest`) plus optional
+parallel-run tooling (`logfire`); the shipped package stays stdlib-only by
+default. Requires Python ≥3.13.
 
 ```sh
 # Bootstrap (once per checkout; also runs implicitly under `uv run`)
@@ -441,6 +442,56 @@ uv run toolbench worktrees --reclaimable-only
 # Tests
 uv run pytest -q
 ```
+
+### Optional Laminar tracing
+
+[Laminar](https://laminar.sh/docs/tracing/integrations/overview) can record one
+trace for each real `toolbench` console command. Library-style calls such as
+`main([...])` stay untraced, so unit tests and embedding applications do not
+send telemetry.
+
+Initialization lives in
+`toolbench.observability.setup_tracing.setup_tracing`. It returns `False`
+instead of interrupting the CLI when the optional SDK or project key is absent.
+
+Set up a Laminar project locally from the repository root:
+
+```sh
+npx lmnr-cli setup
+uv sync --extra tracing
+```
+
+`setup` writes the project link to `.lmnr/project.json` and the project API key
+to `.env`; both are gitignored. Never commit or print that key. `.env.example`
+documents only the variable name.
+
+Run a representative traced command:
+
+```sh
+uv run --extra tracing toolbench probe \
+  --session tests/fixtures/probe_session.jsonl \
+  --out reports/active-probe-comparison.md
+```
+
+Verify the newest trace:
+
+```sh
+npx lmnr-cli sql query \
+  "SELECT * FROM traces ORDER BY start_time DESC LIMIT 1" \
+  --json
+```
+
+The trace uses the stable root span `toolbench.cli`, command tags, metadata such
+as `{"command": "probe"}`, and an exit-code output. It deliberately excludes
+CLI arguments, transcript paths, session identifiers, prompts, report contents,
+and parsed outputs. Laminar auto-instrumentation is disabled because Toolbench
+has no LLM-provider client to capture and its inputs can contain private
+transcripts.
+Operation exceptions are re-raised only after the tracing span closes, so their
+messages are not exported by this wrapper.
+
+Open the project selected by `setup` in the Laminar dashboard to inspect its
+traces.
 
 ### Probe scoring pitfalls
 

@@ -1234,3 +1234,12 @@ class HookModeExclusivityTests(unittest.TestCase):
             main(["--help"], runner=_todays_runner())
         self.assertEqual(ctx.exception.code, 0)
         self.assertIn("--hook", out.getvalue())
+
+    def test_the_hook_mode_does_not_accept_an_abbreviated_option(self) -> None:
+        with (
+            self.assertRaises(SystemExit) as ctx,
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(io.StringIO()),
+        ):
+            main(["--ho"], runner=_todays_runner())
+        self.assertEqual(ctx.exception.code, 2)

@@ -12,6 +12,8 @@ dist/
 .venv/
 venv/
 env/
+.env
+.lmnr/
 
 # Tooling caches
 .pytest_cache/
