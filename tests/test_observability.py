@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import types
 import unittest
 import unittest.mock
@@ -35,18 +36,29 @@ class SetupTracingTests(unittest.TestCase):
         fake_lmnr = types.ModuleType("lmnr")
         fake_lmnr.Laminar = RecordingLaminar  # type: ignore[attr-defined]
         original_argv = sys.argv[:]
+        context_environment_names = (
+            "LMNR_TRACE_METADATA",
+            "LMNR_SPAN_CONTEXT",
+            "LMNR_DEBUG",
+            "LMNR_DEBUG_SESSION_ID",
+            "LMNR_DEBUG_REPLAY_TRACE_ID",
+            "LMNR_DEBUG_CACHE_UNTIL",
+        )
         original_environment = {
-            name: os.environ.get(name)
-            for name in ("LMNR_TRACE_METADATA", "LMNR_SPAN_CONTEXT")
+            name: os.environ.get(name) for name in context_environment_names
         }
         configured_environment = {
             "LMNR_PROJECT_API_KEY": "test-project-key",
             "LMNR_TRACE_METADATA": "private-metadata",
             "LMNR_SPAN_CONTEXT": "private-context",
+            "LMNR_DEBUG": "true",
+            "LMNR_DEBUG_SESSION_ID": "private-debug-session",
+            "LMNR_DEBUG_REPLAY_TRACE_ID": "private-replay-trace",
+            "LMNR_DEBUG_CACHE_UNTIL": "0123456789abcdef",
         }
         configured_context_environment = {
             name: configured_environment[name]
-            for name in ("LMNR_TRACE_METADATA", "LMNR_SPAN_CONTEXT")
+            for name in context_environment_names
         }
 
         with (
@@ -60,8 +72,7 @@ class SetupTracingTests(unittest.TestCase):
             self.assertEqual(sys.argv, original_argv)
             self.assertEqual(
                 {
-                    name: os.environ.get(name)
-                    for name in ("LMNR_TRACE_METADATA", "LMNR_SPAN_CONTEXT")
+                    name: os.environ.get(name) for name in context_environment_names
                 },
                 configured_context_environment,
             )
@@ -126,15 +137,24 @@ Laminar.shutdown()
                     }
                 ),
                 "LMNR_SPAN_CONTEXT": "private-session-context",
+                "LMNR_DEBUG": "true",
+                "LMNR_DEBUG_SESSION_ID": "private-debug-session",
+                "LMNR_DEBUG_REPLAY_TRACE_ID": "private-replay-trace",
+                "LMNR_DEBUG_CACHE_UNTIL": "0123456789abcdef",
             }
         )
-        completed = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            check=False,
-            env=environment,
-            text=True,
-        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            completed = subprocess.run(
+                [sys.executable, "-c", script],
+                capture_output=True,
+                check=False,
+                cwd=temporary_directory,
+                env=environment,
+                text=True,
+            )
+            self.assertFalse(
+                Path(temporary_directory, ".lmnr", "debug-session.json").exists()
+            )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         payload = json.loads(completed.stdout)
@@ -148,6 +168,9 @@ Laminar.shutdown()
         self.assertNotIn("private_path", observed_output)
         self.assertNotIn("private-user", observed_output)
         self.assertNotIn("private-session-context", observed_output)
+        self.assertNotIn("private-debug-session", observed_output)
+        self.assertNotIn("private-replay-trace", observed_output)
+        self.assertNotIn("LMNR_DEBUG_RUN", observed_output)
 
     def test_setup_tracing_stays_disabled_without_a_project_key(self) -> None:
         events: list[tuple[object, ...]] = []
