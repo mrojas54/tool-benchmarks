@@ -20,6 +20,16 @@ _SDK_CONTEXT_ENV_VARS = (
     "LMNR_DEBUG_CACHE_UNTIL",
 )
 _SDK_ENVIRONMENT_LOCK = RLock()
+_DOTENV_LOADER: Callable[..., object] | None
+try:
+    _DOTENV_LOADER = cast(
+        Callable[..., object],
+        getattr(importlib.import_module("dotenv"), "load_dotenv"),
+    )
+except ModuleNotFoundError as exc:
+    if exc.name != "dotenv":
+        raise
+    _DOTENV_LOADER = None
 
 
 @contextmanager
@@ -65,16 +75,9 @@ def _project_api_key() -> str | None:
 
 
 def _load_dotenv() -> None:
-    """Load the local ``.env`` with python-dotenv when tracing is installed."""
-    try:
-        dotenv = importlib.import_module("dotenv")
-    except ModuleNotFoundError as exc:
-        if exc.name != "dotenv":
-            raise
-        return
-
-    load_dotenv = cast(Callable[..., object], getattr(dotenv, "load_dotenv"))
-    load_dotenv(dotenv_path=".env")
+    """Load the local ``.env`` when python-dotenv is installed."""
+    if _DOTENV_LOADER is not None:
+        _DOTENV_LOADER(dotenv_path=".env")
 
 
 def _tracing_configured() -> bool:
