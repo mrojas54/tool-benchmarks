@@ -148,11 +148,13 @@ class DispatchTests(unittest.TestCase):
             unittest.mock.patch(
                 "toolbench.tracing.run_traced",
             ) as trace,
+            unittest.mock.patch("toolbench.passive.main", return_value=0),
             unittest.mock.patch("toolbench.probe.main", return_value=None),
             unittest.mock.patch("toolbench.worktrees.main", return_value=0),
         ):
-            self.assertEqual(main(["probe", "--allow-seeded"]), 0)
-            self.assertEqual(main(["worktrees"]), 0)
+            for command in ("passive", "probe", "worktrees"):
+                with self.subTest(command=command):
+                    self.assertEqual(main([command]), 0)
 
         trace.assert_not_called()
 

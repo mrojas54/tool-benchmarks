@@ -74,6 +74,49 @@ class SetupTracingTests(unittest.TestCase):
             [("initialize", "test-project-key", frozenset())],
         )
 
+    def test_setup_tracing_reads_the_laminar_env_fallback(self) -> None:
+        events: list[tuple[object, ...]] = []
+
+        class RecordingLaminar:
+            @classmethod
+            def initialize(
+                cls, *, project_api_key: str, instruments: set[object]
+            ) -> None:
+                events.append(("initialize", project_api_key, frozenset(instruments)))
+
+        def from_env(name: str) -> str | None:
+            if name == "LMNR_PROJECT_API_KEY":
+                return "dotenv-project-key"
+            return None
+
+        fake_lmnr = types.ModuleType("lmnr")
+        fake_lmnr.Laminar = RecordingLaminar  # type: ignore[attr-defined]
+        fake_sdk = types.ModuleType("lmnr.sdk")
+        fake_utils = types.ModuleType("lmnr.sdk.utils")
+        fake_sdk.utils = fake_utils  # type: ignore[attr-defined]
+        fake_utils.from_env = from_env  # type: ignore[attr-defined]
+
+        with (
+            unittest.mock.patch.dict(os.environ, {}, clear=True),
+            unittest.mock.patch.dict(
+                sys.modules,
+                {
+                    "lmnr": fake_lmnr,
+                    "lmnr.sdk": fake_sdk,
+                    "lmnr.sdk.utils": fake_utils,
+                },
+            ),
+        ):
+            module = importlib.import_module(
+                "toolbench.observability.setup_tracing"
+            )
+            self.assertTrue(module.setup_tracing())
+
+        self.assertEqual(
+            events,
+            [("initialize", "dotenv-project-key", frozenset())],
+        )
+
     def test_setup_tracing_stays_disabled_without_the_optional_sdk(self) -> None:
         fake_missing_sdk: types.ModuleType | None = None
 
