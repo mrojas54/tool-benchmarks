@@ -118,6 +118,11 @@ rather than silently absent (S38 / TB-24).
   `toolbench probe …` / `toolbench worktrees …`). Dispatches remaining argv
   verbatim to the sub-CLIs; imports are lazy per subcommand so a broken complex
   fixture cannot break `passive`, `worktrees`, or `--help`.
+- **`complexity_gate.py`** — regression-aware cyclomatic-complexity gate
+  (S22 / PR #95). Compares Ruff `C901` for changed `src/` and `tests/` Python
+  files against a Git `--base` by `(path, qualified name)`. Not a console
+  subcommand — invoke as `uv run python -m toolbench.complexity_gate`. See
+  [Quality gate](#quality-gate).
 - **`worktrees.py`** — linked git worktree inventory with a reclaim verdict per
   tree (S42). Reports only — never removes a tree, deletes a branch, or touches
   a ref. See [Worktree reclaim reporter](#worktree-reclaim-reporter).
@@ -328,12 +333,13 @@ PR #90) ships as a third console subcommand — table, `--reclaimable-only`, and
 SessionStart `--hook`. CQ follow-ons split passive into `reducer`/`report`,
 fold probe into `ClaudeParser` (`keep_raw_input` / `track_turns`), and stamp
 inefficiency tags at emit. The strict gate (`uv run ruff check .`,
+`uv run python -m toolbench.complexity_gate --base origin/main`,
 `uv run mypy --strict src/toolbench tests`, `uv run pytest -q`) is green —
-**700** tests passing (3 skipped when the live hermes archive / optional
+**707** tests passing (3 skipped when the live hermes archive / optional
 live paths are absent). `mypy --strict` covers `tests` as well as
 `src/toolbench`. A bare `uv run mypy` also mirrors that scope via
 `[tool.mypy]` in `pyproject.toml` (it does not descend into `tools/`). The
-same three commands run in CI (`.github/workflows/ci.yml`) on every PR and on
+same four commands run in CI (`.github/workflows/ci.yml`) on every PR and on
 pushes to `main`.
 
 Source-of-truth documents:
@@ -737,6 +743,9 @@ line means the run headline may understate what the orchestration spent.
 | SessionStart never mentions reclaimable trees | Zero reclaimable candidates, gated `source` (`compact`/`clear`/`fork`), or a swallowed probe failure | Run `uv run toolbench worktrees` for the full table. Silence is the answer when nothing is reclaimable. |
 | `commit-commands:clean_gone` reports success but removes nothing | It greps `git branch -v` for literal `[gone]`; real output is `[origin/<name>: gone]` | Use `uv run toolbench worktrees --reclaimable-only`, then the AGENTS.md reclaim procedure. Do not trust `%(upstream:track)` emptiness either. |
 | Stale linked worktrees under `.claude/worktrees/` fill the disk and block `git branch -d` | Nested agent worktrees keep their branches checked out; `git worktree prune` / `commit-commands:clean_gone` are no-ops while directories exist | `git worktree remove <path>` **then** `git branch -d <branch>`. Select with `uv run toolbench worktrees --reclaimable-only`. The ignore boundary is tracked in `.gitignore` (`.claude/worktrees/`). |
+| Complexity gate fails a function you only moved / renamed | Identity is `(path, qualified name)`; a rename looks like a new function | Reduce it under 10, or land the move with a real simplification. `# noqa: C901` will not hide it. |
+| Complexity gate is silent on a hotspot you expected to fail | Only `src/` and `tests/` `*.py` changed vs `--base` are measured; files outside that scope, or unchanged files, are ignored | Diff against the intended base (`origin/main` locally; CI uses the PR base / pre-push SHA). Confirm the path is under `src/` or `tests/`. |
+| Local complexity gate cannot find `--base` | Shallow clone or missing remote-tracking ref | `git fetch origin main` (or deepen the clone). CI sets `fetch-depth: 0` for the same reason. |
 
 ## Quality gate
 
@@ -750,14 +759,21 @@ uv run pytest -q
 ```
 
 The complexity command uses Ruff's `C901` measurement and compares changed
-Python functions under `src/` and `tests/` by file plus qualified function name.
-The configured maximum is 10:
+Python functions under `src/` and `tests/` by file plus qualified function name
+(untracked `*.py` under those trees are included). Defaults match
+`[tool.ruff.lint.mccabe] max-complexity = 10` and `--warning-delta 2`:
 
 - a new function above 10 or an existing function crossing 10 fails;
 - an already-baselined function above 10 passes when unchanged or reduced, but
   fails if it gets worse;
 - an increase of 2 or more that remains at or below 10 emits a review warning;
-- `# noqa: C901` does not hide a function from the regression comparison.
+- `# noqa: C901` does not hide a function from the regression comparison
+  (`ruff check --ignore-noqa`).
+
+Exit code is 1 only when there are errors; warnings still exit 0 and print
+GitHub Actions annotations (`::error` / `::warning`). Override locally with
+`--threshold` / `--warning-delta` if you need to reproduce a narrower check —
+CI uses the defaults.
 
 This keeps legacy hotspots visible without making old debt an unrelated PR
 failure. Renaming or moving a function changes its comparison identity, so a

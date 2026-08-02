@@ -2,12 +2,15 @@
 
 ## Status
 
-**CI gate shipped** (`.github/workflows/ci.yml`, merged with the design): every
-PR and every push to `main` runs `uv sync --frozen --python 3.13`, then the
-documented gate (`ruff check .`, `mypy --strict src/toolbench tests`, `pytest -q`).
-`[tool.mypy]` in `pyproject.toml` pins the same scope so a bare local `mypy`
-mirrors CI (and does not type-check `tools/`). The assessment tool remains
-local-only under `~/tech-debt-work/` (not in this repo).
+**CI gate shipped** (`.github/workflows/ci.yml`, merged with the design; extended
+by PR #95): every PR and every push to `main` runs
+`uv sync --frozen --python 3.13`, then the documented gate
+(`ruff check .`, `python -m toolbench.complexity_gate --base <sha>`,
+`mypy --strict src/toolbench tests`, `pytest -q`). Checkout uses
+`fetch-depth: 0` so the complexity base commit is available. `[tool.mypy]` in
+`pyproject.toml` pins the same type-check scope so a bare local `mypy` mirrors
+CI (and does not type-check `tools/`). The assessment tool remains local-only
+under `~/tech-debt-work/` (not in this repo).
 
 ## Problem
 
@@ -44,13 +47,14 @@ assessment is a **shared local tool**, run against any repo.
 
 | deliverable | location | committed? | trigger |
 |---|---|---|---|
-| CI gate | `tool-benchmarks/.github/workflows/ci.yml` | yes — the only change to the repo | `pull_request`, `push` to `main` |
+| CI gate | `tool-benchmarks/.github/workflows/ci.yml` (+ `src/toolbench/complexity_gate.py` from PR #95) | yes — the gate enforcement surface | `pull_request`, `push` to `main` |
 | Assessment tool | `~/tech-debt-work/tech_debt_report.py` | no — shared cross-repo personal tooling | run on demand (or a local schedule the user enables) |
 | Assessment output | `~/tech-debt-work/<REPO_NAME>/YYYYMMDD_tech_debt.md` | no — local report series | written by the tool |
 
-Nothing is added to `tool-benchmarks` except `ci.yml` (and this spec). The
-assessment tool lives outside every repo because its outputs are centralized under
+The assessment tool lives outside every repo because its outputs are centralized under
 `~/tech-debt-work/` and it is meant to run against many repos, not just this one.
+The complexity gate module lives in-package so `[tool.mypy] files` covers it and
+tests can pin the policy hermetically.
 
 ### 1. `.github/workflows/ci.yml` — the gate (blocking)
 
@@ -60,27 +64,34 @@ repo's documented gate verbatim.
 - **Triggers:** `pull_request: {}` and `push: { branches: [main] }`
 - **`permissions: contents: read`** — the gate only reads the tree
 - **One job**, `runs-on: ubuntu-latest`, `timeout-minutes: 15`
+- **Checkout:** `actions/checkout@v4` with `fetch-depth: 0` (full history for
+  the complexity base SHA)
 
 | step | command | why |
 |---|---|---|
-| checkout | `actions/checkout@v4` | |
+| checkout | `actions/checkout@v4` (`fetch-depth: 0`) | full history so `--base` resolves |
 | install uv | `astral-sh/setup-uv@v5` with `enable-cache: true`, `cache-dependency-glob: uv.lock` | cache keyed on the lockfile |
 | sync deps | `uv sync --frozen --python 3.13` | `--frozen` fails CI if `uv.lock` drifted from `pyproject.toml`; `--python 3.13` matches `requires-python >=3.13` (uv provisions the interpreter if the runner lacks it) |
-| lint | `uv run ruff check .` | the documented gate, unchanged |
+| lint | `uv run ruff check .` | the documented gate |
+| complexity | `uv run python -m toolbench.complexity_gate --base $COMPLEXITY_BASE_SHA` | PR base SHA, or push `github.event.before`; fail only on new / crossed / worsened debt vs that baseline (threshold 10; warn on ≥2 rise still ≤10) |
 | type-check | `uv run mypy --strict src/toolbench tests` | the documented gate (path updated with the src-layout move; originally `toolbench tests`) |
-| test | `uv run pytest -q` | the documented gate, unchanged |
+| test | `uv run pytest -q` | the documented gate |
 
 `--frozen` is not incidental — a lockfile silently drifted from `pyproject.toml`
 is itself tech debt, and this is the cheapest place to catch it. The dev group
 (ruff, mypy, pytest) installs by default under `uv sync`, so no extra flag is
 needed to reach the gate tools. The gate runs `ruff check .`, **not** `ruff format
 --check`, and mypy over `src/toolbench tests` and no wider — it reproduces the gate the
-repo already documents, it does not invent a stricter one. (Before the src-layout
+repo documents, it does not invent a stricter one beyond the intentional
+complexity-regression step. (Before the src-layout
 move the mypy path was `toolbench tests`; CI and live operator docs now use
 `src/toolbench`.) Locally, `[tool.mypy]` in `pyproject.toml` pins the same
 `files` + `strict` so a bare `uv run mypy` mirrors CI and does not descend into
 the `tools/` probe corpus; CI still passes explicit paths + `--strict` on the
 command line (those take precedence).
+
+The complexity base is placed in an environment variable and quoted by a static
+`run:` command — event text is not interpolated into shell source.
 
 ### 2. `~/tech-debt-work/tech_debt_report.py` — the shared assessment tool
 
@@ -150,9 +161,9 @@ cadence is a deliberate, low-frequency choice the user owns.
 
 ### Security & permissions
 
-- `ci.yml`: `permissions: contents: read`; no `github.event.*` interpolated into
-  any `run:` (a static comment says so, matching wids); action majors pinned
-  (`checkout@v4`, `setup-uv@v5`).
+- `ci.yml`: `permissions: contents: read`; the complexity base SHA is copied
+  into an env var and quoted by a static `run:` (event text is not interpolated
+  into shell source); action majors pinned (`checkout@v4`, `setup-uv@v5`).
 - The tool: read-only against the target repo (`git ls-files` + file reads);
   writes only under `~/tech-debt-work`; no network; never executes repo code.
 
@@ -169,7 +180,8 @@ checking its output, not by a harness:
 | run against a second repo (`~/wids-nyc-reading-group-assistant`) | `REPO_NAME` derivation + per-repo foldering are correct across repos |
 | `--date 20260101` | filename is deterministic and honors the override |
 | `--repo` at a non-git path | clean error message, non-zero exit |
-| the gate, dry-run locally before pushing: `uv run ruff check .`, `uv run mypy --strict src/toolbench tests`, `uv run pytest -q` | `ci.yml` will pass; the first PR run is the live confirmation |
+| the gate, dry-run locally before pushing: `uv run ruff check .`, `uv run python -m toolbench.complexity_gate --base origin/main`, `uv run mypy --strict src/toolbench tests`, `uv run pytest -q` | `ci.yml` will pass; the first PR run is the live confirmation |
+| complexity policy hermetic tests | `tests/test_complexity_gate.py` pins threshold / noqa / CI wiring |
 
 ## Out of scope
 
@@ -182,9 +194,10 @@ checking its output, not by a harness:
   ready-to-enable snippet is provided, enabling it is the user's.
 - **Version-controlling `~/tech-debt-work`.** It is a plain directory today; making
   it a git repo is a separate, later choice.
-- **Broadening the gate** — `ruff format --check`, mypy over `tools/` or the repo
-  root, coverage thresholds. Each is its own decision; this change reproduces the
-  documented gate, it does not redefine it.
+- **Broadening the gate further** — `ruff format --check`, mypy over `tools/` or
+  the repo root, coverage thresholds. Each is its own decision. The complexity
+  regression step (PR #95) is an intentional, documented addition to S22; it is
+  not a license to pile on unrelated checks.
 - **A Lattice ticket (TB-XX).** The board is minted via `lattice create`, never by
   hand (the pre-commit hook enforces this). Board tracking, if wanted, is a
   separate deliberate step.
