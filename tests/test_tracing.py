@@ -142,6 +142,86 @@ class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn(private_path, repr(events))
 
+    def test_span_setup_failure_does_not_block_the_operation(self) -> None:
+        events: list[str] = []
+
+        class BrokenLaminar:
+            @classmethod
+            def start_as_current_span(
+                cls, name: str, *, tags: list[str]
+            ) -> object:
+                del name, tags
+                raise RuntimeError("span setup failed")
+
+            @classmethod
+            def flush(cls) -> None:
+                raise RuntimeError("flush failed")
+
+        with (
+            unittest.mock.patch("toolbench.tracing.setup_tracing", return_value=True),
+            unittest.mock.patch(
+                "toolbench.tracing._load_laminar", return_value=BrokenLaminar
+            ),
+        ):
+
+            @run_traced("probe")
+            def operation() -> int:
+                events.append("operation")
+                return 11
+
+            self.assertEqual(operation(), 11)
+
+        self.assertEqual(events, ["operation"])
+
+    def test_reporting_failures_preserve_result_and_operation_error(self) -> None:
+        events: list[str] = []
+
+        class ReportingLaminar:
+            @classmethod
+            @contextmanager
+            def start_as_current_span(
+                cls, name: str, *, tags: list[str]
+            ) -> Iterator[None]:
+                del name, tags
+                yield
+
+            @classmethod
+            def set_trace_metadata(cls, metadata: dict[str, str]) -> None:
+                del metadata
+                raise RuntimeError("metadata failed")
+
+            @classmethod
+            def set_span_output(cls, output: dict[str, int]) -> None:
+                del output
+                raise RuntimeError("output failed")
+
+            @classmethod
+            def flush(cls) -> None:
+                raise RuntimeError("flush failed")
+
+        with (
+            unittest.mock.patch("toolbench.tracing.setup_tracing", return_value=True),
+            unittest.mock.patch(
+                "toolbench.tracing._load_laminar", return_value=ReportingLaminar
+            ),
+        ):
+
+            @run_traced("probe")
+            def successful_operation() -> int:
+                events.append("success")
+                return 13
+
+            @run_traced("probe")
+            def failing_operation() -> int:
+                events.append("failure")
+                raise RuntimeError("operation failed")
+
+            self.assertEqual(successful_operation(), 13)
+            with self.assertRaisesRegex(RuntimeError, "operation failed"):
+                failing_operation()
+
+        self.assertEqual(events, ["success", "failure"])
+
     def test_system_exit_records_a_safe_exit_code_before_reraising(self) -> None:
         events: list[tuple[object, ...]] = []
 

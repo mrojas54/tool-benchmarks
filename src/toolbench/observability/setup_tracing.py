@@ -32,7 +32,7 @@ def _sanitized_sdk_environment() -> Iterator[None]:
             for name in _SDK_CONTEXT_ENV_VARS
             if name in os.environ
         }
-        sys.argv[:] = [_STABLE_SERVICE_NAME, *sys.argv[1:]]
+        sys.argv[:] = [_STABLE_SERVICE_NAME]
         try:
             yield
         finally:

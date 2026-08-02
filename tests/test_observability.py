@@ -83,7 +83,7 @@ class SetupTracingTests(unittest.TestCase):
             events,
             [
                 (
-                    ["toolbench", *original_argv[1:]],
+                    ["toolbench"],
                     {name: None for name in context_environment_names},
                 )
             ],
@@ -104,7 +104,11 @@ class SetupTracingTests(unittest.TestCase):
 import json
 import sys
 
-sys.argv[0] = "/private/checkout/tool-benchmarks/toolbench"
+sys.argv[:] = [
+    "/private/checkout/tool-benchmarks/toolbench",
+    "--session",
+    "/private/transcripts/member-session.jsonl",
+]
 
 from toolbench.observability.setup_tracing import setup_tracing
 
