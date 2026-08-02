@@ -7,7 +7,9 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from toolbench.freeze import MANIFEST_VERSION, read_manifest, write_manifest
+import pytest
+
+from toolbench.freeze import MANIFEST_VERSION, MalformedFreezeManifest, read_manifest, write_manifest
 from toolbench.sources import AgentCensus, SessionRef
 
 
@@ -206,3 +208,19 @@ def test_explicit_false_is_honoured_for_a_genuine_non_subagent() -> None:
         )
         m = read_manifest(str(path))
         assert m.refs[0].is_subagent is False
+
+
+def test_read_manifest_rejects_invalid_json() -> None:
+    with TemporaryDirectory() as d:
+        path = Path(d) / "freeze.json"
+        path.write_text("{not json", encoding="utf-8")
+        with pytest.raises(MalformedFreezeManifest, match="not valid JSON"):
+            read_manifest(str(path))
+
+
+def test_read_manifest_rejects_non_utf8() -> None:
+    with TemporaryDirectory() as d:
+        path = Path(d) / "freeze.json"
+        path.write_bytes(b"\xff\xfe")
+        with pytest.raises(MalformedFreezeManifest, match="not valid UTF-8"):
+            read_manifest(str(path))
