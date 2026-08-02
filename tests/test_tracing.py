@@ -222,6 +222,72 @@ class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(events, ["success", "failure"])
 
+    def test_keyboard_interrupts_from_tracing_are_not_swallowed(self) -> None:
+        events: list[str] = []
+
+        class InterruptingSpanLaminar:
+            @classmethod
+            def start_as_current_span(
+                cls, name: str, *, tags: list[str]
+            ) -> object:
+                del name, tags
+                raise KeyboardInterrupt()
+
+        with (
+            unittest.mock.patch("toolbench.tracing.setup_tracing", return_value=True),
+            unittest.mock.patch(
+                "toolbench.tracing._load_laminar",
+                return_value=InterruptingSpanLaminar,
+            ),
+        ):
+
+            @run_traced("probe")
+            def operation_before_start() -> int:
+                events.append("before")
+                return 17
+
+            with self.assertRaises(KeyboardInterrupt):
+                operation_before_start()
+
+        class InterruptingFlushLaminar:
+            @classmethod
+            @contextmanager
+            def start_as_current_span(
+                cls, name: str, *, tags: list[str]
+            ) -> Iterator[None]:
+                del name, tags
+                yield
+
+            @classmethod
+            def set_trace_metadata(cls, metadata: dict[str, str]) -> None:
+                del metadata
+
+            @classmethod
+            def set_span_output(cls, output: dict[str, int]) -> None:
+                del output
+
+            @classmethod
+            def flush(cls) -> None:
+                raise KeyboardInterrupt()
+
+        with (
+            unittest.mock.patch("toolbench.tracing.setup_tracing", return_value=True),
+            unittest.mock.patch(
+                "toolbench.tracing._load_laminar",
+                return_value=InterruptingFlushLaminar,
+            ),
+        ):
+
+            @run_traced("probe")
+            def operation_before_flush() -> int:
+                events.append("after")
+                return 19
+
+            with self.assertRaises(KeyboardInterrupt):
+                operation_before_flush()
+
+        self.assertEqual(events, ["after"])
+
     def test_system_exit_records_a_safe_exit_code_before_reraising(self) -> None:
         events: list[tuple[object, ...]] = []
 
