@@ -8,8 +8,7 @@ from inspect import iscoroutine, iscoroutinefunction
 from threading import Lock
 from typing import Any, ParamSpec, TypeVar, cast
 
-from toolbench.observability import setup_tracing
-from toolbench.observability.setup_tracing import _load_laminar
+from toolbench.observability import load_laminar, setup_tracing
 
 P = ParamSpec("P")
 R = TypeVar("R", int, Awaitable[int])
@@ -56,7 +55,7 @@ class _TracingState:
 
 def _load_laminar_best_effort() -> Any | None:
     try:
-        return _load_laminar()
+        return load_laminar()
     except (Exception, SystemExit):
         return None
 

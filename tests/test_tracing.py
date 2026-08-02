@@ -72,7 +72,7 @@ class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
                 "toolbench.tracing.setup_tracing", return_value=True
             ) as setup_tracing,
             unittest.mock.patch(
-                "toolbench.tracing._load_laminar", return_value=RecordingLaminar
+                "toolbench.tracing.load_laminar", return_value=RecordingLaminar
             ),
         ):
 
@@ -206,7 +206,7 @@ class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
         with (
             unittest.mock.patch("toolbench.tracing.setup_tracing", return_value=True),
             unittest.mock.patch(
-                "toolbench.tracing._load_laminar", return_value=RecordingLaminar
+                "toolbench.tracing.load_laminar", return_value=RecordingLaminar
             ),
         ):
 
@@ -247,7 +247,7 @@ class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
         with (
             unittest.mock.patch("toolbench.tracing.setup_tracing", return_value=True),
             unittest.mock.patch(
-                "toolbench.tracing._load_laminar", return_value=BrokenLaminar
+                "toolbench.tracing.load_laminar", return_value=BrokenLaminar
             ),
         ):
 
@@ -289,7 +289,7 @@ class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
         with (
             unittest.mock.patch("toolbench.tracing.setup_tracing", return_value=True),
             unittest.mock.patch(
-                "toolbench.tracing._load_laminar", return_value=ReportingLaminar
+                "toolbench.tracing.load_laminar", return_value=ReportingLaminar
             ),
         ):
 
@@ -323,7 +323,7 @@ class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
         with (
             unittest.mock.patch("toolbench.tracing.setup_tracing", return_value=True),
             unittest.mock.patch(
-                "toolbench.tracing._load_laminar",
+                "toolbench.tracing.load_laminar",
                 return_value=InterruptingSpanLaminar,
             ),
         ):
@@ -360,7 +360,7 @@ class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
         with (
             unittest.mock.patch("toolbench.tracing.setup_tracing", return_value=True),
             unittest.mock.patch(
-                "toolbench.tracing._load_laminar",
+                "toolbench.tracing.load_laminar",
                 return_value=InterruptingFlushLaminar,
             ),
         ):
@@ -393,7 +393,7 @@ class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
         with (
             unittest.mock.patch("toolbench.tracing.setup_tracing", return_value=True),
             unittest.mock.patch(
-                "toolbench.tracing._load_laminar",
+                "toolbench.tracing.load_laminar",
                 return_value=ExitFromSpanLaminar,
             ),
         ):
@@ -429,7 +429,7 @@ class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
         with (
             unittest.mock.patch("toolbench.tracing.setup_tracing", return_value=True),
             unittest.mock.patch(
-                "toolbench.tracing._load_laminar",
+                "toolbench.tracing.load_laminar",
                 return_value=ExitFromFlushLaminar,
             ),
         ):
@@ -482,7 +482,7 @@ class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
         with (
             unittest.mock.patch("toolbench.tracing.setup_tracing", return_value=True),
             unittest.mock.patch(
-                "toolbench.tracing._load_laminar", return_value=RecordingLaminar
+                "toolbench.tracing.load_laminar", return_value=RecordingLaminar
             ),
         ):
             for code in (0, 2):
@@ -555,7 +555,7 @@ class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
         with (
             unittest.mock.patch("toolbench.tracing.setup_tracing", return_value=True),
             unittest.mock.patch(
-                "toolbench.tracing._load_laminar", return_value=RecordingLaminar
+                "toolbench.tracing.load_laminar", return_value=RecordingLaminar
             ),
         ):
             operation = run_traced("probe")(AsyncOperation())

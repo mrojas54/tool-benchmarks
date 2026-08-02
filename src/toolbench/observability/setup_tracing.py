@@ -44,8 +44,12 @@ def _sanitized_sdk_environment() -> Iterator[None]:
                     os.environ.pop(name, None)
 
 
-def _load_laminar() -> Any:
-    """Load the optional SDK without making it a static dependency."""
+def load_laminar() -> Any:
+    """Load the optional SDK's ``Laminar`` class without a static dependency.
+
+    Shared by ``setup_tracing`` (to initialize the SDK) and
+    ``toolbench.tracing`` (to obtain the class for span creation).
+    """
     return cast(Any, importlib.import_module("lmnr").Laminar)
 
 
@@ -77,7 +81,7 @@ def setup_tracing() -> bool:
             return False
 
         try:
-            Laminar = _load_laminar()
+            Laminar = load_laminar()
         except ModuleNotFoundError as exc:
             if exc.name != "lmnr":
                 raise
