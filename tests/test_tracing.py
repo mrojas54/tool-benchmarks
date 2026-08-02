@@ -5,15 +5,17 @@ from __future__ import annotations
 import io
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 import types
 import unittest
 import unittest.mock
 from collections.abc import Iterator
 from contextlib import contextmanager, redirect_stderr
 from types import TracebackType
+from threading import Event
 from typing import Literal
 
-from toolbench.tracing import run_traced
+from toolbench.tracing import _TracingState, run_traced
 
 
 class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
@@ -67,6 +69,34 @@ class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(operation(), 29)
 
         self.assertEqual(stderr.getvalue(), "")
+
+    def test_setup_is_initialized_once_under_concurrent_calls(self) -> None:
+        setup_started = Event()
+        release_setup = Event()
+
+        def setup() -> bool:
+            setup_started.set()
+            self.assertTrue(release_setup.wait(timeout=2))
+            return True
+
+        state = _TracingState()
+        with (
+            unittest.mock.patch(
+                "toolbench.tracing.setup_tracing", side_effect=setup
+            ) as setup_tracing,
+            unittest.mock.patch(
+                "toolbench.tracing._tracing_configured", return_value=False
+            ),
+            ThreadPoolExecutor(max_workers=2) as executor,
+        ):
+            first = executor.submit(state.is_available_best_effort)
+            self.assertTrue(setup_started.wait(timeout=2))
+            second = executor.submit(state.is_available_best_effort)
+            release_setup.set()
+            self.assertTrue(first.result(timeout=2))
+            self.assertTrue(second.result(timeout=2))
+
+        setup_tracing.assert_called_once_with()
 
     def test_successful_setup_is_reused_by_a_traced_operation(self) -> None:
         calls: list[str] = []

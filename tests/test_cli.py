@@ -99,7 +99,10 @@ class DispatchTests(unittest.TestCase):
                 cls, name: str, *, tags: list[str]
             ) -> Iterator[None]:
                 events.append(("start", name, tuple(tags)))
-                yield
+                try:
+                    yield
+                finally:
+                    events.append(("end",))
 
             @classmethod
             def set_trace_metadata(cls, metadata: dict[str, str]) -> None:
@@ -138,6 +141,89 @@ class DispatchTests(unittest.TestCase):
                 ("start", "toolbench.cli", ("toolbench", "probe")),
                 ("metadata", {"command": "probe"}),
                 ("output", {"exit_code": 0}),
+                ("end",),
+                ("flush",),
+            ],
+        )
+        self.assertNotIn(private_session, repr(events))
+
+    def test_probe_dispatch_without_optional_laminar_still_runs(self) -> None:
+        stderr = io.StringIO()
+        with (
+            unittest.mock.patch.dict(os.environ, {}, clear=True),
+            unittest.mock.patch.dict(sys.modules, {"lmnr": None}),
+            unittest.mock.patch.object(sys, "argv", ["toolbench", "probe"]),
+            unittest.mock.patch("toolbench.probe.main", return_value=None),
+            redirect_stderr(stderr),
+        ):
+            self.assertEqual(main(), 0)
+
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_probe_failure_flushes_the_closed_span_and_preserves_the_error(
+        self,
+    ) -> None:
+        events: list[tuple[object, ...]] = []
+
+        class RecordingLaminar:
+            @classmethod
+            def initialize(
+                cls, *, project_api_key: str, instruments: set[object]
+            ) -> None:
+                events.append(("initialize", project_api_key, frozenset(instruments)))
+
+            @classmethod
+            @contextmanager
+            def start_as_current_span(
+                cls, name: str, *, tags: list[str]
+            ) -> Iterator[None]:
+                events.append(("start", name, tuple(tags)))
+                try:
+                    yield
+                finally:
+                    events.append(("end",))
+
+            @classmethod
+            def set_trace_metadata(cls, metadata: dict[str, str]) -> None:
+                events.append(("metadata", metadata))
+
+            @classmethod
+            def set_span_output(cls, output: dict[str, int]) -> None:
+                events.append(("output", output))
+
+            @classmethod
+            def flush(cls) -> None:
+                events.append(("flush",))
+
+        fake_lmnr = types.ModuleType("lmnr")
+        fake_lmnr.Laminar = RecordingLaminar  # type: ignore[attr-defined]
+        private_session = "/private/archive/member-session.jsonl"
+
+        with (
+            unittest.mock.patch.dict(
+                os.environ, {"LMNR_PROJECT_API_KEY": "test-project-key"}
+            ),
+            unittest.mock.patch.dict(sys.modules, {"lmnr": fake_lmnr}),
+            unittest.mock.patch.object(
+                sys,
+                "argv",
+                ["toolbench", "probe", "--session", private_session],
+            ),
+            unittest.mock.patch(
+                "toolbench.probe.main",
+                side_effect=FileNotFoundError(private_session),
+            ),
+        ):
+            with self.assertRaisesRegex(FileNotFoundError, private_session):
+                main()
+
+        self.assertEqual(
+            events,
+            [
+                ("initialize", "test-project-key", frozenset()),
+                ("start", "toolbench.cli", ("toolbench", "probe")),
+                ("metadata", {"command": "probe"}),
+                ("end",),
                 ("flush",),
             ],
         )

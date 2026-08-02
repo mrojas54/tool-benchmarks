@@ -6,6 +6,7 @@ import sys
 from collections.abc import Awaitable, Callable
 from functools import wraps
 from inspect import iscoroutine, iscoroutinefunction
+from threading import Lock
 from typing import Any, ParamSpec, TypeVar, cast
 
 from toolbench.observability import setup_tracing
@@ -48,19 +49,21 @@ class _TracingState:
     def __init__(self) -> None:
         self.on = False
         self.warning_emitted = False
+        self._lock = Lock()
 
     def is_available_best_effort(self) -> bool:
         """Return whether tracing is available without affecting the CLI."""
-        if self.on:
-            return True
-        try:
-            self.on = setup_tracing()
-        except (Exception, SystemExit):
-            self.on = False
-        if not self.on and not self.warning_emitted and _tracing_configured():
-            self.warning_emitted = True
-            _safe_warn(_TRACE_UNAVAILABLE_WARNING)
-        return self.on
+        with self._lock:
+            if self.on:
+                return True
+            try:
+                self.on = setup_tracing()
+            except (Exception, SystemExit):
+                self.on = False
+            if not self.on and not self.warning_emitted and _tracing_configured():
+                self.warning_emitted = True
+                _safe_warn(_TRACE_UNAVAILABLE_WARNING)
+            return self.on
 
 
 def _load_laminar_best_effort() -> Any | None:

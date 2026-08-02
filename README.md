@@ -487,6 +487,8 @@ CLI arguments, transcript paths, session identifiers, prompts, report contents,
 and parsed outputs. Laminar auto-instrumentation is disabled because Toolbench
 has no LLM-provider client to capture and its inputs can contain private
 transcripts.
+Operation exceptions are re-raised only after the tracing span closes, so their
+messages are not exported by this wrapper.
 
 Open the project selected by `setup` in the Laminar dashboard to inspect its
 traces.

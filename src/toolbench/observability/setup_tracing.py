@@ -50,8 +50,9 @@ def _load_laminar() -> Any:
 
 
 def _project_api_key() -> str | None:
-    """Read the project key from the environment or the SDK's ``.env`` lookup."""
-    if project_api_key := os.environ.get("LMNR_PROJECT_API_KEY"):
+    """Load local dotenv configuration, then read the project key."""
+    _load_dotenv()
+    if project_api_key := os.getenv("LMNR_PROJECT_API_KEY"):
         return project_api_key
 
     try:
@@ -61,6 +62,19 @@ def _project_api_key() -> str | None:
 
     from_env = cast(Callable[[str], str | None], getattr(utils, "from_env"))
     return from_env("LMNR_PROJECT_API_KEY")
+
+
+def _load_dotenv() -> None:
+    """Load the local ``.env`` with python-dotenv when tracing is installed."""
+    try:
+        dotenv = importlib.import_module("dotenv")
+    except ModuleNotFoundError as exc:
+        if exc.name != "dotenv":
+            raise
+        return
+
+    load_dotenv = cast(Callable[..., object], getattr(dotenv, "load_dotenv"))
+    load_dotenv(dotenv_path=".env")
 
 
 def _tracing_configured() -> bool:

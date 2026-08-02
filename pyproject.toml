@@ -10,6 +10,7 @@ toolbench = "toolbench.cli:main"
 [project.optional-dependencies]
 tracing = [
     "lmnr>=0.7.56",
+    "python-dotenv>=1.0",
 ]
 
 [build-system]
