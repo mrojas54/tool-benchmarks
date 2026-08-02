@@ -37,28 +37,28 @@ def _system_exit_code(error: SystemExit) -> int:
 def _tracing_is_available() -> bool:
     try:
         return setup_tracing()
-    except Exception:
+    except (Exception, SystemExit):
         return False
 
 
 def _load_laminar_best_effort() -> Any | None:
     try:
         return _load_laminar()
-    except Exception:
+    except (Exception, SystemExit):
         return None
 
 
 def _safe_report(laminar: Any, method_name: str, value: object) -> None:
     try:
         getattr(laminar, method_name)(value)
-    except Exception:
+    except (Exception, SystemExit):
         pass
 
 
 def _safe_flush(laminar: Any) -> None:
     try:
         laminar.flush()
-    except Exception:
+    except (Exception, SystemExit):
         pass
 
 
@@ -111,7 +111,7 @@ def _run_sync(
             result, error = _invoke_sync(operation, *args, **kwargs)
             if result is not None:
                 _safe_report(Laminar, "set_span_output", {"exit_code": result})
-    except Exception:
+    except (Exception, SystemExit):
         if not operation_started:
             return _require_exit_code(operation(*args, **kwargs))
     finally:
@@ -145,7 +145,7 @@ async def _run_async(
             result, error = await _invoke_async(operation, *args, **kwargs)
             if result is not None:
                 _safe_report(Laminar, "set_span_output", {"exit_code": result})
-    except Exception:
+    except (Exception, SystemExit):
         if not operation_started:
             return _require_exit_code(await operation(*args, **kwargs))
     finally:
