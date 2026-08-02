@@ -19,7 +19,7 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   scope via `[tool.mypy]` in `pyproject.toml` (does not descend into `tools/`).
 - Optional live dependencies (`agentsview`, Claude/Codex archives, Hermes) are
   not required for the gate; skips for absent live archives are expected (the
-  hermetic suite is ~700 passing, with 3 skips when live paths are missing).
+  hermetic suite is ~712 passing, with 3 skips when live paths are missing).
 
 ## Repository integrity
 
@@ -75,6 +75,9 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   and matches the replay's `--exclude-subagents` choice. A v1 manifest, a v2
   write without a census, a legacy v2 census missing that key, or a mismatched
   subagent filter each leave fractions unavailable and name the reason.
+  Unreadable / malformed / non-UTF-8 freeze paths, a directory at the path, or
+  a write failure are hard stops (`fatal freeze error`, exit 1) — not
+  tracebacks (S23 / PR #87).
 - `ensure_deps` / `provision_worktree` default to the **packaged** manifest
   (`src/toolbench/corpus/manifest.json`); custom corpora must pass their own
   manifest explicitly so a stale generated `corpus/manifest.json` cannot change
@@ -95,3 +98,6 @@ is `complex.py` (defects, scoring, profile render) plus `shell_safety.py`
 (worktree, deps cache, trial driver) — library only, no CLI yet.
 `worktrees.py` owns the linked-worktree inventory CLI (`classify` /
 `reclaimable` / `--hook`); it prints only and never removes a tree or ref.
+`complexity_gate.py` owns the cyclomatic-complexity regression check
+(`compare_complexity` / `evaluate_repository`); invoke via
+`python -m toolbench.complexity_gate`, not the console script.
