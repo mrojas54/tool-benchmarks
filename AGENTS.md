@@ -81,7 +81,8 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
 - `ensure_deps` / `provision_worktree` default to the **packaged** manifest
   (`src/toolbench/corpus/manifest.json`); custom corpora must pass their own
   manifest explicitly so a stale generated `corpus/manifest.json` cannot change
-  a trial SHA.
+  a trial SHA. `ensure_deps` also pins npm manifest copies and warmup cwd to
+  that entry's SHA via `git show` / `git archive` — never corpus `HEAD` (#99).
 - `complex_runner._assert_deps_base_safe` rejects a replaceable deps-cache leaf
   (including a dangling symlink) *before* `resolve()`, then requires FS-root
   divergence from the corpus, sticky-safe ancestors, and a private uid-owned
