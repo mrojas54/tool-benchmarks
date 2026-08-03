@@ -6,7 +6,7 @@ yet. Fixtures under `src/toolbench/probes/complex/`; pinned corpora under
 `corpus/` (packaged manifest at `src/toolbench/corpus/manifest.json`, copied
 by `corpus/vendor.sh`). Pre-registered predictions committed; no live trial
 matrix run yet.
-**Date:** 2026-07-12 (status refreshed 2026-07-29)
+**Date:** 2026-07-12 (status refreshed 2026-08-03)
 
 ## Implementation map (as shipped)
 
@@ -21,6 +21,14 @@ matrix run yet.
 `ensure_deps` / `provision_worktree` default to the packaged manifest
 (`MANIFEST_PATH`). Custom corpora must pass `manifest_path` explicitly; a
 stale generated `corpus/manifest.json` must never change a trial SHA.
+
+**SHA pin for deps and warmups (PR #99):** trial trees were already exported
+from the manifest SHA via `git archive`, but npm_ci previously copied
+`package.json` / `package-lock.json` from the live corpus checkout and warmup
+steps ran at that checkout's cwd — so a shared clone that advanced past the
+pin without re-vendoring could silently rebuild caches from `HEAD`.
+`ensure_deps` now reads those manifests with `git show <sha>:…` and runs
+warmup commands inside a short-lived archived tree at the same SHA.
 
 **Deps-cache invariants** (`UnsafeDepsCache`): the shared cache must diverge from
 the corpus at the filesystem root; must be a real private directory owned by this
