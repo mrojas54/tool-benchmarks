@@ -343,7 +343,7 @@ fold probe into `ClaudeParser` (`keep_raw_input` / `track_turns`), and stamp
 inefficiency tags at emit. The strict gate (`uv run ruff check .`,
 `uv run python -m toolbench.complexity_gate --base origin/main`,
 `uv run mypy --strict src/toolbench tests`, `uv run pytest -q`) is green —
-**737** tests passing (4 skipped when the live hermes archive / optional
+**738** tests passing (4 skipped when the live hermes archive / optional
 live paths / tracing deps are absent). `mypy --strict` covers `tests` as well as
 `src/toolbench`. A bare `uv run mypy` also mirrors that scope via
 `[tool.mypy]` in `pyproject.toml` (it does not descend into `tools/`). The
@@ -462,7 +462,8 @@ uv run pytest -q
 [Laminar](https://laminar.sh/docs/tracing/integrations/overview) can record one
 trace for each real `toolbench` console command. Library-style calls such as
 `main([...])` stay untraced, so unit tests and embedding applications do not
-send telemetry.
+send telemetry. `toolbench worktrees --hook` is also untraced: SessionStart
+must stay silent and failure-tolerant even when the optional SDK is present.
 
 Initialization lives in
 `toolbench.observability.setup_tracing.setup_tracing`. It returns `False`
