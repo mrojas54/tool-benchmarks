@@ -9,8 +9,10 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
 
 - The project is `uv`-managed and requires Python >=3.13. Run tools from this
   repository root via `uv run`; use `uv sync` when explicit provisioning is
-  needed. Runtime deps stay empty (stdlib-only); the `dev` group adds the
-  gate tools plus optional parallel-run tooling (`logfire`).
+  needed. Runtime deps stay empty (stdlib-only by default); the optional
+  `tracing` extra adds Laminar (`lmnr`) without changing the default install.
+  The `dev` group adds the gate tools plus optional parallel-run tooling
+  (`logfire`).
 - Before a PR, run `uv run ruff check .`,
   `uv run python -m toolbench.complexity_gate --base origin/main`,
   `uv run mypy --strict src/toolbench tests`, and `uv run pytest -q`. Do not
@@ -19,7 +21,7 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   scope via `[tool.mypy]` in `pyproject.toml` (does not descend into `tools/`).
 - Optional live dependencies (`agentsview`, Claude/Codex archives, Hermes) are
   not required for the gate; skips for absent live archives are expected (the
-  hermetic suite is ~737 passing, with 4 skips when live paths / optional
+  hermetic suite is ~738 passing, with 4 skips when live paths / optional
   tracing deps are missing).
 ## Repository integrity
 
@@ -102,3 +104,7 @@ is `complex.py` (defects, scoring, profile render) plus `shell_safety.py`
 `complexity_gate.py` owns the cyclomatic-complexity regression check
 (`compare_complexity` / `evaluate_repository`); invoke via
 `python -m toolbench.complexity_gate`, not the console script.
+Opt-in Laminar observability lives in `observability/setup_tracing.py`
+(`setup_tracing` / `load_laminar`) and `tracing.py` (`run_traced`); `cli.py`
+wraps real console processes only (`argv is None`), and skips tracing for
+`worktrees --hook`.
