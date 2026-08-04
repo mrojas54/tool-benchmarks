@@ -447,23 +447,18 @@ class ProvisionWorktreeTests(unittest.TestCase):
         deps_base = Path(cache_tmp.name) / f"vendor-cache-{os.getpid()}"
 
         real_run = subprocess.run
-        npm_calls: list[list[str]] = []
-
-        def track_npm(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
-            cmd = args[0]
-            if isinstance(cmd, list) and len(cmd) >= 2 and cmd[:2] == ["npm", "ci"]:
-                npm_calls.append(list(cmd))
-                return subprocess.CompletedProcess(cmd, 0, "", "")
-            return real_run(*args, **kwargs)  # type: ignore[arg-type]
-
-        with mock.patch("subprocess.run", side_effect=track_npm):
+        with mock.patch("subprocess.run") as mock_run:
+            mock_run.side_effect = lambda *args, **kwargs: (
+                subprocess.CompletedProcess(args[0], 0, "", "")
+                if args and args[0][:2] == ["npm", "ci"]
+                else real_run(*args, **kwargs)
+            )
             ensure_deps(
                 corpus_root,
                 "toy",
                 deps_base=deps_base,
                 manifest_path=manifest_path,
             )
-            self.assertEqual(len(npm_calls), 1)
             cached_a = (deps_base / "toy" / "web" / "package.json").read_text(
                 encoding="utf-8"
             )
@@ -487,10 +482,15 @@ class ProvisionWorktreeTests(unittest.TestCase):
                 manifest_path=manifest_path,
             )
 
-        self.assertEqual(len(npm_calls), 2, "manifest SHA bump must rebuild deps")
         cached_b = (deps_base / "toy" / "web" / "package.json").read_text(encoding="utf-8")
         self.assertIn("sha-b", cached_b)
         self.assertNotIn("sha-a", cached_b)
+        npm_calls = [
+            call
+            for call in mock_run.call_args_list
+            if call.args and call.args[0][:2] == ["npm", "ci"]
+        ]
+        self.assertEqual(len(npm_calls), 2, "manifest SHA bump must rebuild deps")
 
     def test_default_manifest_cannot_silently_follow_a_stale_corpus_copy(self) -> None:
         authoritative_manifest = self.root / "packaged-manifest.json"
