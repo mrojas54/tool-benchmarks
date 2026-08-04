@@ -1,6 +1,6 @@
 # AGENTS.md
 
-`toolbench` is an offline, standard-library-only Python CLI harness. There is no
+`toolbench` is an offline, stdlib-by-default Python CLI harness. There is no
 server or database. Use the `passive`, `probe`, and `worktrees` CLIs; treat the
 hermetic test suite plus strict gate as end-to-end coverage. README and
 `pyproject.toml` are the source of truth for routine commands.
