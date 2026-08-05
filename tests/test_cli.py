@@ -5,16 +5,15 @@ the pass-through, the exit-code normalization (probe.main returns None), and
 the argparse-style failure codes, in the suite's in-process main(argv) style
 (tests/test_passive_cli.py)."""
 
-import io
 import builtins
 import importlib
+import io
 import os
 import sys
 import types
 import unittest
 import unittest.mock
-from collections.abc import Mapping, Sequence
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextlib import redirect_stderr, redirect_stdout
 
