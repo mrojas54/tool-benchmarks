@@ -85,6 +85,8 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   manifest explicitly so a stale generated `corpus/manifest.json` cannot change
   a trial SHA. `ensure_deps` also pins npm manifest copies and warmup cwd to
   that entry's SHA via `git show` / `git archive` — never corpus `HEAD` (#99).
+  Rebuilds are still existence-based: after a packaged-SHA bump, wipe
+  `vendor-cache-<uid>/<repo>/` or oracles can run against stale deps.
 - `complex_runner._assert_deps_base_safe` rejects a replaceable deps-cache leaf
   (including a dangling symlink) *before* `resolve()`, then requires FS-root
   divergence from the corpus, sticky-safe ancestors, and a private uid-owned

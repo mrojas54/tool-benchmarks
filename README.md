@@ -256,6 +256,10 @@ packaged manifest there so the vendored tree stays self-describing). Design:
   `git show <sha>:…`; warmup commands run inside a short-lived `git archive` of
   that SHA. A shared corpus clone that advances without re-vendoring therefore
   cannot silently drift dependency caches away from the pinned trial source.
+- Cache idempotency is still **existence-based** (`target.exists()`): after a
+  toolbench pull that bumps the packaged manifest SHA, wipe
+  `vendor-cache-<uid>/<repo>/` before re-running trials, or oracles may execute
+  against stale `node_modules` while the trial tree archives the new SHA.
 - Prompt is always `PROMPT.md` from `provision_worktree` — never the defect
   rationale (that leaks the predicted winner). Missing `PROMPT.md` raises
   `UnprovisionedWorktree`.
@@ -760,6 +764,7 @@ line means the run headline may understate what the orchestration spent.
 | `toolbench` / `-m toolbench.passive` fails from `~` with a system python | The checkout's venv (with the editable install) isn't active | Use `uv run --project ~/tool-benchmarks toolbench passive ...` from any cwd; inside the repo, `uv run toolbench ...` or `uv run python -m toolbench.passive` both work. |
 | `corpus/manifest.json` disappeared after pulling the src-layout change | The manifest now ships inside the package (`src/toolbench/corpus/manifest.json`); the corpus copy is generated / gitignored | Re-run `corpus/vendor.sh` (idempotent — skips existing clones); it copies the packaged manifest back into `corpus/`. Default trial provisioning already uses the packaged pin (#78), so a missing or stale corpus copy no longer changes trial SHAs unless you pass a custom `manifest_path`. |
 | Complex deps cache looks rebuilt from a newer corpus commit than the trial | Pre-#99 `ensure_deps` copied npm manifests / ran warmups at corpus `HEAD` while the trial tree stayed on the packaged SHA | Current code pins both paths to the manifest SHA (`git show` / archived warmup tree). Clear the affected `vendor-cache-<uid>/<repo>/` leaf and re-run `ensure_deps` on current `main`. |
+| Complex oracles fail / look wrong after a toolbench pull that bumped the packaged manifest SHA | `ensure_deps` still skips rebuild when the dep path already exists, so a warm `vendor-cache-<uid>/<repo>/` leaf can keep `node_modules` from an older SHA | Delete that repo's cache leaf (or the whole `vendor-cache-<uid>/` tree) and re-run `ensure_deps`. Trials archive the new SHA even when the cache does not. |
 | Summary cache read ↓ but creation ↑ by ~the same | Prefix-sharing moved cost between buckets (S39/S40) | Not a win. Compare read **and** creation together; read alone misleads. |
 | `--run-manifest` run total looks too low vs wall-clock spend | Detached-HEAD usage (`gitBranch="HEAD"`) cannot match any branch set (TB-28) | Read the `detached-HEAD (unattributable)` line (includes input/output). Do not fold it into the run — a detached delegator is indistinguishable from unrelated detached work. |
 | `--run-manifest` shows a large `unattributed` line | Candidate sessions also ran on non-run branches (straddle spillover, S40) | Expected. The run total is only the in-set entry slice; do not treat session totals as run-owned. |
@@ -772,9 +777,6 @@ line means the run headline may understate what the orchestration spent.
 | SessionStart never mentions reclaimable trees | Zero reclaimable candidates, gated `source` (`compact`/`clear`/`fork`), or a swallowed probe failure | Run `uv run toolbench worktrees` for the full table. Silence is the answer when nothing is reclaimable. |
 | `commit-commands:clean_gone` reports success but removes nothing | It greps `git branch -v` for literal `[gone]`; real output is `[origin/<name>: gone]` | Use `uv run toolbench worktrees --reclaimable-only`, then the AGENTS.md reclaim procedure. Do not trust `%(upstream:track)` emptiness either. |
 | Stale linked worktrees under `.claude/worktrees/` fill the disk and block `git branch -d` | Nested agent worktrees keep their branches checked out; `git worktree prune` / `commit-commands:clean_gone` are no-ops while directories exist | `git worktree remove <path>` **then** `git branch -d <branch>`. Select with `uv run toolbench worktrees --reclaimable-only`. The ignore boundary is tracked in `.gitignore` (`.claude/worktrees/`). |
-| Complexity gate fails a function you only moved / renamed | Identity is `(path, qualified name)`; a rename looks like a new function | Reduce it under 10, or land the move with a real simplification. `# noqa: C901` will not hide it. |
-| Complexity gate is silent on a hotspot you expected to fail | Only `src/` and `tests/` `*.py` changed vs `--base` are measured; files outside that scope, or unchanged files, are ignored | Diff against the intended base (`origin/main` locally; CI uses the PR base / pre-push SHA). Confirm the path is under `src/` or `tests/`. |
-| Local complexity gate cannot find `--base` | Shallow clone or missing remote-tracking ref | `git fetch origin main` (or deepen the clone). CI sets `fetch-depth: 0` for the same reason. |
 
 ## Quality gate
 

@@ -29,6 +29,10 @@ steps ran at that checkout's cwd — so a shared clone that advanced past the
 pin without re-vendoring could silently rebuild caches from `HEAD`.
 `ensure_deps` now reads those manifests with `git show <sha>:…` and runs
 warmup commands inside a short-lived archived tree at the same SHA.
+Idempotency remains existence-based (`target.exists()`): a warm cache leaf is
+not rebuilt when the packaged SHA alone changes, so operators must wipe
+`vendor-cache-<uid>/<repo>/` after a manifest pin bump (otherwise trials archive
+the new SHA while oracles execute older `node_modules`).
 
 **Deps-cache invariants** (`UnsafeDepsCache`): the shared cache must diverge from
 the corpus at the filesystem root; must be a real private directory owned by this
