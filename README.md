@@ -408,9 +408,8 @@ bug this adapter exists for is
 
 The project is [uv](https://docs.astral.sh/uv/)-managed (`pyproject.toml` +
 `uv.lock`, empty default runtime deps, and optional `tracing` extra). The `dev`
-group installs the gate tools (`ruff` / `mypy` / `pytest`) plus optional
-parallel-run tooling (`logfire`); the shipped package stays stdlib-only by
-default. Requires Python ≥3.13.
+group installs only the gate tools (`ruff` / `mypy` / `pytest`); the shipped
+package stays stdlib-only by default. Requires Python ≥3.13.
 
 ```sh
 # Bootstrap (once per checkout; also runs implicitly under `uv run`)
@@ -459,11 +458,11 @@ uv run pytest -q
 
 ### Optional Laminar tracing
 
-[Laminar](https://laminar.sh/docs/tracing/integrations/overview) can record one
-trace for each real `toolbench` console command. Library-style calls such as
-`main([...])` stay untraced, so unit tests and embedding applications do not
+[Laminar](https://laminar.sh/docs/tracing/integrations/overview) is an explicit
+opt-in for real `toolbench` console commands. Normal `passive` / `probe` runs
+and library-style calls such as `main([...])` do not import the optional SDK or
 send telemetry. `toolbench worktrees --hook` is also untraced: SessionStart
-must stay silent and failure-tolerant even when the optional SDK is present.
+must stay silent and failure-tolerant even when tracing is otherwise enabled.
 
 Initialization lives in
 `toolbench.observability.setup_tracing.setup_tracing`. It returns `False`
@@ -483,10 +482,14 @@ documents only the variable name.
 Run a representative traced command:
 
 ```sh
-uv run --extra tracing toolbench probe \
+TOOLBENCH_TRACING=1 uv run --extra tracing toolbench probe \
   --session tests/fixtures/probe_session.jsonl \
   --out reports/active-probe-comparison.md
 ```
+
+`TOOLBENCH_TRACING=1` is the opt-in boundary; a Laminar key alone does not
+enable tracing. The normal strict gate uses `uv sync` without the `tracing`
+extra, so the optional SDK is not part of the hermetic default environment.
 
 Verify the newest trace:
 

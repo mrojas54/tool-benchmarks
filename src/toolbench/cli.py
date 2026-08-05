@@ -15,8 +15,11 @@ which loads the DEFECTS fixtures at import time -- a broken fixture must fail
 
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import Callable, Sequence
+
+_TRACING_ENV_VAR = "TOOLBENCH_TRACING"
 
 _HELP = """\
 usage: toolbench <command> [options]
@@ -45,6 +48,11 @@ def _run_command(
     return operation()
 
 
+def _tracing_requested() -> bool:
+    """Enable optional tracing only when the operator explicitly requests it."""
+    return os.environ.get(_TRACING_ENV_VAR) == "1"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args:
@@ -60,7 +68,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         def operation() -> int:
             return passive.main(rest)
 
-        return _run_command(command, operation, trace=argv is None)
+        return _run_command(
+            command, operation, trace=argv is None and _tracing_requested()
+        )
     if command == "probe":
         from toolbench import probe
 
@@ -68,7 +78,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             probe.main(rest)  # returns None; success is "did not raise"
             return 0
 
-        return _run_command(command, run_probe, trace=argv is None)
+        return _run_command(
+            command, run_probe, trace=argv is None and _tracing_requested()
+        )
     if command == "worktrees":
         from toolbench import worktrees
 
@@ -78,7 +90,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_command(
             command,
             run_worktrees,
-            trace=argv is None and "--hook" not in rest,
+            trace=argv is None and _tracing_requested() and "--hook" not in rest,
         )
     print(f"toolbench: unknown command {command!r}\n\n{_HELP}", file=sys.stderr, end="")
     return 2
