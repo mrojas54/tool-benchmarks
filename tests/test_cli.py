@@ -125,7 +125,11 @@ class DispatchTests(unittest.TestCase):
 
         with (
             unittest.mock.patch.dict(
-                os.environ, {"LMNR_PROJECT_API_KEY": "test-project-key"}
+                os.environ,
+                {
+                    "LMNR_PROJECT_API_KEY": "test-project-key",
+                    "TOOLBENCH_TRACING": "1",
+                },
             ),
             unittest.mock.patch.dict(sys.modules, {"lmnr": fake_lmnr}),
             unittest.mock.patch.object(
@@ -204,7 +208,11 @@ class DispatchTests(unittest.TestCase):
 
         with (
             unittest.mock.patch.dict(
-                os.environ, {"LMNR_PROJECT_API_KEY": "test-project-key"}
+                os.environ,
+                {
+                    "LMNR_PROJECT_API_KEY": "test-project-key",
+                    "TOOLBENCH_TRACING": "1",
+                },
             ),
             unittest.mock.patch.dict(sys.modules, {"lmnr": fake_lmnr}),
             unittest.mock.patch.object(
