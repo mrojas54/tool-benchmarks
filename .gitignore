@@ -12,6 +12,8 @@ dist/
 .venv/
 venv/
 env/
+.env
+.lmnr/
 
 # Tooling caches
 .pytest_cache/
@@ -44,3 +46,16 @@ corpus/*/
 corpus/manifest.json
 # roborev snapshots
 /.roborev/
+.bmad-loop/runs/
+.bmad-loop/cache/
+.bmad-loop/policy.toml
+
+# Riptide artifacts (cloud-synced)
+.humanlayer/tasks/
+# machine-local workspace overrides; .humanlayer/workspace.json IS committed
+.humanlayer/workspace.local.json
+
+# Linked git worktrees created by agent tooling: machine-local checkouts,
+# never committed state. Previously suppressed only by .git/info/exclude,
+# which no clone inherits.
+.claude/worktrees/

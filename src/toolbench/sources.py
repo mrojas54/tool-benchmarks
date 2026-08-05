@@ -321,10 +321,10 @@ def _decode_agentsview_list_payload(
                     f"agentsview session list row {index} is missing required field `{field}`"
                 )
             value = row[field]
-            if not isinstance(value, str) or not value:
+            if not isinstance(value, str) or (field != "project" and not value):
                 raise MalformedAgentsViewResponse(
                     f"agentsview session list row {index} field `{field}` "
-                    "must be a non-empty string"
+                    f"must be {'a string' if field == 'project' else 'a non-empty string'}"
                 )
 
     raw_cursor = raw.get("next_cursor")

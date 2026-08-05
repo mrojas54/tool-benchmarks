@@ -1,21 +1,22 @@
 """Unified `toolbench` console entry point.
 
-`toolbench passive ...` and `toolbench probe ...` hand their remaining argv to
-the existing sub-CLIs (`toolbench.passive.main`, `toolbench.probe.main`)
-VERBATIM. The dispatcher parses nothing beyond the subcommand name: the
-sub-CLIs own their flags, including `--help`. argparse's REMAINDER is avoided
-on purpose -- it mishandles a leading option (python/cpython#61252), which is
-the shape of every real invocation (`toolbench passive --agent all`).
+`toolbench passive ...`, `toolbench probe ...` and `toolbench worktrees ...`
+hand their remaining argv to the sub-CLIs (`toolbench.passive.main`,
+`toolbench.probe.main`, `toolbench.worktrees.main`) VERBATIM. The dispatcher
+parses nothing beyond the subcommand name: the sub-CLIs own their flags,
+including `--help`. argparse's REMAINDER is avoided on purpose -- it mishandles
+a leading option (python/cpython#61252), which is the shape of every real
+invocation (`toolbench passive --agent all`).
 
 Imports are lazy per subcommand: `toolbench.probe` imports `toolbench.complex`,
 which loads the DEFECTS fixtures at import time -- a broken fixture must fail
-`toolbench probe`, never `toolbench passive` or `--help`.
+`toolbench probe`, never `toolbench passive`, `toolbench worktrees` or `--help`.
 """
 
 from __future__ import annotations
 
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 _HELP = """\
 usage: toolbench <command> [options]
@@ -25,9 +26,23 @@ Tool-benchmark harness.
 commands:
   passive   Passive tool-usage analyzer (delegates to toolbench.passive).
   probe     Active tool-vs-Bash probe comparison (delegates to toolbench.probe).
+  worktrees Linked git worktree inventory with a reclaim verdict per tree.
 
 Run `toolbench <command> --help` for that command's options.
 """
+
+
+def _run_command(
+    command: str,
+    operation: Callable[[], int],
+    *,
+    trace: bool,
+) -> int:
+    if trace:
+        from toolbench.tracing import run_traced
+
+        operation = run_traced(command)(operation)
+    return operation()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -42,12 +57,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     if command == "passive":
         from toolbench import passive
 
-        return passive.main(rest)
+        def operation() -> int:
+            return passive.main(rest)
+
+        return _run_command(command, operation, trace=argv is None)
     if command == "probe":
         from toolbench import probe
 
-        probe.main(rest)  # returns None; success is "did not raise"
-        return 0
+        def run_probe() -> int:
+            probe.main(rest)  # returns None; success is "did not raise"
+            return 0
+
+        return _run_command(command, run_probe, trace=argv is None)
+    if command == "worktrees":
+        from toolbench import worktrees
+
+        def run_worktrees() -> int:
+            return worktrees.main(rest)
+
+        return _run_command(
+            command,
+            run_worktrees,
+            trace=argv is None and "--hook" not in rest,
+        )
     print(f"toolbench: unknown command {command!r}\n\n{_HELP}", file=sys.stderr, end="")
     return 2
 

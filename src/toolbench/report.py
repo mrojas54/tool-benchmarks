@@ -485,6 +485,313 @@ def _agentsview_timeout_note(timeout: float | None, skips: list[SkipRecord]) -> 
     return None
 
 
+def _render_agent_breakdown(
+    reducer: Reducer,
+    census: AgentCensus,
+    skips: list[SkipRecord],
+    limit: int | None,
+    limit_truncated: bool | None,
+    sampled_by_agent: dict[str, int] | None,
+    frozen_census_note: str | None,
+) -> list[str]:
+    """The Agent Breakdown table, sampling notes, and any frozen-census caveat."""
+    out: list[str] = []
+    out.append("## Agent Breakdown")
+    out.append("")
+    out.append(
+        "| agent | sampled | sessions | calls | output_tokens | input_tokens | errors | no_result |"
+    )
+    out.append("|---|---|---|---|---|---|---|---|")
+    cache_caveats: list[str] = []
+    # Union, not `reducer.agents`: an agent the window never reached has no AgentStats at
+    # all, and dropping its row is the headline bug (TB-33).
+    for agent in sorted(set(reducer.agents) | set(census.totals)):
+        s = reducer.agents.get(agent, AgentStats())
+        sampled = _sampled_cell(
+            s.sessions, census.totals.get(agent), census.unavailable_reason is not None
+        )
+        out.append(
+            f"| {agent} | {sampled} | {s.sessions} | {s.calls} | {s.output_tokens} | "
+            f"{s.input_tokens} | {s.errors} | {s.no_result} |"
+        )
+        if s.sessions_with_cache_data > 0:
+            # S32: session-grain only, orthogonal to the per-call `cache_assisted`
+            # column below -- never mixed into that column, never a sixth section.
+            cache_caveats.append(
+                f"- {agent}: {s.sessions_with_cache_hit} of {s.sessions_with_cache_data} "
+                "sessions carry session-grain `cache_read_tokens` > 0 "
+                "(S32: session grain only — not attributable to individual tool calls)."
+            )
+    out.extend(cache_caveats)
+    out.extend(
+        _sampling_notes(reducer, census, skips, limit, limit_truncated, sampled_by_agent)
+    )
+    if frozen_census_note is not None:
+        # TB-37: a v2 freeze replay's fractions are real but HISTORICAL (archive size as
+        # of freeze time, not today). Rendered right beside the fractions it qualifies --
+        # same placement rationale as `_sampling_notes` itself (a reader comparing two
+        # rows never scrolls to the Summary) -- so it can never read as "current".
+        out.append(frozen_census_note)
+    out.append("")
+    return out
+
+
+def _render_tool_leaderboard(reducer: Reducer) -> list[str]:
+    """The Tool Leaderboard table and its cache-availability legend."""
+    out: list[str] = []
+    out.append("## Tool Leaderboard")
+    out.append("")
+    out.append("| agent | tool | calls | context_tokens | input_tokens | errors | cache_assisted |")
+    out.append("|---|---|---|---|---|---|---|")
+    ranked = sorted(reducer.tools.items(), key=lambda kv: kv[1].output_tokens, reverse=True)
+    for (agent, tool), stats in ranked:
+        if stats.cache_hits > 0:
+            cache_note = "yes"  # a hit was observed; blindness elsewhere is irrelevant
+        elif stats.usage_missing == 0:
+            cache_note = "no"  # measured, and it was zero
+        elif stats.usage_missing == stats.calls:
+            cache_note = "n/a"  # never measurable
+        else:
+            cache_note = "n/a*"  # partially measurable; some rows blind
+        out.append(
+            f"| {agent} | {tool} | {stats.calls} | {stats.output_tokens} | "
+            f"{stats.input_tokens} | {stats.errors} | {cache_note} |"
+        )
+    out.append("")
+    out.append(
+        "`n/a` = usage channel unavailable for every call (S29); "
+        "`n/a*` = unavailable for some. Neither is a measured zero. "
+        "Per S19 this flag is caveat-only and never affects ranking."
+    )
+    out.append("")
+    return out
+
+
+def _render_model_breakdown(reducer: Reducer) -> list[str]:
+    """The per-model tool breakdown table."""
+    out: list[str] = []
+    out.append("## Model Breakdown")
+    out.append("")
+    out.append("| agent | model | tool | calls | context_tokens | input_tokens | errors |")
+    out.append("|---|---|---|---|---|---|---|")
+    # Descending by context tokens; key breaks ties so the table is deterministic.
+    ranked_by_model = sorted(
+        reducer.tools_by_model.items(), key=lambda kv: (-kv[1].output_tokens, kv[0])
+    )
+    for (agent, model, tool), stats in ranked_by_model:
+        out.append(
+            f"| {agent} | {model} | {tool} | {stats.calls} | {stats.output_tokens} | "
+            f"{stats.input_tokens} | {stats.errors} |"
+        )
+    out.append("")
+    return out
+
+
+def _render_inefficiency_callouts(reducer: Reducer) -> list[str]:
+    """The Inefficiency Callouts block (ToolSearch tax, failures, oversized, churn)."""
+    out: list[str] = []
+    out.append("## Inefficiency Callouts")
+    out.append("")
+    ineff = reducer.inefficiency
+    total = reducer.calls_joined
+    share = (ineff.tool_search_calls / total * 100) if total else 0.0
+    out.append(
+        f"- ToolSearch/deferral tax: {ineff.tool_search_calls} of {total} calls "
+        f"({share:.1f}%), {ineff.tool_search_tokens} tokens"
+    )
+    out.append(_callout("Failures", ineff.failures, total, ineff.failures_by_tool))
+    out.append(
+        _callout(
+            f"Oversized outputs (>= {OVERSIZED_OUTPUT_TOKENS} tokens)",
+            ineff.oversized_outputs,
+            total,
+            ineff.oversized_by_tool,
+        )
+    )
+    out.append(
+        _callout("Subagent fan-out calls", ineff.subagent_fanout, total, ineff.subagent_by_tool)
+    )
+    out.append(
+        _callout(
+            "Churn (consecutive-repeat retries)", ineff.churn_retries, total, ineff.churn_by_tool
+        )
+    )
+    out.append("")
+    return out
+
+
+def _render_summary(
+    reducer: Reducer,
+    *,
+    index_source: str,
+    fallback_reason: str | None,
+    skips: list[SkipRecord],
+    include_subagents: bool,
+    subagents_found: int,
+    sessions_discovered: int,
+    since_note: str | None,
+    census: AgentCensus,
+    fingerprint: CorpusFingerprint | None,
+    freeze_note: str | None,
+    run_tickets: int | None,
+    agentsview_timeout: float | None,
+) -> list[str]:
+    """The Summary section: provenance, sampling recap, cache/run tokens, and flags."""
+    out: list[str] = []
+    out.append("## Summary")
+    out.append("")
+    out.append(f"- Index source: {index_source}")
+    # Reconcile discovery so `scanned` is never mistaken for the corpus size: a
+    # discovered session either scanned or skipped, and every skip is one SkipRecord
+    # (TB-21). `discovered` is derived, not a separate count that could drift.
+    scanned = reducer.sessions_scanned
+    skipped = len(skips)
+    out.append(
+        f"- Sessions discovered: {scanned + skipped} / scanned: {scanned} / skipped: {skipped}"
+    )
+    if census.unavailable_reason is None and census.totals:
+        out.append("- Sampling (scanned of each agent's own archive):")
+        # The same split the sampling notes make, because the Summary was still making the
+        # claim they stopped making (roborev #98/#101). `scanned == 0` has two stories, and
+        # keying the tail on the zero alone told only one of them -- so a report could say
+        # "reached, but every session was skipped" beside the table and "not reached by this
+        # window" in the Summary, about the same agent. A reader who scrolls believes the
+        # second. One report, one story: an agent with skips WAS reached (TB-33 Finding 2).
+        summary_skips = Counter(s.agent for s in skips)
+        for agent in sorted(census.totals):
+            agent_total = census.totals[agent]
+            scanned_agent = reducer.agents.get(agent, AgentStats()).sessions
+            pct = f"{scanned_agent / agent_total * 100:.1f}%" if agent_total else "n/a"
+            if scanned_agent == 0 and summary_skips[agent]:
+                tail = (
+                    f" — reached, but all {summary_skips[agent]} sampled sessions were skipped"
+                )
+            elif scanned_agent == 0:
+                tail = " — not reached by this window"
+            else:
+                tail = ""
+            out.append(f"  - {agent}: {scanned_agent} of {agent_total} ({pct}){tail}")
+    if fingerprint is not None:
+        # Identity of the set that produced the numbers above: two reports whose
+        # fingerprints match are diffable; a delta between them is code, not the
+        # corpus moving underneath (TB-22, S36).
+        out.append(
+            f"- Corpus fingerprint: {fingerprint.digest} ({fingerprint.count} sessions scanned)"
+        )
+    if freeze_note is not None:
+        out.append(f"- {freeze_note}")
+    if skips:
+        # Keyed on the typed SkipReason (S34), not a substring scan of prose. A dead
+        # index entry (missing_source) and a parser gap (unknown_schema) are counted
+        # in separate buckets so the actionable one is never buried under the rest.
+        out.append("- Skipped by reason:")
+        for reason, count in _reasons_by_count(skips):
+            out.append(f"  - {reason.value}: {count}")
+    out.append(f"- Tool calls joined: {reducer.calls_joined}")
+    out.append(f"- Malformed lines: {reducer.malformed_total}")
+    cache_read_total = sum(s.cache_read_tokens_total for s in reducer.agents.values())
+    cache_creation_total = sum(s.cache_creation_tokens_total for s in reducer.agents.values())
+    measured_cache_sessions = sum(s.sessions_with_cache_data for s in reducer.agents.values())
+    if measured_cache_sessions > 0:
+        # S39: read + creation together — a prefix-sharing change trades one for the
+        # other, so a read delta alone misleads. Caveat only; never ranks.
+        out.append(
+            f"- Session-grain cache tokens: read={cache_read_total} "
+            f"creation={cache_creation_total} "
+            f"({measured_cache_sessions} measured sessions; S39 caveat, not ranked)"
+        )
+    if reducer.run is not None:
+        # S40: per-run cache cost. Caveat only -- never ranked, never folded into an
+        # inefficiency ratio (S19). Read and creation always together (S39).
+        run_stats = reducer.run_stats
+        out.append(
+            f"- Run cache tokens (run {reducer.run.run}): "
+            f"read={run_stats.read} creation={run_stats.creation} "
+            f"({run_stats.candidate_sessions} candidate session"
+            f"{'' if run_stats.candidate_sessions == 1 else 's'}; S40 caveat, not ranked)"
+        )
+        tickets = run_tickets if run_tickets is not None else reducer.run.ticket_count
+        if tickets > 0:
+            norm = run_stats.per_ticket(tickets)
+            out.append(
+                f"  - per ticket ({tickets}): "
+                f"read={norm['cache_read']:.1f} creation={norm['cache_creation']:.1f}"
+            )
+        if run_stats.unattributed_read or run_stats.unattributed_creation:
+            # Straddle spillover: same-session work on branches outside the run. A
+            # large value means the run total is a narrow slice of what was spent.
+            out.append(
+                f"  - unattributed: read={run_stats.unattributed_read} "
+                f"creation={run_stats.unattributed_creation} "
+                f"(same-session work off the run's branches)"
+            )
+        if run_stats.detached_sessions:
+            # TB-28: usage from DETACHED checkouts (gitBranch="HEAD"). Unattributable
+            # by construction -- "HEAD" matches no manifest branch -- so it is neither
+            # counted in the run nor discardable: a detached delegator and unrelated
+            # detached work look identical. Name it so the run total is never read as
+            # complete when it may not be (S23/S38).
+            # input/output are shown HERE though the run headline is cache-only (S40):
+            # an uncached detached turn has zero cache and real input/output, and a
+            # bare "read=0 creation=0" would read as "nothing to see" -- a lie by
+            # omission on the one line whose whole job is to disclose what was missed.
+            out.append(
+                f"  - detached-HEAD (unattributable): "
+                f"read={run_stats.detached_read} "
+                f"creation={run_stats.detached_creation} "
+                f"input={run_stats.detached_input} "
+                f"output={run_stats.detached_output} "
+                f"({run_stats.detached_sessions} session"
+                f"{'' if run_stats.detached_sessions == 1 else 's'}; "
+                f"may include run delegators -- run total may be low)"
+            )
+        missing = run_stats.missing_branches(reducer.run)
+        if missing:
+            out.append(f"  - matched no entries: {', '.join(missing)}")
+    if reducer.unjoinable:
+        # Records a parser saw but structurally could not join (TB-24): named here so
+        # codex's ~4% web-search undercount is never a silent zero. Attributed by
+        # agent/kind (TB-23's typed-bucket ethos), sorted for a stable diff. Absent
+        # entirely when there is nothing to report.
+        unjoinable_total = sum(reducer.unjoinable.values())
+        out.append(f"- Unjoinable tool records (seen, not joined): {unjoinable_total}")
+        for (agent_name, kind), count in sorted(reducer.unjoinable.items()):
+            out.append(f"  - {agent_name}/{kind}: {count}")
+    # Earned, not asserted (TB-31). This line used to render straight from the CLI flag,
+    # so it printed "Subagents included: no" on the AgentsView path -- which never listed
+    # a subagent and therefore could not have excluded one. Reporting the count actually
+    # stamped at discovery means the claim is falsifiable: a `no` beside `0 of N` says
+    # the index found no subagents, not that the filter did its job.
+    subagent_note = f"{subagents_found} of {sessions_discovered} discovered"
+    if include_subagents:
+        out.append(f"- Subagents included: yes ({subagent_note} are subagent sessions)")
+    else:
+        out.append(f"- Subagents included: no ({subagent_note} excluded)")
+    out.append(f"- AgentsView fallback reason: {fallback_reason if fallback_reason else 'none'}")
+    timeout_note = _agentsview_timeout_note(agentsview_timeout, skips)
+    if timeout_note:
+        out.append(timeout_note)
+    out.append("- Note: --since is file-mtime based.")
+    if since_note:
+        out.append(f"- --since value used: {since_note}")
+    return out
+
+
+def _render_skipped_detail(verbose: bool, skips: list[SkipRecord]) -> list[str]:
+    """The verbose-only per-session skip detail (empty unless verbose and skips)."""
+    out: list[str] = []
+    if verbose and skips:
+        # Individual ids live here, never in the default report -- 1600 ids on one
+        # line is what made the pre-TB-21 report impossible to tally (TB-21).
+        out.append("")
+        out.append("### Skipped sessions (detail)")
+        out.append("")
+        for skip in skips:
+            ident = skip.session_id or "(root)"
+            out.append(f"- {ident} [{skip.agent}] {skip.reason.value}: {skip.detail}")
+    return out
+
+
 def render_report(
     reducer: Reducer,
     *,
@@ -520,259 +827,26 @@ def render_report(
     what `passive.py` hands it, the same division of labor as `freeze_note`.
     """
     lines: list[str] = ["# Tool Usage Report", ""]
-
-    lines.append("## Agent Breakdown")
-    lines.append("")
-    lines.append(
-        "| agent | sampled | sessions | calls | output_tokens | input_tokens | errors | no_result |"
+    lines += _render_agent_breakdown(
+        reducer, census, skips, limit, limit_truncated, sampled_by_agent, frozen_census_note
     )
-    lines.append("|---|---|---|---|---|---|---|---|")
-    cache_caveats: list[str] = []
-    # Union, not `reducer.agents`: an agent the window never reached has no AgentStats at
-    # all, and dropping its row is the headline bug (TB-33).
-    for agent in sorted(set(reducer.agents) | set(census.totals)):
-        s = reducer.agents.get(agent, AgentStats())
-        sampled = _sampled_cell(
-            s.sessions, census.totals.get(agent), census.unavailable_reason is not None
-        )
-        lines.append(
-            f"| {agent} | {sampled} | {s.sessions} | {s.calls} | {s.output_tokens} | "
-            f"{s.input_tokens} | {s.errors} | {s.no_result} |"
-        )
-        if s.sessions_with_cache_data > 0:
-            # S32: session-grain only, orthogonal to the per-call `cache_assisted`
-            # column below -- never mixed into that column, never a sixth section.
-            cache_caveats.append(
-                f"- {agent}: {s.sessions_with_cache_hit} of {s.sessions_with_cache_data} "
-                "sessions carry session-grain `cache_read_tokens` > 0 "
-                "(S32: session grain only — not attributable to individual tool calls)."
-            )
-    lines.extend(cache_caveats)
-    lines.extend(
-        _sampling_notes(reducer, census, skips, limit, limit_truncated, sampled_by_agent)
+    lines += _render_tool_leaderboard(reducer)
+    lines += _render_model_breakdown(reducer)
+    lines += _render_inefficiency_callouts(reducer)
+    lines += _render_summary(
+        reducer,
+        index_source=index_source,
+        fallback_reason=fallback_reason,
+        skips=skips,
+        include_subagents=include_subagents,
+        subagents_found=subagents_found,
+        sessions_discovered=sessions_discovered,
+        since_note=since_note,
+        census=census,
+        fingerprint=fingerprint,
+        freeze_note=freeze_note,
+        run_tickets=run_tickets,
+        agentsview_timeout=agentsview_timeout,
     )
-    if frozen_census_note is not None:
-        # TB-37: a v2 freeze replay's fractions are real but HISTORICAL (archive size as
-        # of freeze time, not today). Rendered right beside the fractions it qualifies --
-        # same placement rationale as `_sampling_notes` itself (a reader comparing two
-        # rows never scrolls to the Summary) -- so it can never read as "current".
-        lines.append(frozen_census_note)
-    lines.append("")
-
-    lines.append("## Tool Leaderboard")
-    lines.append("")
-    lines.append("| agent | tool | calls | context_tokens | input_tokens | errors | cache_assisted |")
-    lines.append("|---|---|---|---|---|---|---|")
-    ranked = sorted(reducer.tools.items(), key=lambda kv: kv[1].output_tokens, reverse=True)
-    for (agent, tool), stats in ranked:
-        if stats.cache_hits > 0:
-            cache_note = "yes"  # a hit was observed; blindness elsewhere is irrelevant
-        elif stats.usage_missing == 0:
-            cache_note = "no"  # measured, and it was zero
-        elif stats.usage_missing == stats.calls:
-            cache_note = "n/a"  # never measurable
-        else:
-            cache_note = "n/a*"  # partially measurable; some rows blind
-        lines.append(
-            f"| {agent} | {tool} | {stats.calls} | {stats.output_tokens} | "
-            f"{stats.input_tokens} | {stats.errors} | {cache_note} |"
-        )
-    lines.append("")
-    lines.append(
-        "`n/a` = usage channel unavailable for every call (S29); "
-        "`n/a*` = unavailable for some. Neither is a measured zero. "
-        "Per S19 this flag is caveat-only and never affects ranking."
-    )
-    lines.append("")
-
-    lines.append("## Model Breakdown")
-    lines.append("")
-    lines.append("| agent | model | tool | calls | context_tokens | input_tokens | errors |")
-    lines.append("|---|---|---|---|---|---|---|")
-    # Descending by context tokens; key breaks ties so the table is deterministic.
-    ranked_by_model = sorted(
-        reducer.tools_by_model.items(), key=lambda kv: (-kv[1].output_tokens, kv[0])
-    )
-    for (agent, model, tool), stats in ranked_by_model:
-        lines.append(
-            f"| {agent} | {model} | {tool} | {stats.calls} | {stats.output_tokens} | "
-            f"{stats.input_tokens} | {stats.errors} |"
-        )
-    lines.append("")
-
-    lines.append("## Inefficiency Callouts")
-    lines.append("")
-    ineff = reducer.inefficiency
-    total = reducer.calls_joined
-    share = (ineff.tool_search_calls / total * 100) if total else 0.0
-    lines.append(
-        f"- ToolSearch/deferral tax: {ineff.tool_search_calls} of {total} calls "
-        f"({share:.1f}%), {ineff.tool_search_tokens} tokens"
-    )
-    lines.append(_callout("Failures", ineff.failures, total, ineff.failures_by_tool))
-    lines.append(
-        _callout(
-            f"Oversized outputs (>= {OVERSIZED_OUTPUT_TOKENS} tokens)",
-            ineff.oversized_outputs,
-            total,
-            ineff.oversized_by_tool,
-        )
-    )
-    lines.append(
-        _callout("Subagent fan-out calls", ineff.subagent_fanout, total, ineff.subagent_by_tool)
-    )
-    lines.append(
-        _callout(
-            "Churn (consecutive-repeat retries)", ineff.churn_retries, total, ineff.churn_by_tool
-        )
-    )
-    lines.append("")
-
-    lines.append("## Summary")
-    lines.append("")
-    lines.append(f"- Index source: {index_source}")
-    # Reconcile discovery so `scanned` is never mistaken for the corpus size: a
-    # discovered session either scanned or skipped, and every skip is one SkipRecord
-    # (TB-21). `discovered` is derived, not a separate count that could drift.
-    scanned = reducer.sessions_scanned
-    skipped = len(skips)
-    lines.append(
-        f"- Sessions discovered: {scanned + skipped} / scanned: {scanned} / skipped: {skipped}"
-    )
-    if census.unavailable_reason is None and census.totals:
-        lines.append("- Sampling (scanned of each agent's own archive):")
-        # The same split the sampling notes make, because the Summary was still making the
-        # claim they stopped making (roborev #98/#101). `scanned == 0` has two stories, and
-        # keying the tail on the zero alone told only one of them -- so a report could say
-        # "reached, but every session was skipped" beside the table and "not reached by this
-        # window" in the Summary, about the same agent. A reader who scrolls believes the
-        # second. One report, one story: an agent with skips WAS reached (TB-33 Finding 2).
-        summary_skips = Counter(s.agent for s in skips)
-        for agent in sorted(census.totals):
-            agent_total = census.totals[agent]
-            scanned_agent = reducer.agents.get(agent, AgentStats()).sessions
-            pct = f"{scanned_agent / agent_total * 100:.1f}%" if agent_total else "n/a"
-            if scanned_agent == 0 and summary_skips[agent]:
-                tail = (
-                    f" — reached, but all {summary_skips[agent]} sampled sessions were skipped"
-                )
-            elif scanned_agent == 0:
-                tail = " — not reached by this window"
-            else:
-                tail = ""
-            lines.append(f"  - {agent}: {scanned_agent} of {agent_total} ({pct}){tail}")
-    if fingerprint is not None:
-        # Identity of the set that produced the numbers above: two reports whose
-        # fingerprints match are diffable; a delta between them is code, not the
-        # corpus moving underneath (TB-22, S36).
-        lines.append(
-            f"- Corpus fingerprint: {fingerprint.digest} ({fingerprint.count} sessions scanned)"
-        )
-    if freeze_note is not None:
-        lines.append(f"- {freeze_note}")
-    if skips:
-        # Keyed on the typed SkipReason (S34), not a substring scan of prose. A dead
-        # index entry (missing_source) and a parser gap (unknown_schema) are counted
-        # in separate buckets so the actionable one is never buried under the rest.
-        lines.append("- Skipped by reason:")
-        for reason, count in _reasons_by_count(skips):
-            lines.append(f"  - {reason.value}: {count}")
-    lines.append(f"- Tool calls joined: {reducer.calls_joined}")
-    lines.append(f"- Malformed lines: {reducer.malformed_total}")
-    cache_read_total = sum(s.cache_read_tokens_total for s in reducer.agents.values())
-    cache_creation_total = sum(s.cache_creation_tokens_total for s in reducer.agents.values())
-    measured_cache_sessions = sum(s.sessions_with_cache_data for s in reducer.agents.values())
-    if measured_cache_sessions > 0:
-        # S39: read + creation together — a prefix-sharing change trades one for the
-        # other, so a read delta alone misleads. Caveat only; never ranks.
-        lines.append(
-            f"- Session-grain cache tokens: read={cache_read_total} "
-            f"creation={cache_creation_total} "
-            f"({measured_cache_sessions} measured sessions; S39 caveat, not ranked)"
-        )
-    if reducer.run is not None:
-        # S40: per-run cache cost. Caveat only -- never ranked, never folded into an
-        # inefficiency ratio (S19). Read and creation always together (S39).
-        run_stats = reducer.run_stats
-        lines.append(
-            f"- Run cache tokens (run {reducer.run.run}): "
-            f"read={run_stats.read} creation={run_stats.creation} "
-            f"({run_stats.candidate_sessions} candidate session"
-            f"{'' if run_stats.candidate_sessions == 1 else 's'}; S40 caveat, not ranked)"
-        )
-        tickets = run_tickets if run_tickets is not None else reducer.run.ticket_count
-        if tickets > 0:
-            norm = run_stats.per_ticket(tickets)
-            lines.append(
-                f"  - per ticket ({tickets}): "
-                f"read={norm['cache_read']:.1f} creation={norm['cache_creation']:.1f}"
-            )
-        if run_stats.unattributed_read or run_stats.unattributed_creation:
-            # Straddle spillover: same-session work on branches outside the run. A
-            # large value means the run total is a narrow slice of what was spent.
-            lines.append(
-                f"  - unattributed: read={run_stats.unattributed_read} "
-                f"creation={run_stats.unattributed_creation} "
-                f"(same-session work off the run's branches)"
-            )
-        if run_stats.detached_sessions:
-            # TB-28: usage from DETACHED checkouts (gitBranch="HEAD"). Unattributable
-            # by construction -- "HEAD" matches no manifest branch -- so it is neither
-            # counted in the run nor discardable: a detached delegator and unrelated
-            # detached work look identical. Name it so the run total is never read as
-            # complete when it may not be (S23/S38).
-            # input/output are shown HERE though the run headline is cache-only (S40):
-            # an uncached detached turn has zero cache and real input/output, and a
-            # bare "read=0 creation=0" would read as "nothing to see" -- a lie by
-            # omission on the one line whose whole job is to disclose what was missed.
-            lines.append(
-                f"  - detached-HEAD (unattributable): "
-                f"read={run_stats.detached_read} "
-                f"creation={run_stats.detached_creation} "
-                f"input={run_stats.detached_input} "
-                f"output={run_stats.detached_output} "
-                f"({run_stats.detached_sessions} session"
-                f"{'' if run_stats.detached_sessions == 1 else 's'}; "
-                f"may include run delegators -- run total may be low)"
-            )
-        missing = run_stats.missing_branches(reducer.run)
-        if missing:
-            lines.append(f"  - matched no entries: {', '.join(missing)}")
-    if reducer.unjoinable:
-        # Records a parser saw but structurally could not join (TB-24): named here so
-        # codex's ~4% web-search undercount is never a silent zero. Attributed by
-        # agent/kind (TB-23's typed-bucket ethos), sorted for a stable diff. Absent
-        # entirely when there is nothing to report.
-        unjoinable_total = sum(reducer.unjoinable.values())
-        lines.append(f"- Unjoinable tool records (seen, not joined): {unjoinable_total}")
-        for (agent_name, kind), count in sorted(reducer.unjoinable.items()):
-            lines.append(f"  - {agent_name}/{kind}: {count}")
-    # Earned, not asserted (TB-31). This line used to render straight from the CLI flag,
-    # so it printed "Subagents included: no" on the AgentsView path -- which never listed
-    # a subagent and therefore could not have excluded one. Reporting the count actually
-    # stamped at discovery means the claim is falsifiable: a `no` beside `0 of N` says
-    # the index found no subagents, not that the filter did its job.
-    subagent_note = f"{subagents_found} of {sessions_discovered} discovered"
-    if include_subagents:
-        lines.append(f"- Subagents included: yes ({subagent_note} are subagent sessions)")
-    else:
-        lines.append(f"- Subagents included: no ({subagent_note} excluded)")
-    lines.append(f"- AgentsView fallback reason: {fallback_reason if fallback_reason else 'none'}")
-    timeout_note = _agentsview_timeout_note(agentsview_timeout, skips)
-    if timeout_note:
-        lines.append(timeout_note)
-    lines.append("- Note: --since is file-mtime based.")
-    if since_note:
-        lines.append(f"- --since value used: {since_note}")
-
-    if verbose and skips:
-        # Individual ids live here, never in the default report -- 1600 ids on one
-        # line is what made the pre-TB-21 report impossible to tally (TB-21).
-        lines.append("")
-        lines.append("### Skipped sessions (detail)")
-        lines.append("")
-        for skip in skips:
-            ident = skip.session_id or "(root)"
-            lines.append(f"- {ident} [{skip.agent}] {skip.reason.value}: {skip.detail}")
-
+    lines += _render_skipped_detail(verbose, skips)
     return "\n".join(lines) + "\n"

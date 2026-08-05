@@ -16,7 +16,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from toolbench.adapters import UnknownSchema
-from toolbench.freeze import read_manifest, write_manifest
+from toolbench.freeze import MalformedFreezeManifest, read_manifest, write_manifest
 from toolbench.reducer import (
     OVERSIZED_OUTPUT_TOKENS,
     UNKNOWN_MODEL,
@@ -464,35 +464,38 @@ def _parse_ref(ref: SessionRef, runner: Runner | None) -> ParseResult:
     return pick_adapter(ref, runner).parse(ref)
 
 
-def main(
-    argv: list[str] | None = None,
+@dataclass(frozen=True)
+class _ResolvedCorpus:
+    """Refs + census for this run, from a `--freeze` replay or live discovery.
+
+    The five leading fields mirror `_discover_refs`'s return; `frozen_census_note`
+    is set only on a v2 freeze replay whose manifest carried a real census (TB-37),
+    so a replay and a live discover hand `main` the same shape.
+    """
+
+    refs: list[SessionRef]
+    fallback_reason: str | None
+    skips: list[SkipRecord]
+    census: AgentCensus
+    limit_truncated: bool | None
+    frozen_census_note: str | None
+
+
+def _resolve_corpus(
+    args: CliArgs,
+    root: str,
+    runner: Runner | None,
     *,
-    runner: Runner | None = None,
-    root: str = "~/.claude/projects",
-) -> int:
-    args = parse_args(argv)
-
-    # `--freeze` pins the discovered set: absent manifest -> discover and write it
-    # once; present manifest -> replay it, bypassing live discovery so the input
-    # set cannot drift between runs (TB-22, S37).
-    freeze_path = args.freeze
-    replaying = freeze_path is not None and Path(freeze_path).expanduser().exists()
-
-    # Bind --agentsview-timeout to the DEFAULT runner, once, here (TB-39). This is the sole
-    # place the default is chosen: both consumers (iter_sessions, and AgentsViewLoader via
-    # pick_adapter) fall back to `_run_agentsview` independently when `runner is None`, so
-    # binding it here reaches all four call sites with no new plumbing. `partial` still
-    # satisfies `Runner = Callable[[list[str]], CompletedProcess[str]]`.
-    #
-    # An EXPLICITLY injected runner is never wrapped: the flag configures the default, it
-    # does not override the seam. Every test in this suite injects one, and wrapping those
-    # would quietly change what they exercise.
-    if runner is None:
-        runner = functools.partial(
-            _run_agentsview,
-            timeout=args.agentsview_timeout if args.agentsview_timeout > 0 else None,
-        )
-
+    freeze_path: str | None,
+    replaying: bool,
+) -> _ResolvedCorpus | None:
+    """Resolve refs + census: replay a frozen manifest, or discover live and (once)
+    write it. Returns `None` after printing the fatal to stderr when live discovery
+    hits an unrecoverable source error -- `main` maps that to exit 1, exactly as the
+    inline block did. `freeze_path`/`replaying` are decided by `main` before the
+    write-once-vs-replay split (an existing manifest is replayed, an absent one is
+    written after discovery).
+    """
     refs: list[SessionRef]
     fallback_reason: str | None
     skips: list[SkipRecord]
@@ -511,7 +514,11 @@ def main(
     frozen_census_note: str | None = None
     if replaying:
         assert freeze_path is not None
-        manifest = read_manifest(freeze_path)
+        try:
+            manifest = read_manifest(freeze_path)
+        except MalformedFreezeManifest as exc:
+            print(f"toolbench.passive: fatal freeze error: {exc}", file=sys.stderr)
+            return None
         refs, fallback_reason, skips = manifest.refs, None, []
         if manifest.census is None:
             # A freeze pins the REF LIST, not the archive it was drawn from (TB-22): a v1
@@ -590,15 +597,79 @@ def main(
             )
         except (FileNotFoundError, RuntimeError, ValueError) as exc:
             print(f"toolbench.passive: fatal source error: {exc}", file=sys.stderr)
-            return 1
+            return None
         if freeze_path is not None:
-            write_manifest(
-                freeze_path,
-                refs,
-                corpus_fingerprint(r.session_id for r in refs).digest,
-                census=census,
-                census_includes_subagents=not args.exclude_subagents,
-            )
+            try:
+                write_manifest(
+                    freeze_path,
+                    refs,
+                    corpus_fingerprint(r.session_id for r in refs).digest,
+                    census=census,
+                    census_includes_subagents=not args.exclude_subagents,
+                )
+            except OSError as exc:
+                print(
+                    f"toolbench.passive: fatal freeze error: could not write "
+                    f"{freeze_path}: {exc}",
+                    file=sys.stderr,
+                )
+                return None
+    return _ResolvedCorpus(
+        refs,
+        fallback_reason,
+        skips,
+        census,
+        limit_truncated,
+        frozen_census_note,
+    )
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    runner: Runner | None = None,
+    root: str = "~/.claude/projects",
+) -> int:
+    args = parse_args(argv)
+
+    # `--freeze` pins the discovered set: absent manifest -> discover and write it
+    # once; present manifest -> replay it, bypassing live discovery so the input
+    # set cannot drift between runs (TB-22, S37).
+    freeze_path = args.freeze
+    freeze_p = Path(freeze_path).expanduser() if freeze_path is not None else None
+    if freeze_p is not None and freeze_p.exists() and not freeze_p.is_file():
+        print(
+            f"toolbench.passive: fatal freeze error: {freeze_path} exists but is "
+            "not a regular file",
+            file=sys.stderr,
+        )
+        return 1
+    replaying = freeze_p is not None and freeze_p.is_file()
+
+    # Bind --agentsview-timeout to the DEFAULT runner, once, here (TB-39). This is the sole
+    # place the default is chosen: both consumers (iter_sessions, and AgentsViewLoader via
+    # pick_adapter) fall back to `_run_agentsview` independently when `runner is None`, so
+    # binding it here reaches all four call sites with no new plumbing. `partial` still
+    # satisfies `Runner = Callable[[list[str]], CompletedProcess[str]]`.
+    #
+    # An EXPLICITLY injected runner is never wrapped: the flag configures the default, it
+    # does not override the seam. Every test in this suite injects one, and wrapping those
+    # would quietly change what they exercise.
+    if runner is None:
+        runner = functools.partial(
+            _run_agentsview,
+            timeout=args.agentsview_timeout if args.agentsview_timeout > 0 else None,
+        )
+
+    resolved = _resolve_corpus(args, root, runner, freeze_path=freeze_path, replaying=replaying)
+    if resolved is None:
+        return 1
+    refs = resolved.refs
+    fallback_reason = resolved.fallback_reason
+    skips = resolved.skips
+    census = resolved.census
+    limit_truncated = resolved.limit_truncated
+    frozen_census_note = resolved.frozen_census_note
 
     # Counted before the filter runs, on both the discovery and the replay path -- these
     # are what the provenance line reports, so they must describe the corpus as it was

@@ -195,6 +195,26 @@ class IterAgentsviewSessionsTests(unittest.TestCase):
 
 
 class AgentsViewPayloadValidationTests(unittest.TestCase):
+    def test_empty_project_is_a_valid_agentsview_row(self) -> None:
+        """Project is required and string-typed, but global sessions use ``""``."""
+        global_session = {"id": "reasonix:global", "project": "", "agent": "reasonix"}
+        runner = _av(_page(global_session), _page(global_session))
+
+        refs = list(iter_agentsview_sessions(runner=runner))
+
+        self.assertEqual(
+            refs,
+            [
+                SessionRef(
+                    agent="reasonix",
+                    source="agentsview",
+                    project="",
+                    session_id="reasonix:global",
+                    path=None,
+                )
+            ],
+        )
+
     def test_eager_parent_probe_rejects_a_row_missing_id(self) -> None:
         malformed = json.dumps({
             "sessions": [{"project": "p", "agent": "claude"}],

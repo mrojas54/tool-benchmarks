@@ -622,6 +622,38 @@ class RunManifestMainTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("not valid UTF-8", err.getvalue())
 
+
+class FreezeManifestMainTests(unittest.TestCase):
+    def test_malformed_freeze_manifest_replay_exits_1_with_a_clear_message(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "freeze.json"
+            path.write_text("not json\n", encoding="utf-8")
+            err = io.StringIO()
+            with redirect_stderr(err), redirect_stdout(io.StringIO()):
+                code = main(["--index-source", "raw", "--all", "--freeze", str(path)])
+            self.assertEqual(code, 1)
+            self.assertIn("fatal freeze error", err.getvalue())
+            self.assertIn("not valid JSON", err.getvalue())
+
+    def test_non_utf8_freeze_manifest_replay_exits_1_with_a_clear_message(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "freeze.json"
+            path.write_bytes(b"\xff\xfe\x00invalid")
+            err = io.StringIO()
+            with redirect_stderr(err), redirect_stdout(io.StringIO()):
+                code = main(["--index-source", "raw", "--all", "--freeze", str(path)])
+            self.assertEqual(code, 1)
+            self.assertIn("not valid UTF-8", err.getvalue())
+
+    def test_existing_directory_as_freeze_path_exits_1_with_a_clear_message(self) -> None:
+        with TemporaryDirectory() as tmp:
+            err = io.StringIO()
+            with redirect_stderr(err), redirect_stdout(io.StringIO()):
+                code = main(["--index-source", "raw", "--all", "--freeze", tmp])
+            self.assertEqual(code, 1)
+            self.assertIn("not a regular file", err.getvalue())
+
+
 class NonTranscriptExportTests(unittest.TestCase):
     """Binary payloads demote to skipped_roots, keeping `Malformed lines` honest (TB-10).
 
@@ -1564,6 +1596,46 @@ class MidListingAutoFallbackTests(unittest.TestCase):
     def _probe_ok(self) -> subprocess.CompletedProcess[str]:
         # `_probe_agentsview`'s `--limit 1` health check (S10): answered, healthy.
         return completed(stdout=json.dumps({"sessions": [], "next_cursor": "", "total": 0}))
+
+    def test_empty_project_keeps_reasonix_in_agentsview_listing(self) -> None:
+        """A global session is valid AgentsView data, not a reason to fall back to raw."""
+        claude = {"id": "claude-session", "project": "toolbench", "agent": "claude-code"}
+        reasonix = {"id": "reasonix:global", "project": "", "agent": "reasonix"}
+        listing = json.dumps({
+            "sessions": [claude, reasonix],
+            "next_cursor": "",
+            "total": 2,
+        })
+        runner = FakeRunner([
+            completed(stdout=json.dumps({
+                "sessions": [claude],
+                "next_cursor": "",
+                "total": 2,
+            })),
+            completed(stdout=listing),
+            completed(stdout=json.dumps({"sessions": [], "next_cursor": "", "total": 1})),
+            completed(stdout=json.dumps({"sessions": [], "next_cursor": "", "total": 1})),
+            completed(stdout=json.dumps({"sessions": [], "next_cursor": "", "total": 2})),
+            completed(stdout=listing),
+        ])
+        args = parse_args(["--index-source", "auto"])
+
+        refs, fallback_reason, skips, census, truncated = _discover_refs(
+            args, "/nonexistent", runner
+        )
+
+        self.assertEqual(
+            [(ref.agent, ref.source, ref.session_id, ref.project) for ref in refs],
+            [
+                ("claude-code", "agentsview", "claude-session", "toolbench"),
+                ("reasonix", "agentsview", "reasonix:global", ""),
+            ],
+        )
+        self.assertIsNone(fallback_reason)
+        self.assertEqual(skips, [])
+        self.assertEqual(census.totals, {"claude-code": 1, "reasonix": 1})
+        self.assertEqual(census.archive_total, 2)
+        self.assertFalse(truncated)
 
     def test_nonzero_exit_mid_listing_falls_back_to_raw(self) -> None:
         """The pre-existing failure mode (unrelated to TB-32's timeout work): a daemon

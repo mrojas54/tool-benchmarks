@@ -7,12 +7,18 @@ dependencies = []
 [project.scripts]
 toolbench = "toolbench.cli:main"
 
+[project.optional-dependencies]
+tracing = [
+    "lmnr>=0.7.56",
+]
+
 [build-system]
 requires = ["uv_build>=0.8.17,<0.9.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "logfire>=4.37.0",
     "mypy>=2.2.0",
     "pytest>=9.1.1",
     "ruff>=0.15.20",
@@ -20,3 +26,19 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py313"
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+# Pin the type-check scope so a bare local `mypy` mirrors the CI gate
+# (`mypy --strict src/toolbench tests`). Without this, a bare `mypy .` descends
+# into the `tools/` probe corpus -- vendored benchmark fixtures that are excluded
+# from the gate by design -- and reports ~88 strict errors that CI never sees.
+# CI still passes explicit paths + `--strict` on the command line, which take
+# precedence over `files` and duplicate `strict`, so this changes local runs only.
+[tool.mypy]
+files = ["src/toolbench", "tests"]
+strict = true

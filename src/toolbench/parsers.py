@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import ClassVar
 
 from toolbench.transcript import (
@@ -74,6 +74,86 @@ def _as_usage_int(value: object) -> int:
     if isinstance(value, float):
         return int(value)
     return 0
+
+
+@dataclass
+class _UsageTally:
+    """Session-grain usage totals plus per-branch buckets (S39/S40), accumulated
+    across one parse. Mutable so the per-record helper can fold into it -- the five
+    bare int counters it replaces could not be updated in place from a helper."""
+
+    cache_read: int = 0
+    cache_creation: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    usage_messages: int = 0
+    by_branch: dict[str, BranchUsage] = field(default_factory=dict)
+
+
+def _account_usage(tally: _UsageTally, entry: dict[str, object], message: object) -> None:
+    """Fold one record's `usage` into the session tally and its branch bucket (CQ 1.2).
+
+    Summed over every message that carries `usage`, not only tool_use turns --
+    assistant turns without tools still bill. A record with no dict `usage` is a no-op.
+    """
+    if not isinstance(message, dict):
+        return
+    usage = message.get("usage")
+    if not isinstance(usage, dict):
+        return
+    tally.usage_messages += 1
+    entry_read = _as_usage_int(usage.get("cache_read_input_tokens"))
+    entry_creation = _as_usage_int(usage.get("cache_creation_input_tokens"))
+    entry_input = _as_usage_int(usage.get("input_tokens"))
+    entry_output = _as_usage_int(usage.get("output_tokens"))
+    tally.cache_read += entry_read
+    tally.cache_creation += entry_creation
+    tally.input_tokens += entry_input
+    tally.output_tokens += entry_output
+    # S40: same pass, no second interpreter (CQ 1.2). Bucket by the ENTRY's branch,
+    # not the session's -- sessions straddle.
+    branch = entry.get("gitBranch")
+    bucket = tally.by_branch.setdefault(
+        branch if isinstance(branch, str) else "", BranchUsage()
+    )
+    bucket.read += entry_read
+    bucket.creation += entry_creation
+    bucket.input += entry_input
+    bucket.output += entry_output
+    bucket.messages += 1
+
+
+def _track_turn(
+    turns: dict[str, TurnStats],
+    entry: dict[str, object],
+    message: object,
+    content: object,
+    *,
+    track_turns: bool,
+) -> str | None:
+    """Attribute one assistant record to its billing turn (S26), updating `turns`.
+
+    Returns the turn key so this record's pending tool calls can be tagged with it,
+    or `None` when turns aren't tracked or the record is not assistant output. May
+    raise `TurnKeyError` when an assistant record lacks `requestId`.
+    """
+    if not (
+        track_turns
+        and isinstance(message, dict)
+        and isinstance(content, list)
+        and _is_assistant_message(entry, message)
+    ):
+        return None
+    turn_key = _claude_turn_key(entry)
+    stats = turns.setdefault(turn_key, TurnStats())
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "tool_use":
+            stats.tool_uses += 1
+        else:
+            stats.non_tool_output |= _emits_non_tool_output(block)
+    return turn_key
 
 
 @dataclass
@@ -249,8 +329,7 @@ class ClaudeParser(TranscriptParser):
         turns: dict[str, TurnStats] = {}
         # S39 / CQ 1.2: session-grain usage summed over every message that carries
         # `usage`, not only tool_use turns — assistant turns without tools still bill.
-        cache_read = cache_creation = input_tokens = output_tokens = usage_messages = 0
-        usage_by_branch: dict[str, BranchUsage] = {}
+        tally = _UsageTally()
 
         for raw_line in lines:
             line = raw_line.strip()
@@ -272,46 +351,9 @@ class ClaudeParser(TranscriptParser):
             session_id_str = session_id if isinstance(session_id, str) else ""
             ts_str = ts if isinstance(ts, str) else ""
 
-            if isinstance(message, dict):
-                usage = message.get("usage")
-                if isinstance(usage, dict):
-                    usage_messages += 1
-                    entry_read = _as_usage_int(usage.get("cache_read_input_tokens"))
-                    entry_creation = _as_usage_int(usage.get("cache_creation_input_tokens"))
-                    entry_input = _as_usage_int(usage.get("input_tokens"))
-                    entry_output = _as_usage_int(usage.get("output_tokens"))
-                    cache_read += entry_read
-                    cache_creation += entry_creation
-                    input_tokens += entry_input
-                    output_tokens += entry_output
-                    # S40: same pass, no second interpreter (CQ 1.2). Bucket by the
-                    # ENTRY's branch, not the session's -- sessions straddle.
-                    branch = entry.get("gitBranch")
-                    bucket = usage_by_branch.setdefault(
-                        branch if isinstance(branch, str) else "", BranchUsage()
-                    )
-                    bucket.read += entry_read
-                    bucket.creation += entry_creation
-                    bucket.input += entry_input
-                    bucket.output += entry_output
-                    bucket.messages += 1
+            _account_usage(tally, entry, message)
 
-            turn_key: str | None = None
-            if (
-                track_turns
-                and isinstance(message, dict)
-                and isinstance(content, list)
-                and _is_assistant_message(entry, message)
-            ):
-                turn_key = _claude_turn_key(entry)
-                stats = turns.setdefault(turn_key, TurnStats())
-                for block in content:
-                    if not isinstance(block, dict):
-                        continue
-                    if block.get("type") == "tool_use":
-                        stats.tool_uses += 1
-                    else:
-                        stats.non_tool_output |= _emits_non_tool_output(block)
+            turn_key = _track_turn(turns, entry, message, content, track_turns=track_turns)
 
             if isinstance(content, list):
                 for tool_use_block in content:
@@ -376,17 +418,17 @@ class ClaudeParser(TranscriptParser):
         calls.extend(
             _drain_pending(pending, agent=agent, source=source, project=project)
         )
-        if usage_messages == 0:
+        if tally.usage_messages == 0:
             return ParseResult(calls=calls, malformed=malformed, turns=turns)
         return ParseResult(
             calls=calls,
             malformed=malformed,
-            session_cache_read_tokens=cache_read,
-            session_cache_creation_tokens=cache_creation,
-            session_input_tokens=input_tokens,
-            session_output_tokens=output_tokens,
-            session_usage_messages=usage_messages,
-            usage_by_branch=usage_by_branch,
+            session_cache_read_tokens=tally.cache_read,
+            session_cache_creation_tokens=tally.cache_creation,
+            session_input_tokens=tally.input_tokens,
+            session_output_tokens=tally.output_tokens,
+            session_usage_messages=tally.usage_messages,
+            usage_by_branch=tally.by_branch,
             turns=turns,
         )
 

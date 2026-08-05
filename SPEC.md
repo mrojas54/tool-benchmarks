@@ -69,8 +69,9 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   breaks during the pagination that follows -- a nonzero exit, a hang
   (`AgentsViewTimeout`, TB-32), or a schema-invalid listing payload
   (`MalformedAgentsViewResponse` / `ValueError`: invalid JSON, non-object
-  payload, `sessions` not a list, row missing non-empty `id`/`agent`/`project`,
-  bad `next_cursor`/`total`) -- also degrades `auto` to raw,
+  payload, `sessions` not a list, row missing required `id`/`agent`/`project`,
+  non-empty `id`/`agent` — empty `project` is valid for projectless/global
+  sessions — bad `next_cursor`/`total`) -- also degrades `auto` to raw,
   discarding whatever partial agentsview listing that attempt had collected and
   rescanning the corpus wholesale from the filesystem rather than splicing the
   two (TB-38; TB-22's identity/fingerprint precedent is why nothing is spliced).
@@ -177,9 +178,16 @@ and re-exports the public symbols historical imports expect.
   manifest, the first `--freeze` run discovers as usual and writes the discovered
   ref list once (`src/toolbench/freeze.py`, JSON, `SessionRef` round-tripped, an
   identity fingerprint over the discovered ids stored alongside); the Summary notes
-  `Corpus frozen to: <path>`. When the manifest exists, the run **replays** it:
-  live discovery is bypassed and the frozen refs are scanned directly, so the input
-  set cannot drift. Refs that no longer load — a raw file gone or an
+  `Corpus frozen to: <path>`. When the manifest exists **and is a regular file**,
+  the run **replays** it: live discovery is bypassed and the frozen refs are
+  scanned directly, so the input set cannot drift. Replay existence is
+  `Path.is_file()` (not bare `exists()`), so a directory at the freeze path is a
+  fatal freeze error rather than a silent discover-and-overwrite. `read_manifest`
+  raises typed `MalformedFreezeManifest` for OS read failure, non-UTF-8, invalid
+  JSON, non-object roots, bad `refs`, or missing required fields; `passive`
+  maps that (and write-time `OSError`) to `fatal freeze error: …` on stderr and
+  exit 1 (S23 / PR #87) — same operator contract as a bad `--run-manifest`.
+  Refs that no longer load — a raw file gone or an
   `agentsview export` that reports `source file not found`, both raising the typed
   `MissingSourceExport` — are counted as `Replaying frozen corpus: <path>
   (<V> vanished since freeze)`, with their ids listed under `--verbose` via the S35
@@ -203,12 +211,19 @@ and re-exports the public symbols historical imports expect.
     one. A freeze-time census that was itself unavailable (`unavailable_reason` set at
     write time) round-trips and propagates that reason on replay rather than being
     laundered into the generic no-census text — attempted-and-failed is a different
-    fact from never-attempted. When a v2 manifest carries a REAL census, replay renders
-    real per-agent fractions instead of "unavailable" — but they are a **historical**
-    denominator (the archive as measured at freeze time, not today's), and the report
-    says so explicitly beside the fractions it qualifies (`frozen_census_note`,
-    `render_report`), on the same "state it, don't imply it" footing TB-33 established:
-    a v2 census must never read as current.
+    fact from never-attempted. New freezes also persist `census_includes_subagents`
+    beside the census: the population filter (`not --exclude-subagents`) used to
+    measure that denominator. Replay discloses historical fractions only when that
+    filter is present **and** matches the replay's `--exclude-subagents` choice —
+    otherwise it marks fractions unavailable (legacy v2 census without the key, or a
+    mismatched replay) rather than pairing a filtered numerator with the wrong
+    denominator (false 50% / impossible 200%). When a v2 manifest carries a REAL
+    census whose population filter matches, replay renders real per-agent fractions
+    instead of "unavailable" — but they are a **historical** denominator (the archive
+    as measured at freeze time, not today's), and the report says so explicitly beside
+    the fractions it qualifies (`frozen_census_note`, `render_report`), on the same
+    "state it, don't imply it" footing TB-33 established: a v2 census must never read
+    as current.
 - **S38 — unjoinable tool records are counted and surfaced, not dropped.** A tool
   record a parser RECOGNIZES as a real call but structurally CANNOT join — no join
   key and no output record — is neither a joined call nor a malformed line. It is
@@ -285,10 +300,12 @@ and re-exports the public symbols historical imports expect.
   census/scan drift instead of laundered, and `limit_truncated is None` (the source
   could not say) is stated as its own third answer. Cross-agent ratios are
   trustworthy only when no uneven-sampling line prints. A `--freeze` replay has no
-  *live* archive to census: when the v2 manifest carries a freeze-time census
-  (TB-37 / S37), replay discloses those fractions with an explicit historical-
-  denominator caveat; when the manifest has no `census` key (v1, or a v2 write
-  whose freeze-time census itself failed) — or when a live census failed at
+  *live* archive to census: when the v2 manifest carries a freeze-time census whose
+  `census_includes_subagents` filter matches the replay (TB-37 / S37), replay
+  discloses those fractions with an explicit historical-denominator caveat; when
+  the manifest has no usable census (v1, a v2 write whose freeze-time census
+  itself failed, a legacy v2 census without population-filter metadata, or a
+  replay that flipped `--exclude-subagents`) — or when a live census failed at
   discovery — the report carries `unavailable_reason` and marks fractions
   unavailable rather than inventing a denominator. The empty-selection path
   reuses the same census disclosure so a narrow window is not mistaken for an
@@ -338,22 +355,58 @@ and re-exports the public symbols historical imports expect.
   callouts only.
 - **S20 — stdlib runtime, uv project.** The shipped `toolbench` package
   imports nothing third-party; the project is uv-managed (`pyproject.toml`
-  + `uv.lock`, empty runtime deps, `dev` group `ruff`/`mypy`/`pytest`).
+  + `uv.lock`, empty runtime deps, `dev` group `ruff`/`mypy`/`pytest` plus
+  optional `logfire` for parallel-run tooling — not imported by the shipped
+  package).
 - **S21 — entry points.** Runnable as `uv run toolbench passive` /
-  `uv run toolbench probe` (unified console script via `cli.py`) or
-  `uv run python -m toolbench.passive` / `… toolbench.probe`; tests via
+  `uv run toolbench probe` / `uv run toolbench worktrees` (unified console
+  script via `cli.py`) or `uv run python -m toolbench.passive` /
+  `… toolbench.probe` / `… toolbench.worktrees`; tests via
   `uv run pytest -q` (S31). Run-grain grouping (`--run-manifest` / `--tickets`)
   is a dimension on `toolbench.passive` itself (S40) — the analyzer owns run
-  grain, not a third CLI.
-- **S22 — strict gate.** `uv run ruff check .`, `uv run mypy --strict
-  src/toolbench tests`, and the full pytest suite are green before any PR.
+  grain, not a fourth analyzer CLI. Worktree reclaim inventory is a separate
+  subcommand (S42), not a passive flag.
+- **S22 — strict gate.** `uv run ruff check .`,
+  `uv run python -m toolbench.complexity_gate --base <git-ref>`,
+  `uv run mypy --strict src/toolbench tests`, and the full pytest suite are
+  green before any PR. The complexity gate (`src/toolbench/complexity_gate.py`)
+  compares Ruff `C901` scores for changed `src/` and `tests/` Python files
+  against a Git baseline by `(path, qualified name)`. Threshold defaults to 10
+  (`[tool.ruff.lint.mccabe] max-complexity`): a new function above 10, a
+  function crossing 10, or a legacy hotspot that increases all fail; an
+  increase of ≥2 that stays ≤10 is a warning only. `# noqa: C901` does not
+  hide a symbol (`--ignore-noqa`). CI uses the PR base SHA (or the pre-push
+  SHA) with `fetch-depth: 0`. Renaming/moving a function changes its identity,
+  so a moved hotspot above 10 is treated as new.
 - **S23 — error handling.** Empty session selection → clear message,
   exit 0. Missing selected raw root → exit 1 for a strict source; but
   `--agent all --index-source auto` continues with other sources and
   reports skipped roots. Per-session parse failures (`OSError`,
   `RuntimeError` including `NonTranscriptExport`, and `UnicodeDecodeError`)
   demote that session into skipped roots and continue the corpus scan —
-  one bad export must not abort the run.
+  one bad export must not abort the run. Bad *manifest* paths are hard stops
+  (exit 1 with a clear stderr message, no traceback): a malformed /
+  non-UTF-8 / unreadable `--freeze` or `--run-manifest` file, a `--freeze`
+  path that exists but is not a regular file (e.g. a directory), or an
+  `OSError` while writing a new freeze manifest (`MalformedFreezeManifest`
+  from `freeze.py`; same shape as `MalformedRunManifest`).
+
+## Worktree reclaim — `src/toolbench/worktrees.py`
+
+- **S42 — linked-worktree reclaim reporter.** `toolbench worktrees` classifies
+  every **linked** worktree of the current clone (main checkout excluded and
+  labelled never-a-candidate). Verdict precedence is
+  `LOCKED > DIRTY > UNIQUE-WORK > CLAIMED > SAFE`. Ownership (`CLAIMED`) is a
+  live remote-tracking upstream (`%(upstream)` + `rev-parse --verify`); it
+  never reads `%(upstream:track)` and never expires. `reclaimable()` returns
+  only `SAFE` trees idle ≥ `IDLE_DAYS` (7); unknown idle age fails the
+  threshold. The command **prints only** — it never removes a tree, deletes a
+  branch, or touches a ref. `--reclaimable-only` prints nothing when empty.
+  `--hook` (mutually exclusive) is SessionStart mode: speak only on
+  `startup`/`resume`, emit one context line or silence, always exit 0, swallow
+  every failure. Registered in tracked `.claude/settings.json`. Terminal path
+  raises `WorktreeProbeFailed` on verdict-bearing git failures rather than
+  guessing SAFE/DIRTY.
 
 ## Testing
 
