@@ -331,6 +331,73 @@ class ProvisionWorktreeTests(unittest.TestCase):
         )
         self.assertFalse((dest / "b.txt").exists())
 
+    def test_ensure_deps_builds_from_pinned_sha_not_corpus_head(self) -> None:
+        # `provision_worktree` already archives the pinned SHA; `ensure_deps` must
+        # read manifests and run warmups at that same SHA, not at corpus HEAD.
+        home_tmp = tempfile.TemporaryDirectory(dir=Path.home())
+        self.addCleanup(home_tmp.cleanup)
+        corpus_root = Path(home_tmp.name) / "corpus"
+        repo_dir = corpus_root / "toy"
+        repo_dir.mkdir(parents=True)
+        _run(["git", "init", "-q"], repo_dir)
+        _run(["git", "config", "user.email", "test@example.com"], repo_dir)
+        _run(["git", "config", "user.name", "Test"], repo_dir)
+        (repo_dir / "a.txt").write_text("original\n", encoding="utf-8")
+        _run(["git", "add", "a.txt"], repo_dir)
+        _run(["git", "commit", "-q", "-m", "init"], repo_dir)
+
+        web_dir = repo_dir / "web"
+        web_dir.mkdir()
+        (web_dir / "package.json").write_text('{"name":"pinned-pkg"}\n', encoding="utf-8")
+        (web_dir / "package-lock.json").write_text(
+            '{"name":"pinned-pkg","lockfileVersion":1}\n', encoding="utf-8"
+        )
+        _run(["git", "add", "-A"], repo_dir)
+        _run(["git", "commit", "-q", "-m", "add web manifests"], repo_dir)
+        pinned_sha = _run(["git", "rev-parse", "HEAD"], repo_dir).stdout.strip()
+
+        (web_dir / "package.json").write_text('{"name":"head-pkg"}\n', encoding="utf-8")
+        (web_dir / "package-lock.json").write_text(
+            '{"name":"head-pkg","lockfileVersion":1}\n', encoding="utf-8"
+        )
+        _run(["git", "add", "-A"], repo_dir)
+        _run(["git", "commit", "-q", "-m", "advance manifests"], repo_dir)
+
+        manifest_path = corpus_root / "manifest.json"
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "toy": {
+                        "sha": pinned_sha,
+                        "deps": [{"path": "web/node_modules", "npm_ci": "web"}],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        cache_tmp = tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()))
+        self.addCleanup(cache_tmp.cleanup)
+        deps_base = Path(cache_tmp.name) / f"vendor-cache-{os.getpid()}"
+
+        real_run = subprocess.run
+        with mock.patch("subprocess.run") as mock_run:
+            mock_run.side_effect = lambda *args, **kwargs: (
+                subprocess.CompletedProcess(args[0], 0, "", "")
+                if args and args[0][:2] == ["npm", "ci"]
+                else real_run(*args, **kwargs)
+            )
+            ensure_deps(
+                corpus_root,
+                "toy",
+                deps_base=deps_base,
+                manifest_path=manifest_path,
+            )
+
+        cached = (deps_base / "toy" / "web" / "package.json").read_text(encoding="utf-8")
+        self.assertIn("pinned-pkg", cached)
+        self.assertNotIn("head-pkg", cached)
+
     def test_default_manifest_cannot_silently_follow_a_stale_corpus_copy(self) -> None:
         authoritative_manifest = self.root / "packaged-manifest.json"
         authoritative_manifest.write_text(

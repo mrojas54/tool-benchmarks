@@ -118,6 +118,11 @@ rather than silently absent (S38 / TB-24).
   `toolbench probe …` / `toolbench worktrees …`). Dispatches remaining argv
   verbatim to the sub-CLIs; imports are lazy per subcommand so a broken complex
   fixture cannot break `passive`, `worktrees`, or `--help`.
+- **`complexity_gate.py`** — regression-aware cyclomatic-complexity gate
+  (S22 / PR #95). Compares Ruff `C901` for changed `src/` and `tests/` Python
+  files against a Git `--base` by `(path, qualified name)`. Not a console
+  subcommand — invoke as `uv run python -m toolbench.complexity_gate`. See
+  [Quality gate](#quality-gate).
 - **`worktrees.py`** — linked git worktree inventory with a reclaim verdict per
   tree (S42). Reports only — never removes a tree, deletes a branch, or touches
   a ref. See [Worktree reclaim reporter](#worktree-reclaim-reporter).
@@ -164,7 +169,10 @@ rather than silently absent (S38 / TB-24).
   and its subagent-population filter so replay can disclose real historical
   fractions only for the population that denominator measured (TB-37).
   Missing census/filter metadata or a replay with the opposite filter marks
-  fractions unavailable instead.
+  fractions unavailable instead. Unreadable / malformed / non-UTF-8 inputs raise
+  typed `MalformedFreezeManifest`; `passive` maps that (and write failures, or a
+  directory at the freeze path) to exit 1 with `fatal freeze error` (S23 /
+  PR #87).
 - **`run_manifest.py`** — JSON reader for `--run-manifest` (S40). Defines a
   run's branch set (`branches` required; empty/missing is refused). Not
   `.lattice/orchestration/agents.md` — that file drops its Branch column when
@@ -328,12 +336,13 @@ PR #90) ships as a third console subcommand — table, `--reclaimable-only`, and
 SessionStart `--hook`. CQ follow-ons split passive into `reducer`/`report`,
 fold probe into `ClaudeParser` (`keep_raw_input` / `track_turns`), and stamp
 inefficiency tags at emit. The strict gate (`uv run ruff check .`,
+`uv run python -m toolbench.complexity_gate --base origin/main`,
 `uv run mypy --strict src/toolbench tests`, `uv run pytest -q`) is green —
-**700** tests passing (3 skipped when the live hermes archive / optional
-live paths are absent). `mypy --strict` covers `tests` as well as
+**737** tests passing (4 skipped when the live hermes archive / optional
+live paths / tracing deps are absent). `mypy --strict` covers `tests` as well as
 `src/toolbench`. A bare `uv run mypy` also mirrors that scope via
 `[tool.mypy]` in `pyproject.toml` (it does not descend into `tools/`). The
-same three commands run in CI (`.github/workflows/ci.yml`) on every PR and on
+same four commands run in CI (`.github/workflows/ci.yml`) on every PR and on
 pushes to `main`.
 
 Source-of-truth documents:
@@ -394,9 +403,8 @@ bug this adapter exists for is
 
 The project is [uv](https://docs.astral.sh/uv/)-managed (`pyproject.toml` +
 `uv.lock`, empty default runtime deps, and optional `tracing` extra). The `dev`
-group installs the gate tools (`ruff` / `mypy` / `pytest`) plus optional
-parallel-run tooling (`logfire`); the shipped package stays stdlib-only by
-default. Requires Python ≥3.13.
+group installs only the gate tools (`ruff` / `mypy` / `pytest`); the shipped
+package stays stdlib-only by default. Requires Python ≥3.13.
 
 ```sh
 # Bootstrap (once per checkout; also runs implicitly under `uv run`)
@@ -445,10 +453,11 @@ uv run pytest -q
 
 ### Optional Laminar tracing
 
-[Laminar](https://laminar.sh/docs/tracing/integrations/overview) can record one
-trace for each real `toolbench` console command. Library-style calls such as
-`main([...])` stay untraced, so unit tests and embedding applications do not
-send telemetry.
+[Laminar](https://laminar.sh/docs/tracing/integrations/overview) is an explicit
+opt-in for real `toolbench` console commands. It can record one trace per
+opted-in console command; normal `passive` / `probe` runs and library-style
+calls such as `main([...])` stay untraced and do not import the optional SDK, so
+unit tests and embedding applications do not send telemetry.
 
 Initialization lives in
 `toolbench.observability.setup_tracing.setup_tracing`. It returns `False`
@@ -468,10 +477,14 @@ documents only the variable name.
 Run a representative traced command:
 
 ```sh
-uv run --extra tracing toolbench probe \
+TOOLBENCH_TRACING=1 uv run --extra tracing toolbench probe \
   --session tests/fixtures/probe_session.jsonl \
   --out reports/active-probe-comparison.md
 ```
+
+`TOOLBENCH_TRACING=1` is the opt-in boundary; a Laminar key alone does not
+enable tracing. The normal strict gate uses `uv sync` without the `tracing`
+extra, so the optional SDK is not part of the hermetic default environment.
 
 Verify the newest trace:
 
@@ -607,7 +620,10 @@ moving, not your code (TB-22).
   reports `(<V> vanished since freeze)` for refs whose transcripts have since been
   deleted (`--verbose` names them). Over an unchanged corpus a replay is
   byte-identical; when the tail has moved, the vanished count names the mechanism
-  instead of letting it masquerade as a code effect.
+  instead of letting it masquerade as a code effect. Replay requires a **regular
+  file** at the path (`Path.is_file()`); a directory, unreadable / non-UTF-8 /
+  invalid JSON manifest, or a write failure is a hard stop (`fatal freeze error`,
+  exit 1) — not a traceback and not a silent re-discover (S23 / PR #87).
   - **Manifest v2 + freeze-time census (TB-37).** New freezes write
     `toolbench-freeze-2` and, when the freeze-time census succeeded, persist it
     under a `census` key together with its subagent-population filter. Replay then
@@ -722,6 +738,10 @@ line means the run headline may understate what the orchestration spent.
 | `--freeze` replay reports vanished sessions | Frozen refs' transcripts aged out or AgentsView `source file not found` | Expected when the sliding window deletes mid-corpus. `--verbose` names them; rewrite the manifest only when you intentionally want a new pin. |
 | `--freeze` replay shows "Historical denominator" | Manifest v2 carried a freeze-time census (TB-37) | Expected. Fractions are archive size at freeze time, not today. Do not treat them as a live census. |
 | `--freeze` replay still says fractions unavailable | Manifest has no usable `census` (v1, freeze-time census failure, legacy v2 without population metadata, or replay changed `--exclude-subagents`) | Expected. Use the same subagent filter as the freeze; rewrite a legacy freeze on current `main` if you want historical fractions. |
+| `--freeze` exits 1 with `fatal freeze error` / traceback used to escape | Path is a directory, unreadable, non-UTF-8, or invalid JSON; or the first-write could not create the file | Point `--freeze` at a JSON *file* path (create parent dirs if needed). Same contract as a bad `--run-manifest` (S23 / PR #87). |
+| Complexity gate fails a function you only moved / renamed | Identity is `(path, qualified name)`; a rename looks like a new function | Reduce it under 10, or land the move with a real simplification. `# noqa: C901` will not hide it. |
+| Complexity gate is silent on a hotspot you expected to fail | Only `src/` and `tests/` `*.py` changed vs `--base` are measured; files outside that scope, or unchanged files, are ignored | Diff against the intended base (`origin/main` locally; CI uses the PR base / pre-push SHA). Confirm the path is under `src/` or `tests/`. |
+| Local complexity gate cannot find `--base` | Shallow clone or missing remote-tracking ref | `git fetch origin main` (or deepen the clone). CI sets `fetch-depth: 0` for the same reason. |
 | Agent Breakdown ratios look incomparable across agents | `--limit` truncates in whole-archive recency order (S41) | Read the `sampled` column and the uneven-sampling line. Compare across agents only when that line is absent. |
 | `toolbench` / `-m toolbench.passive` fails from `~` with a system python | The checkout's venv (with the editable install) isn't active | Use `uv run --project ~/tool-benchmarks toolbench passive ...` from any cwd; inside the repo, `uv run toolbench ...` or `uv run python -m toolbench.passive` both work. |
 | `corpus/manifest.json` disappeared after pulling the src-layout change | The manifest now ships inside the package (`src/toolbench/corpus/manifest.json`); the corpus copy is generated / gitignored | Re-run `corpus/vendor.sh` (idempotent — skips existing clones); it copies the packaged manifest back into `corpus/`. Default trial provisioning already uses the packaged pin (#78), so a missing or stale corpus copy no longer changes trial SHAs unless you pass a custom `manifest_path`. |
@@ -737,6 +757,9 @@ line means the run headline may understate what the orchestration spent.
 | SessionStart never mentions reclaimable trees | Zero reclaimable candidates, gated `source` (`compact`/`clear`/`fork`), or a swallowed probe failure | Run `uv run toolbench worktrees` for the full table. Silence is the answer when nothing is reclaimable. |
 | `commit-commands:clean_gone` reports success but removes nothing | It greps `git branch -v` for literal `[gone]`; real output is `[origin/<name>: gone]` | Use `uv run toolbench worktrees --reclaimable-only`, then the AGENTS.md reclaim procedure. Do not trust `%(upstream:track)` emptiness either. |
 | Stale linked worktrees under `.claude/worktrees/` fill the disk and block `git branch -d` | Nested agent worktrees keep their branches checked out; `git worktree prune` / `commit-commands:clean_gone` are no-ops while directories exist | `git worktree remove <path>` **then** `git branch -d <branch>`. Select with `uv run toolbench worktrees --reclaimable-only`. The ignore boundary is tracked in `.gitignore` (`.claude/worktrees/`). |
+| Complexity gate fails a function you only moved / renamed | Identity is `(path, qualified name)`; a rename looks like a new function | Reduce it under 10, or land the move with a real simplification. `# noqa: C901` will not hide it. |
+| Complexity gate is silent on a hotspot you expected to fail | Only `src/` and `tests/` `*.py` changed vs `--base` are measured; files outside that scope, or unchanged files, are ignored | Diff against the intended base (`origin/main` locally; CI uses the PR base / pre-push SHA). Confirm the path is under `src/` or `tests/`. |
+| Local complexity gate cannot find `--base` | Shallow clone or missing remote-tracking ref | `git fetch origin main` (or deepen the clone). CI sets `fetch-depth: 0` for the same reason. |
 
 ## Quality gate
 
@@ -750,14 +773,21 @@ uv run pytest -q
 ```
 
 The complexity command uses Ruff's `C901` measurement and compares changed
-Python functions under `src/` and `tests/` by file plus qualified function name.
-The configured maximum is 10:
+Python functions under `src/` and `tests/` by file plus qualified function name
+(untracked `*.py` under those trees are included). Defaults match
+`[tool.ruff.lint.mccabe] max-complexity = 10` and `--warning-delta 2`:
 
 - a new function above 10 or an existing function crossing 10 fails;
 - an already-baselined function above 10 passes when unchanged or reduced, but
   fails if it gets worse;
 - an increase of 2 or more that remains at or below 10 emits a review warning;
-- `# noqa: C901` does not hide a function from the regression comparison.
+- `# noqa: C901` does not hide a function from the regression comparison
+  (`ruff check --ignore-noqa`).
+
+Exit code is 1 only when there are errors; warnings still exit 0 and print
+GitHub Actions annotations (`::error` / `::warning`). Override locally with
+`--threshold` / `--warning-delta` if you need to reproduce a narrower check —
+CI uses the defaults.
 
 This keeps legacy hotspots visible without making old debt an unrelated PR
 failure. Renaming or moving a function changes its comparison identity, so a
