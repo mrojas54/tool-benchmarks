@@ -18,6 +18,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextlib import redirect_stderr, redirect_stdout
 
+from tests.fakes import make_module
+
 from toolbench.cli import main
 
 
@@ -119,8 +121,7 @@ class DispatchTests(unittest.TestCase):
             def flush(cls) -> None:
                 events.append(("flush",))
 
-        fake_lmnr = types.ModuleType("lmnr")
-        fake_lmnr.Laminar = RecordingLaminar  # type: ignore[attr-defined]
+        fake_lmnr = make_module("lmnr", Laminar=RecordingLaminar)
         private_session = "/private/archive/member-session.jsonl"
 
         with (
@@ -202,8 +203,7 @@ class DispatchTests(unittest.TestCase):
             def flush(cls) -> None:
                 events.append(("flush",))
 
-        fake_lmnr = types.ModuleType("lmnr")
-        fake_lmnr.Laminar = RecordingLaminar  # type: ignore[attr-defined]
+        fake_lmnr = make_module("lmnr", Laminar=RecordingLaminar)
         private_session = "/private/archive/member-session.jsonl"
 
         with (
