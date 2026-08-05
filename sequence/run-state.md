@@ -6,8 +6,8 @@ and resumes from what is recorded here.
 ## Mode
 
 **Brownfield initiation, in place.** The repo already exists and already ships
-its architect-stage contract (`SPEC.md`, `EVALUATION.md`, `BUILDPLAN.md`, 613
-green tests). This run **backfills the missing initiation artifacts** —
+its architect-stage contract (`SPEC.md`, `EVALUATION.md`, `BUILDPLAN.md`) and
+the documented strict quality gate. This run **backfills the missing initiation artifacts** —
 `PHILOSOPHY.md`, `sequence/USER_STORIES.md`, this run-state, and a repo-derived
 research dossier — reverse-engineered *from the existing code and docs*. No
 existing code is touched; only new artifacts are written.

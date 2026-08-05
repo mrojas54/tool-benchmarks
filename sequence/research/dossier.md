@@ -75,9 +75,11 @@ absence is deliberate, not an omission.
 
 ## Refine (Phase 2) — positioning, scope, differentiation
 
-**Positioning.** A re-runnable, offline, standard-library-only harness that
+**Positioning.** A re-runnable, offline, standard-library-only-by-default harness that
 turns agent session transcripts into a single markdown report of *where tooling
 wastes context* — trustworthy because every way a number could mislead is named.
+The opt-in `tracing` extra is an explicit exception: it adds Laminar observability
+and its networked third-party SDK without changing the default offline runtime.
 
 **What it is.** Passive analyzer (cross-agent cost + inefficiency callouts) +
 active tool-vs-Bash probes + a locate-then-fix complex probe (library).
@@ -88,8 +90,10 @@ active tool-vs-Bash probes + a locate-then-fix complex probe (library).
   explicit signature failure to avoid.
 - **Reproducible/diffable.** Corpus fingerprint + `--freeze` mean two reports'
   delta is attributable to a code change, not corpus drift.
-- **Offline + stdlib-only.** Runs anywhere `python3 ≥3.13` exists; no network,
-  no third-party runtime deps, read-only over all sources.
+- **Offline + stdlib-only by default.** The default runtime runs anywhere
+  `python3 ≥3.13` exists with no network or third-party runtime dependencies,
+  read-only over all sources. The opt-in `tracing` extra adds Laminar
+  observability and is outside that default offline contract.
 - **One primary metric.** Context cost ranks; everything else is caveat/callout.
 
 **Smallest version that delivers value (already shipped):** the passive analyzer
@@ -103,5 +107,7 @@ the measure→optimize→re-measure loop — the measure half exists; the trend 
 optimize halves are forward stories.
 
 **Defensible "don't build more" positions to hold at architect stage:** no HTML,
-no live API, no web-chat, no third-party deps, no transcript mutation — these
-scope guards are load-bearing to the "runs anywhere, trust the number" promise.
+no live API, no web-chat, no unrelated third-party deps in the default runtime,
+no transcript mutation — these scope guards are load-bearing to the "runs
+anywhere, trust the number" promise. The optional `tracing` extra is an explicit
+Laminar exception, not a change to the default contract.

@@ -118,7 +118,8 @@ so I can cost a run without fabricating attribution.*
 
 - **AC-23** `--run-manifest` attributes usage per transcript **entry** by
   `gitBranch` (not per session); detached `"HEAD"` usage is booked to a named
-  `detached_*` bucket, never folded into or dropped from the run total. (S40)
+  `detached_*` bucket, never folded into the run total or dropped from the
+  report/accounting. (S40)
 - **AC-24** A manifest branch matching zero entries is reported, never a silent
   zero; `session total == sum of buckets` holds. (S40)
 
@@ -134,11 +135,13 @@ so I never mistake a narrow window for the whole archive.*
   only when no uneven-sampling line prints. (S41)
 
 ### US-9 — Run it anywhere, gate it strictly
-*As a maintainer, I want the harness to run with no third-party deps and pass one
-strict gate, so it is portable and every test is collected.*
+*As a maintainer, I want the default harness to run with no third-party runtime
+deps and pass one strict gate, so it is portable and every test is collected.*
 
-- **AC-27** The `toolbench` package imports nothing third-party; runnable via
-  `uv run toolbench passive|probe` and `python -m`. (S20, S21)
+- **AC-27** The default `toolbench` installation imports no third-party runtime
+  packages and is runnable via `uv run toolbench passive|probe` and
+  `python -m`; the optional `tracing` extra adds Laminar observability without
+  changing the default install. (S20, S21)
 - **AC-28** The gate is `uv run ruff check .`, `uv run mypy --strict src/toolbench
   tests`, and `uv run pytest -q` (not `unittest discover`, which under-collects);
   all green before a PR. (S22, S31)
@@ -252,7 +255,7 @@ This story **bridges**: the tracing substrate is as-built (AC-44…46, each with
 - **AC-45** A run's cost is attributed per transcript **entry** by `gitBranch`,
   so a session straddling branches (29/158) is split correctly and never
   double-counted; detached-`HEAD` work is booked to its own named bucket, never
-  folded into or dropped from the run. (S40)
+  folded into the run total or dropped from the report/accounting. (S40)
 - **AC-46** Subagent fan-out is surfaced as an inefficiency callout naming its
   top-offending spawn primitive (codex `spawn_agent`, not `wait_agent`). (S14/S33)
 - **AC-47** `forward` For a targeted tool, the loop presents its cost unified
