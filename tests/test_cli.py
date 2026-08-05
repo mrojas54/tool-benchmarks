@@ -6,11 +6,14 @@ the argparse-style failure codes, in the suite's in-process main(argv) style
 (tests/test_passive_cli.py)."""
 
 import io
+import builtins
+import importlib
 import os
 import sys
 import types
 import unittest
 import unittest.mock
+from collections.abc import Mapping, Sequence
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextlib import redirect_stderr, redirect_stdout
@@ -243,6 +246,71 @@ class DispatchTests(unittest.TestCase):
                     self.assertEqual(main([command]), 0)
 
         trace.assert_not_called()
+
+    def test_real_cli_tracing_requires_explicit_opt_in(self) -> None:
+        with (
+            unittest.mock.patch.dict(
+                os.environ,
+                {"LMNR_PROJECT_API_KEY": "configured-but-not-enabled"},
+                clear=True,
+            ),
+            unittest.mock.patch.object(sys, "argv", ["toolbench", "probe"]),
+            unittest.mock.patch("toolbench.probe.main", return_value=None),
+            unittest.mock.patch(
+                "toolbench.tracing.run_traced",
+                side_effect=lambda _command: lambda operation: operation,
+            ) as trace,
+        ):
+            self.assertEqual(main(), 0)
+
+        trace.assert_not_called()
+
+    def test_normal_passive_and_probe_do_not_import_optional_tracers(self) -> None:
+        attempted: list[str] = []
+        real_import = builtins.__import__
+        real_import_module = importlib.import_module
+
+        def guarded_import(
+            name: str,
+            globals_: Mapping[str, object] | None = None,
+            locals_: Mapping[str, object] | None = None,
+            fromlist: Sequence[str] | None = (),
+            level: int = 0,
+        ) -> types.ModuleType:
+            if name.partition(".")[0] in {"lmnr", "logfire"}:
+                attempted.append(name)
+                raise ModuleNotFoundError(name=name)
+            return real_import(name, globals_, locals_, fromlist, level)
+
+        def guarded_import_module(
+            name: str, package: str | None = None
+        ) -> types.ModuleType:
+            if name.partition(".")[0] in {"lmnr", "logfire"}:
+                attempted.append(name)
+                raise ModuleNotFoundError(name=name)
+            return real_import_module(name, package)
+
+        for command, result in (("passive", 0), ("probe", None)):
+            with (
+                unittest.mock.patch.dict(
+                    os.environ,
+                    {"LMNR_PROJECT_API_KEY": "configured-but-not-enabled"},
+                    clear=True,
+                ),
+                unittest.mock.patch.object(sys, "argv", ["toolbench", command]),
+                unittest.mock.patch(
+                    f"toolbench.{command}.main", return_value=result
+                ),
+                unittest.mock.patch.object(
+                    builtins, "__import__", side_effect=guarded_import
+                ),
+                unittest.mock.patch.object(
+                    importlib, "import_module", side_effect=guarded_import_module
+                ),
+            ):
+                self.assertEqual(main(), 0)
+
+        self.assertEqual(attempted, [])
 
     def test_real_worktree_hook_dispatch_does_not_emit_a_laminar_trace(self) -> None:
         with (
