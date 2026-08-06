@@ -454,9 +454,10 @@ uv run pytest -q
 ### Optional Laminar tracing
 
 [Laminar](https://laminar.sh/docs/tracing/integrations/overview) is an explicit
-opt-in for real `toolbench` console commands. Normal `passive` / `probe` runs
-and library-style calls such as `main([...])` do not import the optional SDK or
-send telemetry.
+opt-in for real `toolbench` console commands. It can record one trace per
+opted-in console command; normal `passive` / `probe` runs and library-style
+calls such as `main([...])` stay untraced and do not import the optional SDK, so
+unit tests and embedding applications do not send telemetry.
 
 Initialization lives in
 `toolbench.observability.setup_tracing.setup_tracing`. It returns `False`
