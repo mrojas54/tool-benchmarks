@@ -1,6 +1,6 @@
 # AGENTS.md
 
-`toolbench` is an offline, standard-library-only Python CLI harness. There is no
+`toolbench` is an offline, stdlib-by-default Python CLI harness. There is no
 server or database. Use the `passive`, `probe`, and `worktrees` CLIs; treat the
 hermetic test suite plus strict gate as end-to-end coverage. README and
 `pyproject.toml` are the source of truth for routine commands.
@@ -9,8 +9,10 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
 
 - The project is `uv`-managed and requires Python >=3.13. Run tools from this
   repository root via `uv run`; use `uv sync` when explicit provisioning is
-  needed. Runtime deps stay empty (stdlib-only); the `dev` group adds the
-  gate tools plus optional parallel-run tooling (`logfire`).
+  needed. Runtime deps stay empty (stdlib-only by default); the optional
+  `tracing` extra adds Laminar (`lmnr`) without changing the default install.
+  Console tracing also requires `TOOLBENCH_TRACING=1` (#104). The `dev` group
+  adds the gate tools plus optional parallel-run tooling (`logfire`).
 - Before a PR, run `uv run ruff check .`,
   `uv run python -m toolbench.complexity_gate --base origin/main`,
   `uv run mypy --strict src/toolbench tests`, and `uv run pytest -q`. Do not
@@ -19,7 +21,7 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   scope via `[tool.mypy]` in `pyproject.toml` (does not descend into `tools/`).
 - Optional live dependencies (`agentsview`, Claude/Codex archives, Hermes) are
   not required for the gate; skips for absent live archives are expected (the
-  hermetic suite is ~737 passing, with 4 skips when live paths / optional
+  hermetic suite is ~746 passing, with 4 skips when live paths / optional
   tracing deps are missing).
 ## Repository integrity
 
@@ -81,7 +83,10 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
 - `ensure_deps` / `provision_worktree` default to the **packaged** manifest
   (`src/toolbench/corpus/manifest.json`); custom corpora must pass their own
   manifest explicitly so a stale generated `corpus/manifest.json` cannot change
-  a trial SHA.
+  a trial SHA. `ensure_deps` also pins npm manifest copies and warmup cwd to
+  that entry's SHA via `git show` / `git archive` — never corpus `HEAD` (#99).
+  Rebuilds are still existence-based: after a packaged-SHA bump, wipe
+  `vendor-cache-<uid>/<repo>/` or oracles can run against stale deps.
 - `complex_runner._assert_deps_base_safe` rejects a replaceable deps-cache leaf
   (including a dangling symlink) *before* `resolve()`, then requires FS-root
   divergence from the corpus, sticky-safe ancestors, and a private uid-owned
@@ -92,12 +97,20 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
 Aggregation is in `reducer.py`; markdown/fingerprints in `report.py`
 (per-section `_render_*` helpers); freeze I/O in `freeze.py`; run-manifest I/O
 in `run_manifest.py`. `passive.py` owns CLI orchestration (`_resolve_corpus`
-for replay-vs-discover) and compatibility re-exports. The complex debug probe
-is `complex.py` (defects, scoring, profile render) plus `shell_safety.py`
-(arm / read-scope audits; re-exported from `complex`) plus `complex_runner.py`
-(worktree, deps cache, trial driver) — library only, no CLI yet.
+for replay-vs-discover) and compatibility re-exports. `transcript.JsonLines`
+is the shared JSONL reader for parsers (blanks skipped; undecodable /
+non-object lines counted). The complex debug probe is `complex.py` (defects,
+scoring, profile render) plus `shell_safety.py` (arm / read-scope audits;
+re-exported from `complex`) plus `complex_runner.py` (worktree, deps cache,
+trial driver) — library only, no CLI yet. Harbor packaging for selected
+complex probes lives under `benchmarks/harbor/toolbench-complex/` (not a
+console subcommand).
 `worktrees.py` owns the linked-worktree inventory CLI (`classify` /
 `reclaimable` / `--hook`); it prints only and never removes a tree or ref.
 `complexity_gate.py` owns the cyclomatic-complexity regression check
 (`compare_complexity` / `evaluate_repository`); invoke via
 `python -m toolbench.complexity_gate`, not the console script.
+Opt-in Laminar observability lives in `observability/setup_tracing.py`
+(`setup_tracing` / `load_laminar`) and `tracing.py` (`run_traced`); `cli.py`
+wraps real console processes only when `argv is None` and
+`TOOLBENCH_TRACING=1`, and skips tracing for `worktrees --hook`.
