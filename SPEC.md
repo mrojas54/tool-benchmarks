@@ -354,10 +354,15 @@ and re-exports the public symbols historical imports expect.
   never ranks tools; failure / slow / retry-churn feed inefficiency
   callouts only.
 - **S20 — stdlib runtime, uv project.** The shipped `toolbench` package
-  imports nothing third-party; the project is uv-managed (`pyproject.toml`
-  + `uv.lock`, empty runtime deps, `dev` group `ruff`/`mypy`/`pytest` plus
-  optional `logfire` for parallel-run tooling — not imported by the shipped
-  package).
+  imports nothing third-party by default; the project is uv-managed
+  (`pyproject.toml` + `uv.lock`, empty runtime deps, optional `tracing` extra
+  that pulls in `lmnr` for opt-in Laminar CLI observability — not required for
+  the gate or hermetic suite). The `dev` group holds `ruff`/`mypy`/`pytest`
+  plus optional `logfire` for parallel-run tooling (also not imported by the
+  shipped package). Real console processes may wrap subcommands in
+  `toolbench.tracing.run_traced` only when the extra is installed, a project
+  key is present, **and** `TOOLBENCH_TRACING=1` is set (#104); programmatic
+  `main([...])` calls and `worktrees --hook` stay untraced.
 - **S21 — entry points.** Runnable as `uv run toolbench passive` /
   `uv run toolbench probe` / `uv run toolbench worktrees` (unified console
   script via `cli.py`) or `uv run python -m toolbench.passive` /
