@@ -3,8 +3,46 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum
+
+
+class JsonLines:
+    """JSONL records: blanks skipped, undecodable and non-object lines counted.
+
+    Every parser opened with the same six lines -- strip, skip blank, `json.loads`,
+    catch `JSONDecodeError`, then an `isinstance(entry, dict)` guard -- and each
+    copy had to re-derive that a line of *valid* JSON which is not an object
+    (`123`, `[1, 2]`, `"text"`) is malformed too, not something to hand downstream
+    where `entry.get(...)` would raise. Counting is the parser's job (S5) and the
+    count is never fatal, so `malformed` is read once after iteration and handed
+    to `ParseResult.malformed`.
+
+    Callers that must not count -- a schema sniff that would charge a session
+    twice -- simply ignore the attribute.
+
+    Single-pass: the underlying iterable is consumed as it is walked.
+    """
+
+    def __init__(self, lines: Iterable[str]) -> None:
+        self._lines = lines
+        self.malformed = 0
+
+    def __iter__(self) -> Iterator[dict[str, object]]:
+        for raw_line in self._lines:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                self.malformed += 1
+                continue
+            if not isinstance(entry, dict):
+                self.malformed += 1
+                continue
+            yield entry
 
 
 def result_len(payload: object) -> int:
