@@ -511,6 +511,49 @@ class LocatedTests(unittest.TestCase):
     def test_a_session_that_never_locates_returns_none(self) -> None:
         self.assertIsNone(find_located("tests/fixtures/complex_session_agent_escape.jsonl"))
 
+    def test_a_bare_scalar_line_is_skipped_not_a_crash(self) -> None:
+        # This loop used to hand a line of valid-but-non-object JSON straight to
+        # `entry.get(...)`, so `123` on its own line raised AttributeError and took
+        # the whole scoring run down. One garbled line in an agent transcript must
+        # cost that line, not the benchmark.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scalar.jsonl"
+            located = json.dumps(
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-07-12T10:00:02Z",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": 'LOCATED: {"symbol": "formatSlot"}',
+                            }
+                        ]
+                    },
+                }
+            )
+            # Every field on the path read straight off the entry, each the
+            # wrong type: the entry itself, `message`, `content`, and `text`.
+            wrong_shapes = "\n".join(
+                [
+                    "123",
+                    '"text"',
+                    "[1, 2]",
+                    json.dumps({"type": "assistant", "message": "not-a-dict"}),
+                    json.dumps({"type": "assistant", "message": {"content": "no"}}),
+                    json.dumps(
+                        {
+                            "type": "assistant",
+                            "message": {"content": [{"type": "text", "text": 7}]},
+                        }
+                    ),
+                ]
+            )
+            path.write_text(f"{wrong_shapes}\n\n{located}\n", encoding="utf-8")
+            hit = find_located(path)
+        assert hit is not None
+        self.assertEqual(hit[1]["symbol"], "formatSlot")
+
     def test_an_overlap_everything_claim_is_rejected_not_scored_correct(self) -> None:
         # THE defect this guards against: overlap alone is not a guard, because
         # [0, 99999] overlaps every truth there is. A sloppy (or gaming) agent
