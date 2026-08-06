@@ -17,9 +17,13 @@ copies — read the linked file for the current truth. Operational rules live in
 
 ## Build contract (architect-stage outputs, already shipped)
 
-- [`SPEC.md`](SPEC.md) — 41 numbered acceptance criteria (S1–S41).
+- [`SPEC.md`](SPEC.md) — 42 numbered acceptance criteria (S1–S42).
 - [`EVALUATION.md`](EVALUATION.md) — verification map for every criterion.
 - [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the ticket breakdown.
 - [`README.md`](README.md) — install, run, quality gate, module ownership.
 - [`docs/2026-07-07-tool-benchmarks-design.md`](docs/2026-07-07-tool-benchmarks-design.md)
   — the v2 design snapshot (historical).
+- [`benchmarks/harbor/toolbench-complex/README.md`](benchmarks/harbor/toolbench-complex/README.md)
+  — Harbor packaging for selected complex probes (WIDS D2).
+- [`.claude/skills/laminar/SKILL.md`](.claude/skills/laminar/SKILL.md)
+  — optional Laminar tracing guidance (`tracing` extra + `TOOLBENCH_TRACING=1`).

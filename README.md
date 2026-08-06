@@ -95,7 +95,9 @@ rather than silently absent (S38 / TB-24).
 - **`transcript.py`** — the schema-neutral records: `ToolCall` (with
   `UsageProvenance` and parse-time inefficiency tags), `ParseResult`
   (optional session-grain cache sums, `unjoinable`, optional `turns`), and
-  `result_len`. Path-based `parse_session` is gone; open lines (with
+  `result_len`. `JsonLines` is the shared JSONL reader (blanks skipped;
+  undecodable and non-object lines counted into `malformed` — PR #107).
+  Path-based `parse_session` is gone; open lines (with
   `errors="replace"` for TB-10) and call `ClaudeParser.parse` or
   `pick_adapter(ref).parse(ref)`.
 - **`parsers.py`** — one class per schema. `ClaudeParser` joins each assistant
@@ -117,7 +119,13 @@ rather than silently absent (S38 / TB-24).
 - **`cli.py`** — unified console entry (`toolbench passive …` /
   `toolbench probe …` / `toolbench worktrees …`). Dispatches remaining argv
   verbatim to the sub-CLIs; imports are lazy per subcommand so a broken complex
-  fixture cannot break `passive`, `worktrees`, or `--help`.
+  fixture cannot break `passive`, `worktrees`, or `--help`. Opt-in Laminar wrap
+  for real console processes requires the `tracing` extra **and**
+  `TOOLBENCH_TRACING=1` (#104); programmatic `main([...])` stays untraced.
+- **`observability/`** + **`tracing.py`** — optional Laminar setup
+  (`setup_tracing` / `load_laminar`) and `run_traced` span wrapper. Best-effort:
+  missing SDK or project key returns `False` without interrupting the CLI.
+  `worktrees --hook` is never wrapped.
 - **`complexity_gate.py`** — regression-aware cyclomatic-complexity gate
   (S22 / PR #95). Compares Ruff `C901` for changed `src/` and `tests/` Python
   files against a Git `--base` by `(path, qualified name)`. Not a console
@@ -193,6 +201,8 @@ rather than silently absent (S38 / TB-24).
   `complex_runner.py` provisions worktrees and drives trials. See
   [Complex debug probe](#complex-debug-probe-library) below; design lives under
   [`docs/superpowers/specs/2026-07-12-complex-debug-probe-design.md`](docs/superpowers/specs/2026-07-12-complex-debug-probe-design.md).
+  Selected complex probes are also packaged as Harbor tasks under
+  [`benchmarks/harbor/toolbench-complex/`](benchmarks/harbor/toolbench-complex/).
 
 ## Probe corpus
 
@@ -242,6 +252,13 @@ packaged manifest there so the vendored tree stays self-describing). Design:
 - Worktree provisioning and dependency setup default to the packaged manifest,
   not the generated `corpus/manifest.json` copy. Custom corpora must pass their
   manifest explicitly; a stale generated copy must never change a trial's SHA.
+- `ensure_deps` builds npm caches and runs warmups from the **manifest SHA**,
+  not corpus `HEAD` (#99): npm `package.json` / `package-lock.json` are read
+  via `git show <sha>:…`, and warmup steps run inside a short-lived
+  `git archive` of that SHA. Idempotency is still existence-based
+  (`target.exists()`), so after a packaged-SHA bump wipe
+  `vendor-cache-<uid>/<repo>/` before re-running `ensure_deps` or oracles can
+  execute against stale `node_modules` while the trial tree archives the new SHA.
 - Prompt is always `PROMPT.md` from `provision_worktree` — never the defect
   rationale (that leaks the predicted winner). Missing `PROMPT.md` raises
   `UnprovisionedWorktree`.
@@ -261,6 +278,9 @@ packaged manifest there so the vendored tree stays self-describing). Design:
 
 Call the library from tests or a future CLI; do not shell a real `claude` from
 the hermetic suite — `launch` / `oracle` are injectable (S24 pattern).
+Selected defects are also packaged as Harbor tasks — see
+[`benchmarks/harbor/toolbench-complex/README.md`](benchmarks/harbor/toolbench-complex/README.md)
+(WIDS D2 build canary; oracle/agent grading not verified yet).
 
 ## Worktree reclaim reporter
 
@@ -333,12 +353,16 @@ probe library (`complex.py` / `shell_safety.py` / `complex_runner.py`) is
 implemented as a library (fixtures under `src/toolbench/probes/complex/`; no
 CLI yet). The linked-worktree reclaim reporter (`worktrees.py`, **S42** /
 PR #90) ships as a third console subcommand — table, `--reclaimable-only`, and
-SessionStart `--hook`. CQ follow-ons split passive into `reducer`/`report`,
+SessionStart `--hook`. Opt-in Laminar CLI tracing (`observability/` +
+`tracing.py`, **S20** / PR #97 / #104) wraps real console processes only when
+the `tracing` extra is installed **and** `TOOLBENCH_TRACING=1` is set.
+CQ follow-ons split passive into
+`reducer`/`report`,
 fold probe into `ClaudeParser` (`keep_raw_input` / `track_turns`), and stamp
 inefficiency tags at emit. The strict gate (`uv run ruff check .`,
 `uv run python -m toolbench.complexity_gate --base origin/main`,
 `uv run mypy --strict src/toolbench tests`, `uv run pytest -q`) is green —
-**737** tests passing (4 skipped when the live hermes archive / optional
+**746** tests passing (4 skipped when the live hermes archive / optional
 live paths / tracing deps are absent). `mypy --strict` covers `tests` as well as
 `src/toolbench`. A bare `uv run mypy` also mirrors that scope via
 `[tool.mypy]` in `pyproject.toml` (it does not descend into `tools/`). The
@@ -359,8 +383,12 @@ Source-of-truth documents:
   ten-turn operator run sheet for scoring a fresh probe session.
 - [`docs/superpowers/specs/2026-07-12-complex-debug-probe-design.md`](docs/superpowers/specs/2026-07-12-complex-debug-probe-design.md)
   — locate-then-fix complex probe (library shipped; no CLI yet).
+- [`benchmarks/harbor/toolbench-complex/README.md`](benchmarks/harbor/toolbench-complex/README.md)
+  — Harbor packaging for selected complex probes (WIDS D2 canary).
 - [`.claude/skills/cache-token-metrics/SKILL.md`](.claude/skills/cache-token-metrics/SKILL.md)
   — operator recipe for per-run cache-token diffs (S39).
+- [`.claude/skills/laminar/SKILL.md`](.claude/skills/laminar/SKILL.md)
+  — Laminar instrumentation / CLI / SQL guidance for the optional `tracing` extra.
 
 ## Agents / targets
 
@@ -457,7 +485,9 @@ uv run pytest -q
 opt-in for real `toolbench` console commands. It can record one trace per
 opted-in console command; normal `passive` / `probe` runs and library-style
 calls such as `main([...])` stay untraced and do not import the optional SDK, so
-unit tests and embedding applications do not send telemetry.
+unit tests and embedding applications do not send telemetry. `toolbench
+worktrees --hook` is also untraced: SessionStart must stay silent and
+failure-tolerant even when the optional SDK is present.
 
 Initialization lives in
 `toolbench.observability.setup_tracing.setup_tracing`. It returns `False`
@@ -745,6 +775,8 @@ line means the run headline may understate what the orchestration spent.
 | Agent Breakdown ratios look incomparable across agents | `--limit` truncates in whole-archive recency order (S41) | Read the `sampled` column and the uneven-sampling line. Compare across agents only when that line is absent. |
 | `toolbench` / `-m toolbench.passive` fails from `~` with a system python | The checkout's venv (with the editable install) isn't active | Use `uv run --project ~/tool-benchmarks toolbench passive ...` from any cwd; inside the repo, `uv run toolbench ...` or `uv run python -m toolbench.passive` both work. |
 | `corpus/manifest.json` disappeared after pulling the src-layout change | The manifest now ships inside the package (`src/toolbench/corpus/manifest.json`); the corpus copy is generated / gitignored | Re-run `corpus/vendor.sh` (idempotent — skips existing clones); it copies the packaged manifest back into `corpus/`. Default trial provisioning already uses the packaged pin (#78), so a missing or stale corpus copy no longer changes trial SHAs unless you pass a custom `manifest_path`. |
+| Complex deps cache looks rebuilt from a newer corpus commit than the trial | Pre-#99 `ensure_deps` copied npm manifests / ran warmups at corpus `HEAD` while the trial tree stayed on the packaged SHA | Current code pins both paths to the manifest SHA (`git show` / archived warmup tree). Clear the affected `vendor-cache-<uid>/<repo>/` leaf and re-run `ensure_deps` on current `main`. |
+| Complex oracles fail / look wrong after a toolbench pull that bumped the packaged manifest SHA | `ensure_deps` still skips rebuild when the dep path already exists, so a warm `vendor-cache-<uid>/<repo>/` leaf can keep `node_modules` from an older SHA | Delete that repo's cache leaf (or the whole `vendor-cache-<uid>/` tree) and re-run `ensure_deps`. Trials archive the new SHA even when the cache does not. |
 | Summary cache read ↓ but creation ↑ by ~the same | Prefix-sharing moved cost between buckets (S39/S40) | Not a win. Compare read **and** creation together; read alone misleads. |
 | `--run-manifest` run total looks too low vs wall-clock spend | Detached-HEAD usage (`gitBranch="HEAD"`) cannot match any branch set (TB-28) | Read the `detached-HEAD (unattributable)` line (includes input/output). Do not fold it into the run — a detached delegator is indistinguishable from unrelated detached work. |
 | `--run-manifest` shows a large `unattributed` line | Candidate sessions also ran on non-run branches (straddle spillover, S40) | Expected. The run total is only the in-set entry slice; do not treat session totals as run-owned. |
@@ -757,9 +789,6 @@ line means the run headline may understate what the orchestration spent.
 | SessionStart never mentions reclaimable trees | Zero reclaimable candidates, gated `source` (`compact`/`clear`/`fork`), or a swallowed probe failure | Run `uv run toolbench worktrees` for the full table. Silence is the answer when nothing is reclaimable. |
 | `commit-commands:clean_gone` reports success but removes nothing | It greps `git branch -v` for literal `[gone]`; real output is `[origin/<name>: gone]` | Use `uv run toolbench worktrees --reclaimable-only`, then the AGENTS.md reclaim procedure. Do not trust `%(upstream:track)` emptiness either. |
 | Stale linked worktrees under `.claude/worktrees/` fill the disk and block `git branch -d` | Nested agent worktrees keep their branches checked out; `git worktree prune` / `commit-commands:clean_gone` are no-ops while directories exist | `git worktree remove <path>` **then** `git branch -d <branch>`. Select with `uv run toolbench worktrees --reclaimable-only`. The ignore boundary is tracked in `.gitignore` (`.claude/worktrees/`). |
-| Complexity gate fails a function you only moved / renamed | Identity is `(path, qualified name)`; a rename looks like a new function | Reduce it under 10, or land the move with a real simplification. `# noqa: C901` will not hide it. |
-| Complexity gate is silent on a hotspot you expected to fail | Only `src/` and `tests/` `*.py` changed vs `--base` are measured; files outside that scope, or unchanged files, are ignored | Diff against the intended base (`origin/main` locally; CI uses the PR base / pre-push SHA). Confirm the path is under `src/` or `tests/`. |
-| Local complexity gate cannot find `--base` | Shallow clone or missing remote-tracking ref | `git fetch origin main` (or deepen the clone). CI sets `fetch-depth: 0` for the same reason. |
 
 ## Quality gate
 
