@@ -35,7 +35,7 @@ existing code is touched; only new artifacts are written.
 - Interpretation of the commission was confirmed by the client's second message
   and locked; validation happens at the Phase-4 stories touchpoint.
 - Philosophy and stories are *derived* from `docs/2026-07-07-tool-benchmarks-design.md`,
-  `SPEC.md` (S1–S41), `BUILDPLAN.md`, and `README.md` — cited, not invented.
+  `SPEC.md` (S1–S42), `BUILDPLAN.md`, and `README.md` — cited, not invented.
 - Forward-looking stories (the optimize + trend halves the client wants) are
   minted from the design doc's own "Open follow-ups (out of scope for v1)" plus
   the repo's named open defects (TB-17, TB-28, cursor parser), and tagged
