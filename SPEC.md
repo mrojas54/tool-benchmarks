@@ -358,8 +358,8 @@ and re-exports the public symbols historical imports expect.
   (`pyproject.toml` + `uv.lock`, empty runtime deps, optional `tracing` extra
   that pulls in `lmnr` for opt-in Laminar CLI observability — not required for
   the gate or hermetic suite). The `dev` group holds `ruff`/`mypy`/`pytest`
-  plus optional `logfire` for parallel-run tooling (also not imported by the
-  shipped package). Real console processes may wrap subcommands in
+  only (`logfire` was removed from that group in #104 and is not a shipped
+  dependency). Real console processes may wrap subcommands in
   `toolbench.tracing.run_traced` only when the extra is installed, a project
   key is present, **and** `TOOLBENCH_TRACING=1` is set (#104); programmatic
   `main([...])` calls and `worktrees --hook` stay untraced.

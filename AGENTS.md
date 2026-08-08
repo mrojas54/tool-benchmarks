@@ -12,7 +12,8 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   needed. Runtime deps stay empty (stdlib-only by default); the optional
   `tracing` extra adds Laminar (`lmnr`) without changing the default install.
   Console tracing also requires `TOOLBENCH_TRACING=1` (#104). The `dev` group
-  adds the gate tools plus optional parallel-run tooling (`logfire`).
+  holds the gate tools (`ruff`/`mypy`/`pytest`) — `logfire` was removed from
+  that group in #104.
 - Before a PR, run `uv run ruff check .`,
   `uv run python -m toolbench.complexity_gate --base origin/main`,
   `uv run mypy --strict src/toolbench tests`, and `uv run pytest -q`. Do not

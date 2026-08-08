@@ -7,7 +7,7 @@ was deliberately not fanned out (see `run-state.md` → Keystone decisions):
 product, and its differentiation is methodological, not competitive.
 
 Sources read for this dossier:
-`docs/2026-07-07-tool-benchmarks-design.md`, `SPEC.md` (S1–S41), `BUILDPLAN.md`,
+`docs/2026-07-07-tool-benchmarks-design.md`, `SPEC.md` (S1–S42), `BUILDPLAN.md`,
 `README.md`, `AGENTS.md`.
 
 ## 1. The problem and the people
