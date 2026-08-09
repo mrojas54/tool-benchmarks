@@ -97,15 +97,17 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
 
 Aggregation is in `reducer.py`; markdown/fingerprints in `report.py`
 (per-section `_render_*` helpers); freeze I/O in `freeze.py`; run-manifest I/O
-in `run_manifest.py`. `passive.py` owns CLI orchestration (`_resolve_corpus`
-for replay-vs-discover) and compatibility re-exports. `transcript.JsonLines`
-is the shared JSONL reader for parsers (blanks skipped; undecodable /
-non-object lines counted). The complex debug probe is `complex.py` (defects,
-scoring, profile render) plus `shell_safety.py` (arm / read-scope audits;
-re-exported from `complex`) plus `complex_runner.py` (worktree, deps cache,
-trial driver) — library only, no CLI yet. Harbor packaging for selected
-complex probes lives under `benchmarks/harbor/toolbench-complex/` (not a
-console subcommand).
+in `run_manifest.py`. `passive.py` owns CLI orchestration and compatibility
+re-exports; `main` / `_resolve_corpus` are decomposed into named phases
+(`_plan_freeze`, `_discover_refs`, `_write_freeze`, `_replay_census`,
+`_scan_refs`) with no new CLI surface (#107). `transcript.JsonLines` is the
+shared JSONL reader for parsers (blanks skipped; undecodable / non-object
+lines counted). The complex debug probe is `complex.py` (defects, scoring,
+profile render) plus `shell_safety.py` (arm / read-scope audits; re-exported
+from `complex`; hermetic coverage in `tests/test_shell_safety.py`) plus
+`complex_runner.py` (worktree, deps cache, trial driver) — library only, no
+CLI yet. Harbor packaging for selected complex probes lives under
+`benchmarks/harbor/toolbench-complex/` (not a console subcommand).
 `worktrees.py` owns the linked-worktree inventory CLI (`classify` /
 `reclaimable` / `--hook`); it prints only and never removes a tree or ref.
 `complexity_gate.py` owns the cyclomatic-complexity regression check
