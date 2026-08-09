@@ -155,8 +155,11 @@ rather than silently absent (S38 / TB-24).
   never attributed per call.
 - **`passive.py`** — CLI and scan orchestration only: argparse, discovery /
   `--freeze` replay via `_resolve_corpus`, per-ref parse, date-range filter,
-  typed skips. Re-exports reducer/report symbols so historical
-  `from toolbench.passive import …` imports keep working.
+  typed skips. After #107, `main` / `_resolve_corpus` call named phase helpers
+  (`_plan_freeze`, `_discover_refs`, `_write_freeze`, `_replay_census`,
+  `_scan_refs`) — same operator surface, easier to navigate. Re-exports
+  reducer/report symbols so historical `from toolbench.passive import …`
+  imports keep working.
 - **`reducer.py`** — incremental corpus aggregation (S11). Folds each
   session's `ParseResult` into per-agent / per-tool counters and discards the
   call list — never a whole-corpus `list[ToolCall]`. Schema-neutral: it only
