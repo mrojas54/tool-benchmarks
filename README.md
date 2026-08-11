@@ -127,8 +127,10 @@ rather than silently absent (S38 / TB-24).
   missing SDK or project key returns `False` without interrupting the CLI.
   `worktrees --hook` is never wrapped.
 - **`complexity_gate.py`** — regression-aware cyclomatic-complexity gate
-  (S22 / PR #95). Compares Ruff `C901` for changed `src/` and `tests/` Python
-  files against a Git `--base` by `(path, qualified name)`. Not a console
+  (S22 / PR #95 / #112). Compares Ruff `C901` for changed `src/` and `tests/`
+  Python files against a Git `--base` by `(path, qualified name)`.
+  `DEFAULT_THRESHOLD` (10) is the sole complexity budget — there is no
+  `[tool.ruff.lint.mccabe]` decoration in `pyproject.toml`. Not a console
   subcommand — invoke as `uv run python -m toolbench.complexity_gate`. See
   [Quality gate](#quality-gate).
 - **`worktrees.py`** — linked git worktree inventory with a reclaim verdict per
@@ -365,12 +367,15 @@ fold probe into `ClaudeParser` (`keep_raw_input` / `track_turns`), and stamp
 inefficiency tags at emit. The strict gate (`uv run ruff check .`,
 `uv run python -m toolbench.complexity_gate --base origin/main`,
 `uv run mypy --strict src/toolbench tests`, `uv run pytest -q`) is green —
-**746** tests passing (4 skipped when the live hermes archive / optional
-live paths / tracing deps are absent). `mypy --strict` covers `tests` as well as
-`src/toolbench`. A bare `uv run mypy` also mirrors that scope via
-`[tool.mypy]` in `pyproject.toml` (it does not descend into `tools/`). The
-same four commands run in CI (`.github/workflows/ci.yml`) on every PR and on
-pushes to `main`.
+**747** tests passing on the default install (4 skipped when the live hermes
+archive / optional live paths / tracing extra are absent). With
+`uv sync --extra tracing`, the real-SDK observability test also runs
+(**748** / 3). `mypy --strict` covers `tests` as well as `src/toolbench`. A
+bare `uv run mypy` also mirrors that scope via `[tool.mypy]` in
+`pyproject.toml` (it does not descend into `tools/`). CI
+(`.github/workflows/ci.yml`) runs the four-command `gate` job on the default
+install and a separate `tracing` job that installs the extra so lmnr-guarded
+tests cannot silently skip (#112).
 
 Source-of-truth documents:
 
@@ -774,7 +779,9 @@ line means the run headline may understate what the orchestration spent.
 | `--freeze` exits 1 with `fatal freeze error` / traceback used to escape | Path is a directory, unreadable, non-UTF-8, or invalid JSON; or the first-write could not create the file | Point `--freeze` at a JSON *file* path (create parent dirs if needed). Same contract as a bad `--run-manifest` (S23 / PR #87). |
 | Complexity gate fails a function you only moved / renamed | Identity is `(path, qualified name)`; a rename looks like a new function | Reduce it under 10, or land the move with a real simplification. `# noqa: C901` will not hide it. |
 | Complexity gate is silent on a hotspot you expected to fail | Only `src/` and `tests/` `*.py` changed vs `--base` are measured; files outside that scope, or unchanged files, are ignored | Diff against the intended base (`origin/main` locally; CI uses the PR base / pre-push SHA). Confirm the path is under `src/` or `tests/`. |
-| Local complexity gate cannot find `--base` | Shallow clone or missing remote-tracking ref | `git fetch origin main` (or deepen the clone). CI sets `fetch-depth: 0` for the same reason. |
+| Changing `[tool.ruff.lint.mccabe] max-complexity` in `pyproject.toml` does nothing | C901 is not in Ruff's default rule set, and the gate invokes Ruff with `--isolated` | Edit `complexity_gate.DEFAULT_THRESHOLD` (or pass `--threshold`). Do not re-add an inert mccabe block (#112). |
+| `test_real_sdk_export_is_sanitized` always skips in CI's green run | Pre-#112 `gate` installed no extras, so every `lmnr`-guarded test skipped while CI stayed green | Current CI has a separate `tracing` job that installs `--extra tracing` and asserts `lmnr` is importable. Locally: `uv sync --extra tracing && uv run pytest -q`. |
+| Local complexity gate cannot find `--base` | Shallow clone or missing remote-tracking ref | `git fetch origin main` (or deepen the clone). CI `gate` sets `fetch-depth: 0` for the same reason. |
 | Agent Breakdown ratios look incomparable across agents | `--limit` truncates in whole-archive recency order (S41) | Read the `sampled` column and the uneven-sampling line. Compare across agents only when that line is absent. |
 | `toolbench` / `-m toolbench.passive` fails from `~` with a system python | The checkout's venv (with the editable install) isn't active | Use `uv run --project ~/tool-benchmarks toolbench passive ...` from any cwd; inside the repo, `uv run toolbench ...` or `uv run python -m toolbench.passive` both work. |
 | `corpus/manifest.json` disappeared after pulling the src-layout change | The manifest now ships inside the package (`src/toolbench/corpus/manifest.json`); the corpus copy is generated / gitignored | Re-run `corpus/vendor.sh` (idempotent — skips existing clones); it copies the packaged manifest back into `corpus/`. Default trial provisioning already uses the packaged pin (#78), so a missing or stale corpus copy no longer changes trial SHAs unless you pass a custom `manifest_path`. |
@@ -806,8 +813,13 @@ uv run pytest -q
 
 The complexity command uses Ruff's `C901` measurement and compares changed
 Python functions under `src/` and `tests/` by file plus qualified function name
-(untracked `*.py` under those trees are included). Defaults match
-`[tool.ruff.lint.mccabe] max-complexity = 10` and `--warning-delta 2`:
+(untracked `*.py` under those trees are included). The live budget is
+`toolbench.complexity_gate.DEFAULT_THRESHOLD` (10) with `--warning-delta 2`
+— not a `[tool.ruff.lint.mccabe]` key in `pyproject.toml`. That key is
+deliberately absent: C901 is outside Ruff's default rule set, so a value
+there would never be read by `ruff check .` while looking authoritative
+(#112). The gate also invokes Ruff with `--isolated`, so it cannot read
+`pyproject.toml` even if the key returned.
 
 - a new function above 10 or an existing function crossing 10 fails;
 - an already-baselined function above 10 passes when unchanged or reduced, but
@@ -831,16 +843,24 @@ and is not part of the lockfile or merge gate.
 The pytest command must collect every test, including module-level `test_*`
 functions that `unittest discover` silently misses (S31).
 
-GitHub Actions runs that same gate on every pull request and every push to
-`main` (`.github/workflows/ci.yml`: `uv sync --frozen --python 3.13`, then
-Ruff / complexity regression / mypy strict / pytest). PRs compare with the
-pull request's base SHA; pushes compare with the pre-push SHA. The workflow
-fetches full Git history so both commits are available. It remains least-privilege
-(`permissions: contents: read`) and does not broaden the gate (no
-`ruff format --check`, no mypy over `tools/`). `[tool.mypy]` in
-`pyproject.toml` pins `files` + `strict` to the same scope, so a bare local
-`uv run mypy` mirrors CI. Design:
+GitHub Actions runs two jobs on every pull request and every push to `main`
+(`.github/workflows/ci.yml`):
+
+1. **`gate`** — default install (`uv sync --frozen --python 3.13`, no optional
+   extras), then Ruff / complexity regression / mypy strict / pytest. PRs
+   compare with the pull request's base SHA; pushes compare with the pre-push
+   SHA. Full Git history (`fetch-depth: 0`) so both commits are available.
+2. **`tracing`** — `uv sync --frozen --python 3.13 --extra tracing`, asserts
+   `lmnr` is importable, then re-runs pytest so the real-SDK sanitization test
+   cannot silently skip (#112). Shallow checkout is enough (no Git-base
+   comparison). Keeping this separate preserves the default install's small
+   supply-chain surface.
+
+The workflow remains least-privilege (`permissions: contents: read`) and does
+not broaden the gate (no `ruff format --check`, no mypy over `tools/`).
+`[tool.mypy]` in `pyproject.toml` pins `files` + `strict` to the same scope, so
+a bare local `uv run mypy` mirrors CI. Design:
 [`docs/superpowers/specs/2026-07-15-tech-debt-cicd-routine-design.md`](docs/superpowers/specs/2026-07-15-tech-debt-cicd-routine-design.md).
 The periodic *assessment* half of that routine (marker/suppression census)
 is a separate local tool under `~/tech-debt-work/` — it is not in this repo
-and is not a second CI job.
+and is not a third CI job.
