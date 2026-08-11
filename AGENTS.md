@@ -22,8 +22,11 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   scope via `[tool.mypy]` in `pyproject.toml` (does not descend into `tools/`).
 - Optional live dependencies (`agentsview`, Claude/Codex archives, Hermes) are
   not required for the gate; skips for absent live archives are expected (the
-  hermetic suite is ~746 passing, with 4 skips when live paths / optional
-  tracing deps are missing).
+  hermetic suite is ~747 passing / 4 skips on the default install; ~748 / 3
+  with `--extra tracing`). CI runs a separate `tracing` job so lmnr-guarded
+  tests cannot silently skip (#112). The complexity budget's sole source of
+  truth is `complexity_gate.DEFAULT_THRESHOLD` — there is no inert
+  `[tool.ruff.lint.mccabe]` block in `pyproject.toml`.
 ## Repository integrity
 
 - Install the clone-local Lattice guard once with
