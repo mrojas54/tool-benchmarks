@@ -3,14 +3,23 @@
 ## Status
 
 **CI gate shipped** (`.github/workflows/ci.yml`, merged with the design; extended
-by PR #95): every PR and every push to `main` runs
-`uv sync --frozen --python 3.13`, then the documented gate
-(`ruff check .`, `python -m toolbench.complexity_gate --base <sha>`,
-`mypy --strict src/toolbench tests`, `pytest -q`). Checkout uses
-`fetch-depth: 0` so the complexity base commit is available. `[tool.mypy]` in
-`pyproject.toml` pins the same type-check scope so a bare local `mypy` mirrors
-CI (and does not type-check `tools/`). The assessment tool remains local-only
-under `~/tech-debt-work/` (not in this repo).
+by PR #95 and #112): every PR and every push to `main` runs two jobs.
+
+- **`gate`** — `uv sync --frozen --python 3.13` (no optional extras), then the
+  documented gate (`ruff check .`, `python -m toolbench.complexity_gate --base
+  <sha>`, `mypy --strict src/toolbench tests`, `pytest -q`). Checkout uses
+  `fetch-depth: 0` so the complexity base commit is available. The complexity
+  budget's sole source of truth is `complexity_gate.DEFAULT_THRESHOLD` (10);
+  there is deliberately no `[tool.ruff.lint.mccabe]` block in `pyproject.toml`
+  (#112).
+- **`tracing`** — `uv sync --frozen --python 3.13 --extra tracing`, asserts
+  `lmnr` is importable, then re-runs pytest so lmnr-guarded tests (including the
+  real-SDK export sanitization check) cannot silently skip on the default
+  install (#112). Shallow checkout is enough.
+
+`[tool.mypy]` in `pyproject.toml` pins the same type-check scope so a bare
+local `mypy` mirrors CI (and does not type-check `tools/`). The assessment tool
+remains local-only under `~/tech-debt-work/` (not in this repo).
 
 ## Problem
 
@@ -63,9 +72,12 @@ repo's documented gate verbatim.
 
 - **Triggers:** `pull_request: {}` and `push: { branches: [main] }`
 - **`permissions: contents: read`** — the gate only reads the tree
-- **One job**, `runs-on: ubuntu-latest`, `timeout-minutes: 15`
-- **Checkout:** `actions/checkout@v4` with `fetch-depth: 0` (full history for
-  the complexity base SHA)
+- **Two jobs**, each `runs-on: ubuntu-latest`, `timeout-minutes: 15`:
+  - **`gate`** — default install; full history (`fetch-depth: 0`) for the
+    complexity base SHA
+  - **`tracing`** — `--extra tracing` + `lmnr` import assert + pytest; shallow
+    checkout is enough (no Git-base comparison) (#112)
+- **Checkout (`gate`):** `actions/checkout@v4` with `fetch-depth: 0`
 
 | step | command | why |
 |---|---|---|
@@ -73,7 +85,7 @@ repo's documented gate verbatim.
 | install uv | `astral-sh/setup-uv@v5` with `enable-cache: true`, `cache-dependency-glob: uv.lock` | cache keyed on the lockfile |
 | sync deps | `uv sync --frozen --python 3.13` | `--frozen` fails CI if `uv.lock` drifted from `pyproject.toml`; `--python 3.13` matches `requires-python >=3.13` (uv provisions the interpreter if the runner lacks it) |
 | lint | `uv run ruff check .` | the documented gate |
-| complexity | `uv run python -m toolbench.complexity_gate --base $COMPLEXITY_BASE_SHA` | PR base SHA, or push `github.event.before`; fail only on new / crossed / worsened debt vs that baseline (threshold 10; warn on ≥2 rise still ≤10) |
+| complexity | `uv run python -m toolbench.complexity_gate --base $COMPLEXITY_BASE_SHA` | PR base SHA, or push `github.event.before`; fail only on new / crossed / worsened debt vs that baseline (`DEFAULT_THRESHOLD` 10; warn on ≥2 rise still ≤10). Budget lives in `complexity_gate.py`, not `pyproject.toml` (#112) |
 | type-check | `uv run mypy --strict src/toolbench tests` | the documented gate (path updated with the src-layout move; originally `toolbench tests`) |
 | test | `uv run pytest -q` | the documented gate |
 
