@@ -6,7 +6,7 @@ yet. Fixtures under `src/toolbench/probes/complex/`; pinned corpora under
 `corpus/` (packaged manifest at `src/toolbench/corpus/manifest.json`, copied
 by `corpus/vendor.sh`). Pre-registered predictions committed; no live trial
 matrix run yet.
-**Date:** 2026-07-12 (status refreshed 2026-08-03)
+**Date:** 2026-07-12 (status refreshed 2026-08-14)
 
 ## Implementation map (as shipped)
 
@@ -17,6 +17,7 @@ matrix run yet.
 | `src/toolbench/complex_runner.py` | Hermetic worktree provision, deps cache, injectable `run_trial` |
 | `src/toolbench/probes/complex/` | Per-cell fixtures (`defect.patch`, `truth.json`, `prediction.md`, `oracle.json`, `prompt.md`) |
 | `src/toolbench/corpus/manifest.json` | Pinned SHAs + dep/warmup/provision recipes (`wids`, `maltese`, `rich`); `corpus/vendor.sh` copies this into `corpus/` |
+| `benchmarks/harbor/toolbench-complex/` | Harbor packaging for selected defects (WIDS D2 build canary; grading not verified yet) |
 
 `ensure_deps` / `provision_worktree` default to the packaged manifest
 (`MANIFEST_PATH`). Custom corpora must pass `manifest_path` explicitly; a

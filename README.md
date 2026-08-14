@@ -95,7 +95,9 @@ rather than silently absent (S38 / TB-24).
 - **`transcript.py`** — the schema-neutral records: `ToolCall` (with
   `UsageProvenance` and parse-time inefficiency tags), `ParseResult`
   (optional session-grain cache sums, `unjoinable`, optional `turns`), and
-  `result_len`. Path-based `parse_session` is gone; open lines (with
+  `result_len`. `JsonLines` is the shared JSONL reader (blanks skipped;
+  undecodable and non-object lines counted into `malformed` — PR #107).
+  Path-based `parse_session` is gone; open lines (with
   `errors="replace"` for TB-10) and call `ClaudeParser.parse` or
   `pick_adapter(ref).parse(ref)`.
 - **`parsers.py`** — one class per schema. `ClaudeParser` joins each assistant
@@ -203,6 +205,8 @@ rather than silently absent (S38 / TB-24).
   `complex_runner.py` provisions worktrees and drives trials. See
   [Complex debug probe](#complex-debug-probe-library) below; design lives under
   [`docs/superpowers/specs/2026-07-12-complex-debug-probe-design.md`](docs/superpowers/specs/2026-07-12-complex-debug-probe-design.md).
+  Selected complex probes are also packaged as Harbor tasks under
+  [`benchmarks/harbor/toolbench-complex/`](benchmarks/harbor/toolbench-complex/).
 
 ## Probe corpus
 
@@ -280,6 +284,9 @@ packaged manifest there so the vendored tree stays self-describing). Design:
 
 Call the library from tests or a future CLI; do not shell a real `claude` from
 the hermetic suite — `launch` / `oracle` are injectable (S24 pattern).
+Selected defects are also packaged as Harbor tasks — see
+[`benchmarks/harbor/toolbench-complex/README.md`](benchmarks/harbor/toolbench-complex/README.md)
+(WIDS D2 build canary; oracle/agent grading not verified yet).
 
 ## Worktree reclaim reporter
 
@@ -353,7 +360,7 @@ implemented as a library (fixtures under `src/toolbench/probes/complex/`; no
 CLI yet). The linked-worktree reclaim reporter (`worktrees.py`, **S42** /
 PR #90) ships as a third console subcommand — table, `--reclaimable-only`, and
 SessionStart `--hook`. Opt-in Laminar CLI tracing (`observability/` +
-`tracing.py`, **S20** / PR #97) wraps real console processes only when
+`tracing.py`, **S20** / PR #97 / #104) wraps real console processes only when
 `TOOLBENCH_TRACING=1` and the `tracing` extra / project key are present. CQ
 follow-ons split passive into `reducer`/`report`,
 fold probe into `ClaudeParser` (`keep_raw_input` / `track_turns`), and stamp
@@ -381,8 +388,12 @@ Source-of-truth documents:
   ten-turn operator run sheet for scoring a fresh probe session.
 - [`docs/superpowers/specs/2026-07-12-complex-debug-probe-design.md`](docs/superpowers/specs/2026-07-12-complex-debug-probe-design.md)
   — locate-then-fix complex probe (library shipped; no CLI yet).
+- [`benchmarks/harbor/toolbench-complex/README.md`](benchmarks/harbor/toolbench-complex/README.md)
+  — Harbor packaging for selected complex probes (WIDS D2 canary).
 - [`.claude/skills/cache-token-metrics/SKILL.md`](.claude/skills/cache-token-metrics/SKILL.md)
   — operator recipe for per-run cache-token diffs (S39).
+- [`.claude/skills/laminar/SKILL.md`](.claude/skills/laminar/SKILL.md)
+  — Laminar instrumentation / CLI / SQL guidance for the optional `tracing` extra.
 
 ## Agents / targets
 

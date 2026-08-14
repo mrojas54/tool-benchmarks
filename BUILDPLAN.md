@@ -27,7 +27,7 @@ raw roots + AgentsView exports
 
 - **Runtime:** Python stdlib by default (`subprocess` shells to the AgentsView
   CLI). Optional `tracing` extra adds Laminar (`lmnr`) for console-process
-  observability only.
+  observability only; `TOOLBENCH_TRACING=1` is the operator opt-in (#104).
 - **Project:** uv-managed; `pyproject.toml` + `uv.lock`; runtime deps empty;
   optional `[project.optional-dependencies] tracing`. The `dev` group holds
   gate tools (`ruff`/`mypy`/`pytest`) plus optional parallel-run tooling

@@ -11,8 +11,8 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   repository root via `uv run`; use `uv sync` when explicit provisioning is
   needed. Runtime deps stay empty (stdlib-only by default); the optional
   `tracing` extra adds Laminar (`lmnr`) without changing the default install.
-  The `dev` group adds the gate tools plus optional parallel-run tooling
-  (`logfire`).
+  Console tracing also requires `TOOLBENCH_TRACING=1` (#104). The `dev` group
+  adds the gate tools plus optional parallel-run tooling (`logfire`).
 - Before a PR, run `uv run ruff check .`,
   `uv run python -m toolbench.complexity_gate --base origin/main`,
   `uv run mypy --strict src/toolbench tests`, and `uv run pytest -q`. Do not
@@ -97,10 +97,14 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
 Aggregation is in `reducer.py`; markdown/fingerprints in `report.py`
 (per-section `_render_*` helpers); freeze I/O in `freeze.py`; run-manifest I/O
 in `run_manifest.py`. `passive.py` owns CLI orchestration (`_resolve_corpus`
-for replay-vs-discover) and compatibility re-exports. The complex debug probe
-is `complex.py` (defects, scoring, profile render) plus `shell_safety.py`
-(arm / read-scope audits; re-exported from `complex`) plus `complex_runner.py`
-(worktree, deps cache, trial driver) — library only, no CLI yet.
+for replay-vs-discover) and compatibility re-exports. `transcript.JsonLines`
+is the shared JSONL reader for parsers (blanks skipped; undecodable /
+non-object lines counted). The complex debug probe is `complex.py` (defects,
+scoring, profile render) plus `shell_safety.py` (arm / read-scope audits;
+re-exported from `complex`) plus `complex_runner.py` (worktree, deps cache,
+trial driver) — library only, no CLI yet. Harbor packaging for selected
+complex probes lives under `benchmarks/harbor/toolbench-complex/` (not a
+console subcommand).
 `worktrees.py` owns the linked-worktree inventory CLI (`classify` /
 `reclaimable` / `--hook`); it prints only and never removes a tree or ref.
 `complexity_gate.py` owns the cyclomatic-complexity regression check
