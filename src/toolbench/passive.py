@@ -16,7 +16,12 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from toolbench.adapters import UnknownSchema
-from toolbench.freeze import MalformedFreezeManifest, read_manifest, write_manifest
+from toolbench.freeze import (
+    CorpusManifest,
+    MalformedFreezeManifest,
+    read_manifest,
+    write_manifest,
+)
 from toolbench.reducer import (
     OVERSIZED_OUTPUT_TOKENS,
     UNKNOWN_MODEL,
@@ -481,6 +486,98 @@ class _ResolvedCorpus:
     frozen_census_note: str | None
 
 
+def _no_denominator(reason: str) -> AgentCensus:
+    """An empty census carrying only the reason it is empty."""
+    return AgentCensus(totals={}, archive_total=0, unavailable_reason=reason)
+
+
+def _replay_census(
+    manifest: CorpusManifest, freeze_path: str, args: CliArgs
+) -> tuple[AgentCensus, str | None]:
+    """The denominator a freeze replay may use, and the caveat that qualifies it.
+
+    Four distinct ways a manifest fails to supply a usable census, each named as
+    ITSELF rather than collapsed into one generic "unavailable": never recorded,
+    recorded-but-failed, recorded without its population filter, and recorded over
+    a DIFFERENT population than this replay wants. Only the last branch returns a
+    real census, and it carries the historical-denominator note out with it.
+    """
+    if manifest.census is None:
+        # A freeze pins the REF LIST, not the archive it was drawn from (TB-22): a v1
+        # manifest never had a census to lose, and a v2 manifest can still be written
+        # without one (e.g. discovery's own census attempt failed at freeze time, see
+        # below). Named by the MANIFEST VERSION specifically, not by "freezing" in
+        # general (TB-37), so a future format gap reads as its own gap and not this
+        # one's.
+        return _no_denominator(
+            f"frozen corpus replay ({freeze_path}): manifest format "
+            f"{manifest.version} recorded no archive census; no denominator was "
+            "recorded at freeze time"
+        ), None
+    if manifest.census.unavailable_reason is not None:
+        # The census itself failed AT FREEZE TIME (e.g. discovery's own census call
+        # errored). Propagated, not laundered into the generic "no denominator" text
+        # above -- that would misname a measurement that was ATTEMPTED AND FAILED as
+        # one that was never attempted.
+        return _no_denominator(
+            f"frozen corpus replay ({freeze_path}): the census recorded at "
+            f"freeze time was itself unavailable: {manifest.census.unavailable_reason}"
+        ), None
+    if manifest.census_includes_subagents is None:
+        return _no_denominator(
+            f"frozen corpus replay ({freeze_path}): manifest format "
+            f"{manifest.version} recorded a census without its subagent "
+            "population filter"
+        ), None
+    if manifest.census_includes_subagents != (not args.exclude_subagents):
+        frozen_population = (
+            "included subagents"
+            if manifest.census_includes_subagents
+            else "excluded subagents"
+        )
+        replay_population = (
+            "includes subagents" if not args.exclude_subagents else "excludes subagents"
+        )
+        return _no_denominator(
+            f"frozen corpus replay ({freeze_path}): the freeze-time census "
+            f"{frozen_population}, but this replay {replay_population}"
+        ), None
+    # A real census survived the freeze (TB-37): the fractions below are REAL,
+    # but HISTORICAL -- the archive size as of freeze time, not today's. That
+    # caveat is wired through `frozen_census_note` to `render_report`, which
+    # renders it beside the sampling notes it qualifies, so a v2 census can never
+    # read as "current" the way a v1 replay's silent absence used to (TB-33's
+    # honesty floor, raised).
+    return manifest.census, (
+        "- **Historical denominator**: the archive census above was recorded at "
+        f"freeze time ({freeze_path}), not re-measured for this replay. The live "
+        "archive has almost certainly changed size since -- these fractions "
+        "describe the corpus as it was WHEN FROZEN, not the archive today."
+    )
+
+
+def _write_freeze(
+    freeze_path: str, refs: list[SessionRef], census: AgentCensus, args: CliArgs
+) -> bool:
+    """Write the freeze manifest once, after discovery. `False` = fatal, reported."""
+    try:
+        write_manifest(
+            freeze_path,
+            refs,
+            corpus_fingerprint(r.session_id for r in refs).digest,
+            census=census,
+            census_includes_subagents=not args.exclude_subagents,
+        )
+    except OSError as exc:
+        print(
+            f"toolbench.passive: fatal freeze error: could not write "
+            f"{freeze_path}: {exc}",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
 def _resolve_corpus(
     args: CliArgs,
     root: str,
@@ -507,10 +604,9 @@ def _resolve_corpus(
     # `None` would claim a probe was attempted and could not answer (roborev #103).
     limit_truncated: bool | None = False
     # Set only on a v2 replay whose manifest carried a real census (TB-37): the caveat
-    # that the fractions below are HISTORICAL, not live. `render_report` renders it
-    # right beside the sampling notes it qualifies -- never left implicit alongside a
-    # number that could otherwise read as "current" (see the else-branch comment below
-    # for why a v1/censusless replay does not set this).
+    # that the fractions are HISTORICAL, not live. `render_report` renders it right
+    # beside the sampling notes it qualifies -- never left implicit alongside a number
+    # that could otherwise read as "current".
     frozen_census_note: str | None = None
     if replaying:
         assert freeze_path is not None
@@ -520,76 +616,7 @@ def _resolve_corpus(
             print(f"toolbench.passive: fatal freeze error: {exc}", file=sys.stderr)
             return None
         refs, fallback_reason, skips = manifest.refs, None, []
-        if manifest.census is None:
-            # A freeze pins the REF LIST, not the archive it was drawn from (TB-22): a v1
-            # manifest never had a census to lose, and a v2 manifest can still be written
-            # without one (e.g. discovery's own census attempt failed at freeze time, see
-            # below). Named by the MANIFEST VERSION specifically, not by "freezing" in
-            # general (TB-37), so a future format gap reads as its own gap and not this
-            # one's.
-            census = AgentCensus(
-                totals={},
-                archive_total=0,
-                unavailable_reason=(
-                    f"frozen corpus replay ({freeze_path}): manifest format "
-                    f"{manifest.version} recorded no archive census; no denominator was "
-                    "recorded at freeze time"
-                ),
-            )
-        elif manifest.census.unavailable_reason is not None:
-            # The census itself failed AT FREEZE TIME (e.g. discovery's own census call
-            # errored). Propagated, not laundered into the generic "no denominator" text
-            # above -- that would misname a measurement that was ATTEMPTED AND FAILED as
-            # one that was never attempted.
-            census = AgentCensus(
-                totals={},
-                archive_total=0,
-                unavailable_reason=(
-                    f"frozen corpus replay ({freeze_path}): the census recorded at "
-                    f"freeze time was itself unavailable: {manifest.census.unavailable_reason}"
-                ),
-            )
-        elif manifest.census_includes_subagents is None:
-            census = AgentCensus(
-                totals={},
-                archive_total=0,
-                unavailable_reason=(
-                    f"frozen corpus replay ({freeze_path}): manifest format "
-                    f"{manifest.version} recorded a census without its subagent "
-                    "population filter"
-                ),
-            )
-        elif manifest.census_includes_subagents != (not args.exclude_subagents):
-            frozen_population = (
-                "included subagents"
-                if manifest.census_includes_subagents
-                else "excluded subagents"
-            )
-            replay_population = (
-                "includes subagents" if not args.exclude_subagents else "excludes subagents"
-            )
-            census = AgentCensus(
-                totals={},
-                archive_total=0,
-                unavailable_reason=(
-                    f"frozen corpus replay ({freeze_path}): the freeze-time census "
-                    f"{frozen_population}, but this replay {replay_population}"
-                ),
-            )
-        else:
-            # A real census survived the freeze (TB-37): the fractions below are REAL,
-            # but HISTORICAL -- the archive size as of freeze time, not today's. That
-            # caveat is wired through `frozen_census_note` to `render_report`, which
-            # renders it beside the sampling notes it qualifies, so a v2 census can never
-            # read as "current" the way a v1 replay's silent absence used to (TB-33's
-            # honesty floor, raised).
-            census = manifest.census
-            frozen_census_note = (
-                "- **Historical denominator**: the archive census above was recorded at "
-                f"freeze time ({freeze_path}), not re-measured for this replay. The live "
-                "archive has almost certainly changed size since -- these fractions "
-                "describe the corpus as it was WHEN FROZEN, not the archive today."
-            )
+        census, frozen_census_note = _replay_census(manifest, freeze_path, args)
     else:
         try:
             refs, fallback_reason, skips, census, limit_truncated = _discover_refs(
@@ -598,22 +625,8 @@ def _resolve_corpus(
         except (FileNotFoundError, RuntimeError, ValueError) as exc:
             print(f"toolbench.passive: fatal source error: {exc}", file=sys.stderr)
             return None
-        if freeze_path is not None:
-            try:
-                write_manifest(
-                    freeze_path,
-                    refs,
-                    corpus_fingerprint(r.session_id for r in refs).digest,
-                    census=census,
-                    census_includes_subagents=not args.exclude_subagents,
-                )
-            except OSError as exc:
-                print(
-                    f"toolbench.passive: fatal freeze error: could not write "
-                    f"{freeze_path}: {exc}",
-                    file=sys.stderr,
-                )
-                return None
+        if freeze_path is not None and not _write_freeze(freeze_path, refs, census, args):
+            return None
     return _ResolvedCorpus(
         refs,
         fallback_reason,
@@ -624,79 +637,76 @@ def _resolve_corpus(
     )
 
 
-def main(
-    argv: list[str] | None = None,
-    *,
-    runner: Runner | None = None,
-    root: str = "~/.claude/projects",
-) -> int:
-    args = parse_args(argv)
+@dataclass(frozen=True)
+class _FreezePlan:
+    """How `--freeze` governs this run (TB-22, S37).
 
-    # `--freeze` pins the discovered set: absent manifest -> discover and write it
-    # once; present manifest -> replay it, bypassing live discovery so the input
-    # set cannot drift between runs (TB-22, S37).
-    freeze_path = args.freeze
-    freeze_p = Path(freeze_path).expanduser() if freeze_path is not None else None
-    if freeze_p is not None and freeze_p.exists() and not freeze_p.is_file():
+    `replaying` is the fork the run's disclosures key on: a replay reports a
+    pinned corpus and withholds the agentsview timeout, a discover writes the
+    manifest it just built. `path` stays the raw flag string because that is what
+    the provenance lines print and what `_resolve_corpus` takes.
+    """
+
+    path: str | None
+    replaying: bool
+
+
+def _plan_freeze(args: CliArgs) -> _FreezePlan | None:
+    """Validate `--freeze` and settle replay-vs-discover. `None` = fatal, reported.
+
+    Absent manifest -> discover and write it once; present manifest -> replay it,
+    bypassing live discovery so the input set cannot drift between runs.
+    """
+    if args.freeze is None:
+        return _FreezePlan(path=None, replaying=False)
+    path = Path(args.freeze).expanduser()
+    if path.exists() and not path.is_file():
         print(
-            f"toolbench.passive: fatal freeze error: {freeze_path} exists but is "
+            f"toolbench.passive: fatal freeze error: {args.freeze} exists but is "
             "not a regular file",
             file=sys.stderr,
         )
-        return 1
-    replaying = freeze_p is not None and freeze_p.is_file()
+        return None
+    return _FreezePlan(path=args.freeze, replaying=path.is_file())
 
-    # Bind --agentsview-timeout to the DEFAULT runner, once, here (TB-39). This is the sole
-    # place the default is chosen: both consumers (iter_sessions, and AgentsViewLoader via
-    # pick_adapter) fall back to `_run_agentsview` independently when `runner is None`, so
-    # binding it here reaches all four call sites with no new plumbing. `partial` still
-    # satisfies `Runner = Callable[[list[str]], CompletedProcess[str]]`.
-    #
-    # An EXPLICITLY injected runner is never wrapped: the flag configures the default, it
-    # does not override the seam. Every test in this suite injects one, and wrapping those
-    # would quietly change what they exercise.
-    if runner is None:
-        runner = functools.partial(
-            _run_agentsview,
-            timeout=args.agentsview_timeout if args.agentsview_timeout > 0 else None,
-        )
 
-    resolved = _resolve_corpus(args, root, runner, freeze_path=freeze_path, replaying=replaying)
-    if resolved is None:
-        return 1
-    refs = resolved.refs
-    fallback_reason = resolved.fallback_reason
-    skips = resolved.skips
-    census = resolved.census
-    limit_truncated = resolved.limit_truncated
-    frozen_census_note = resolved.frozen_census_note
+def _default_runner(args: CliArgs) -> Runner:
+    """Bind `--agentsview-timeout` to the DEFAULT runner, once (TB-39).
 
-    # Counted before the filter runs, on both the discovery and the replay path -- these
-    # are what the provenance line reports, so they must describe the corpus as it was
-    # found, not as it was left (TB-31).
-    sessions_discovered = len(refs)
-    subagents_found = sum(1 for ref in refs if ref.is_subagent)
+    This is the sole place the default is chosen: both consumers (iter_sessions,
+    and AgentsViewLoader via pick_adapter) fall back to `_run_agentsview`
+    independently when `runner is None`, so binding here reaches all four call
+    sites with no new plumbing. `partial` still satisfies
+    `Runner = Callable[[list[str]], CompletedProcess[str]]`.
+    """
+    return functools.partial(
+        _run_agentsview,
+        timeout=args.agentsview_timeout if args.agentsview_timeout > 0 else None,
+    )
 
-    if args.exclude_subagents:
-        refs = filter_subagents(refs)
 
-    # AFTER the filter, unlike the two provenance counts above (TB-35). The census's
-    # `includes` track the POST-filter population (TB-33 Finding 1), so a pre-filter count
-    # here would put parents-plus-children over a parents-only denominator and re-open the
-    # very bug that finding closed. `census.totals[a] - sampled_by_agent[a]` is then the
-    # number of a's sessions `--limit` never pulled: both sides observed, neither inferred.
-    sampled_by_agent = Counter(ref.agent for ref in refs)
+@dataclass(frozen=True)
+class _ScanResult:
+    """What the scan loop produced: the aggregate, and the identity of what it read."""
 
-    run: RunManifest | None = None
-    if args.run_manifest is not None:
-        try:
-            run = read_run_manifest(args.run_manifest)
-        except (MalformedRunManifest, OSError) as exc:
-            # S23: a bad manifest is a hard stop -- silently scanning without a run
-            # would print a corpus report the operator would read as a run report.
-            print(f"error: {exc}", file=sys.stderr)
-            return 1
+    reducer: Reducer
+    fingerprint: CorpusFingerprint
 
+
+def _scan_refs(
+    refs: list[SessionRef],
+    *,
+    runner: Runner,
+    run: RunManifest | None,
+    args: CliArgs,
+    skips: list[SkipRecord],
+) -> _ScanResult:
+    """Parse every ref into one `Reducer`, recording the unreadable ones.
+
+    `skips` is extended IN PLACE rather than returned separately: it arrives
+    already carrying the discovery-time skips, and the report tallies both
+    origins as one list.
+    """
     reducer = Reducer(run=run)
     scanned_sigs: list[str] = []
     for ref in refs:
@@ -726,52 +736,130 @@ def main(
                 sum(filtered.unjoinable.values()),
             )
         )
+    return _ScanResult(reducer=reducer, fingerprint=corpus_fingerprint(scanned_sigs))
 
-    fingerprint = corpus_fingerprint(scanned_sigs)
 
-    freeze_note: str | None = None
-    if freeze_path is not None:
-        if replaying:
-            # A frozen ref that no longer loads (missing_source) has vanished from
-            # disk since the freeze -- name the count so a shrinking scanned set is
-            # never mistaken for a code effect (TB-22).
-            vanished = sum(1 for s in skips if s.reason is SkipReason.MISSING_SOURCE)
-            freeze_note = (
-                f"Replaying frozen corpus: {freeze_path} ({vanished} vanished since freeze)"
-            )
-        else:
-            freeze_note = f"Corpus frozen to: {freeze_path}"
+def _freeze_note(plan: _FreezePlan, skips: list[SkipRecord]) -> str | None:
+    """The provenance line naming the freeze this run used, or `None`."""
+    if plan.path is None:
+        return None
+    if plan.replaying:
+        # A frozen ref that no longer loads (missing_source) has vanished from
+        # disk since the freeze -- name the count so a shrinking scanned set is
+        # never mistaken for a code effect (TB-22).
+        vanished = sum(1 for s in skips if s.reason is SkipReason.MISSING_SOURCE)
+        return f"Replaying frozen corpus: {plan.path} ({vanished} vanished since freeze)"
+    return f"Corpus frozen to: {plan.path}"
 
-    if reducer.calls_joined == 0:
-        if skips:
-            ranked = sorted(
-                tally_skips(skips).items(), key=lambda kv: (-kv[1], kv[0].value)
-            )
-            tally = ", ".join(f"{r.value}={c}" for r, c in ranked)
-            suffix = f" (skipped {len(skips)}: {tally})"
-        else:
-            suffix = ""
-        lines = [f"toolbench.passive: no sessions matched the given selection.{suffix}"]
-        # TB-34: the run already built a full `AgentCensus` before this early return --
-        # `census.totals`/`archive_total`/`residual` are all in hand, and discarding
-        # them here is the exact disclosure gap TB-33 exists to close, just relocated
-        # to the one path TB-33 never reached. `_sampling_notes` already knows how to
-        # render that census (unreached agents, an all-skipped agent, an unenumerated
-        # residual) from these same six arguments -- reused rather than reinvented, so
-        # a narrow window is never silently indistinguishable from a truly empty
-        # archive. Additive only: the "no sessions matched" line above never changes.
-        lines.extend(
-            _sampling_notes(
-                reducer, census, skips, args.limit, limit_truncated, dict(sampled_by_agent)
+
+def _no_sessions_lines(
+    reducer: Reducer,
+    census: AgentCensus,
+    skips: list[SkipRecord],
+    args: CliArgs,
+    limit_truncated: bool | None,
+    sampled_by_agent: dict[str, int],
+) -> list[str]:
+    """The empty-selection report: the headline, plus the census notes behind it.
+
+    TB-34: the run already built a full `AgentCensus` before this early return --
+    `census.totals`/`archive_total`/`residual` are all in hand, and discarding
+    them here is the exact disclosure gap TB-33 exists to close, just relocated
+    to the one path TB-33 never reached. `_sampling_notes` already knows how to
+    render that census (unreached agents, an all-skipped agent, an unenumerated
+    residual) from these same six arguments -- reused rather than reinvented, so
+    a narrow window is never silently indistinguishable from a truly empty
+    archive. Additive only: the "no sessions matched" line never changes.
+    """
+    if skips:
+        ranked = sorted(tally_skips(skips).items(), key=lambda kv: (-kv[1], kv[0].value))
+        tally = ", ".join(f"{r.value}={c}" for r, c in ranked)
+        suffix = f" (skipped {len(skips)}: {tally})"
+    else:
+        suffix = ""
+    lines = [f"toolbench.passive: no sessions matched the given selection.{suffix}"]
+    lines.extend(
+        _sampling_notes(
+            reducer, census, skips, args.limit, limit_truncated, sampled_by_agent
+        )
+    )
+    return lines
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    runner: Runner | None = None,
+    root: str = "~/.claude/projects",
+) -> int:
+    args = parse_args(argv)
+
+    freeze = _plan_freeze(args)
+    if freeze is None:
+        return 1
+
+    # An EXPLICITLY injected runner is never wrapped: `--agentsview-timeout`
+    # configures the default, it does not override the seam. Every test in this
+    # suite injects one, and wrapping those would quietly change what they exercise.
+    if runner is None:
+        runner = _default_runner(args)
+
+    resolved = _resolve_corpus(
+        args, root, runner, freeze_path=freeze.path, replaying=freeze.replaying
+    )
+    if resolved is None:
+        return 1
+    refs = resolved.refs
+    skips = resolved.skips
+    census = resolved.census
+
+    # Counted before the filter runs, on both the discovery and the replay path -- these
+    # are what the provenance line reports, so they must describe the corpus as it was
+    # found, not as it was left (TB-31).
+    sessions_discovered = len(refs)
+    subagents_found = sum(1 for ref in refs if ref.is_subagent)
+
+    if args.exclude_subagents:
+        refs = filter_subagents(refs)
+
+    # AFTER the filter, unlike the two provenance counts above (TB-35). The census's
+    # `includes` track the POST-filter population (TB-33 Finding 1), so a pre-filter count
+    # here would put parents-plus-children over a parents-only denominator and re-open the
+    # very bug that finding closed. `census.totals[a] - sampled_by_agent[a]` is then the
+    # number of a's sessions `--limit` never pulled: both sides observed, neither inferred.
+    sampled_by_agent = Counter(ref.agent for ref in refs)
+
+    run: RunManifest | None = None
+    if args.run_manifest is not None:
+        try:
+            run = read_run_manifest(args.run_manifest)
+        except (MalformedRunManifest, OSError) as exc:
+            # S23: a bad manifest is a hard stop -- silently scanning without a run
+            # would print a corpus report the operator would read as a run report.
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+    scan = _scan_refs(refs, runner=runner, run=run, args=args, skips=skips)
+
+    if scan.reducer.calls_joined == 0:
+        print(
+            "\n".join(
+                _no_sessions_lines(
+                    scan.reducer,
+                    census,
+                    skips,
+                    args,
+                    resolved.limit_truncated,
+                    dict(sampled_by_agent),
+                )
             )
         )
-        print("\n".join(lines))
         return 0
 
     report = render_report(
-        reducer,
+        scan.reducer,
         index_source=args.index_source,
-        fallback_reason=fallback_reason,
+        fallback_reason=resolved.fallback_reason,
         skips=skips,
         include_subagents=not args.exclude_subagents,
         subagents_found=subagents_found,
@@ -779,19 +867,21 @@ def main(
         since_note=args.since,
         census=census,
         verbose=args.verbose,
-        fingerprint=fingerprint,
-        freeze_note=freeze_note,
-        frozen_census_note=frozen_census_note,
+        fingerprint=scan.fingerprint,
+        freeze_note=_freeze_note(freeze, skips),
+        frozen_census_note=resolved.frozen_census_note,
         run_tickets=args.tickets,
         limit=args.limit,
-        limit_truncated=limit_truncated,
+        limit_truncated=resolved.limit_truncated,
         sampled_by_agent=dict(sampled_by_agent),
         # `None` = "agentsview was never called, so its timeout is not a fact about this
         # report" -- a raw-only scan or a freeze replay. Disclosing a ceiling that governed
         # nothing would be misdirection, so the value is withheld rather than defaulted
         # (TB-39; same discipline as `limit_truncated`'s earned False, roborev #103).
         agentsview_timeout=(
-            None if replaying or args.index_source == "raw" else args.agentsview_timeout
+            None
+            if freeze.replaying or args.index_source == "raw"
+            else args.agentsview_timeout
         ),
     )
     if args.out:

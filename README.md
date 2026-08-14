@@ -118,14 +118,15 @@ rather than silently absent (S38 / TB-24).
   `toolbench probe …` / `toolbench worktrees …`). Dispatches remaining argv
   verbatim to the sub-CLIs; imports are lazy per subcommand so a broken complex
   fixture cannot break `passive`, `worktrees`, or `--help`. Real console
-  processes (`argv is None`) may wrap the subcommand in `tracing.run_traced`;
-  programmatic `main([...])` calls stay untraced, and `worktrees --hook` is
-  always excluded (SessionStart must stay silent / failure-tolerant).
+  processes (`argv is None`) wrap the subcommand in `tracing.run_traced` only
+  when `TOOLBENCH_TRACING=1`; programmatic `main([...])` calls stay untraced,
+  and `worktrees --hook` is always excluded (SessionStart must stay silent /
+  failure-tolerant).
 - **`observability/`** + **`tracing.py`** — opt-in Laminar CLI observability
-  (`tracing` extra / `lmnr`). `setup_tracing` initializes best-effort (returns
-  `False` when the SDK or project key is absent); `run_traced` records a
-  `toolbench.cli` root span with command tags and exit code, never argv,
-  paths, prompts, or report contents. See
+  (`tracing` extra / `lmnr`, gated by `TOOLBENCH_TRACING=1`). `setup_tracing`
+  initializes best-effort (returns `False` when the SDK or project key is
+  absent); `run_traced` records a `toolbench.cli` root span with command tags
+  and exit code, never argv, paths, prompts, or report contents. See
   [Optional Laminar tracing](#optional-laminar-tracing).
 - **`complexity_gate.py`** — regression-aware cyclomatic-complexity gate
   (S22 / PR #95). Compares Ruff `C901` for changed `src/` and `tests/` Python
@@ -348,9 +349,9 @@ implemented as a library (fixtures under `src/toolbench/probes/complex/`; no
 CLI yet). The linked-worktree reclaim reporter (`worktrees.py`, **S42** /
 PR #90) ships as a third console subcommand — table, `--reclaimable-only`, and
 SessionStart `--hook`. Opt-in Laminar CLI tracing (`observability/` +
-`tracing.py`, **S20** / PR #97) wraps real console processes only when the
-`tracing` extra and project key are present. CQ follow-ons split passive into
-`reducer`/`report`,
+`tracing.py`, **S20** / PR #97) wraps real console processes only when
+`TOOLBENCH_TRACING=1` and the `tracing` extra / project key are present. CQ
+follow-ons split passive into `reducer`/`report`,
 fold probe into `ClaudeParser` (`keep_raw_input` / `track_turns`), and stamp
 inefficiency tags at emit. The strict gate (`uv run ruff check .`,
 `uv run python -m toolbench.complexity_gate --base origin/main`,
@@ -420,9 +421,8 @@ bug this adapter exists for is
 
 The project is [uv](https://docs.astral.sh/uv/)-managed (`pyproject.toml` +
 `uv.lock`, empty default runtime deps, and optional `tracing` extra). The `dev`
-group installs the gate tools (`ruff` / `mypy` / `pytest`) plus optional
-parallel-run tooling (`logfire`); the shipped package stays stdlib-only by
-default. Requires Python ≥3.13.
+group installs only the gate tools (`ruff` / `mypy` / `pytest`); the shipped
+package stays stdlib-only by default. Requires Python ≥3.13.
 
 ```sh
 # Bootstrap (once per checkout; also runs implicitly under `uv run`)
@@ -471,11 +471,13 @@ uv run pytest -q
 
 ### Optional Laminar tracing
 
-[Laminar](https://laminar.sh/docs/tracing/integrations/overview) can record one
-trace for each real `toolbench` console command. Library-style calls such as
-`main([...])` stay untraced, so unit tests and embedding applications do not
-send telemetry. `toolbench worktrees --hook` is also untraced: SessionStart
-must stay silent and failure-tolerant even when the optional SDK is present.
+[Laminar](https://laminar.sh/docs/tracing/integrations/overview) is an explicit
+opt-in for real `toolbench` console commands. It can record one trace per
+opted-in console command; normal `passive` / `probe` runs and library-style
+calls such as `main([...])` stay untraced and do not import the optional SDK, so
+unit tests and embedding applications do not send telemetry.
+`toolbench worktrees --hook` is also untraced: SessionStart must stay silent
+and failure-tolerant even when tracing is otherwise enabled.
 
 Initialization lives in
 `toolbench.observability.setup_tracing.setup_tracing`. It returns `False`
@@ -495,10 +497,14 @@ documents only the variable name.
 Run a representative traced command:
 
 ```sh
-uv run --extra tracing toolbench probe \
+TOOLBENCH_TRACING=1 uv run --extra tracing toolbench probe \
   --session tests/fixtures/probe_session.jsonl \
   --out reports/active-probe-comparison.md
 ```
+
+`TOOLBENCH_TRACING=1` is the opt-in boundary; a Laminar key alone does not
+enable tracing. The normal strict gate uses `uv sync` without the `tracing`
+extra, so the optional SDK is not part of the hermetic default environment.
 
 Verify the newest trace:
 

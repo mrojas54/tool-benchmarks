@@ -14,6 +14,8 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
+from tests.fakes import make_module
+
 
 class SetupTracingTests(unittest.TestCase):
     def test_setup_tracing_sanitizes_sdk_inputs_and_restores_state(self) -> None:
@@ -35,8 +37,7 @@ class SetupTracingTests(unittest.TestCase):
                     )
                 )
 
-        fake_lmnr = types.ModuleType("lmnr")
-        fake_lmnr.Laminar = RecordingLaminar  # type: ignore[attr-defined]
+        fake_lmnr = make_module("lmnr", Laminar=RecordingLaminar)
         original_argv = sys.argv[:]
         context_environment_names = (
             "LMNR_TRACE_METADATA",
@@ -193,8 +194,7 @@ Laminar.shutdown()
             ) -> None:
                 events.append(("initialize", project_api_key, frozenset(instruments)))
 
-        fake_lmnr = types.ModuleType("lmnr")
-        fake_lmnr.Laminar = RecordingLaminar  # type: ignore[attr-defined]
+        fake_lmnr = make_module("lmnr", Laminar=RecordingLaminar)
 
         with (
             unittest.mock.patch.dict(os.environ, {}, clear=True),
@@ -226,8 +226,7 @@ Laminar.shutdown()
             ) -> None:
                 events.append(("initialize", project_api_key, frozenset(instruments)))
 
-        fake_lmnr = types.ModuleType("lmnr")
-        fake_lmnr.Laminar = RecordingLaminar  # type: ignore[attr-defined]
+        fake_lmnr = make_module("lmnr", Laminar=RecordingLaminar)
 
         with (
             unittest.mock.patch.dict(
@@ -260,12 +259,9 @@ Laminar.shutdown()
                 return "dotenv-project-key"
             return None
 
-        fake_lmnr = types.ModuleType("lmnr")
-        fake_lmnr.Laminar = RecordingLaminar  # type: ignore[attr-defined]
-        fake_sdk = types.ModuleType("lmnr.sdk")
-        fake_utils = types.ModuleType("lmnr.sdk.utils")
-        fake_sdk.utils = fake_utils  # type: ignore[attr-defined]
-        fake_utils.from_env = from_env  # type: ignore[attr-defined]
+        fake_lmnr = make_module("lmnr", Laminar=RecordingLaminar)
+        fake_utils = make_module("lmnr.sdk.utils", from_env=from_env)
+        fake_sdk = make_module("lmnr.sdk", utils=fake_utils)
 
         with (
             unittest.mock.patch.dict(os.environ, {}, clear=True),
@@ -298,11 +294,10 @@ Laminar.shutdown()
             ) -> None:
                 events.append(("initialize", project_api_key, frozenset(instruments)))
 
-        fake_lmnr = types.ModuleType("lmnr")
-        fake_lmnr.Laminar = RecordingLaminar  # type: ignore[attr-defined]
-        fake_sdk = types.ModuleType("lmnr.sdk")
-        fake_utils = types.ModuleType("lmnr.sdk.utils")
-        fake_sdk.utils = fake_utils  # type: ignore[attr-defined]
+        fake_lmnr = make_module("lmnr", Laminar=RecordingLaminar)
+        # No `from_env` on purpose -- this is the SDK-lacks-the-helper case.
+        fake_utils = make_module("lmnr.sdk.utils")
+        fake_sdk = make_module("lmnr.sdk", utils=fake_utils)
 
         with (
             unittest.mock.patch.dict(os.environ, {}, clear=True),
@@ -366,8 +361,7 @@ Laminar.shutdown()
                 events.append(("initialize", project_api_key, frozenset(instruments)))
                 raise ValueError("invalid project key")
 
-        fake_lmnr = types.ModuleType("lmnr")
-        fake_lmnr.Laminar = RejectingLaminar  # type: ignore[attr-defined]
+        fake_lmnr = make_module("lmnr", Laminar=RejectingLaminar)
 
         with (
             unittest.mock.patch.dict(
@@ -384,3 +378,21 @@ Laminar.shutdown()
             events,
             [("initialize", "test-project-key", frozenset())],
         )
+
+
+class TracingIsExercisedInCiTests(unittest.TestCase):
+    """The lmnr-guarded tests must run in at least one CI lane.
+
+    `test_real_sdk_export_is_sanitized` is guarded on the optional `tracing`
+    extra being installed, and the main `gate` job installs no extras -- so
+    without a dedicated lane the only real-SDK sanitization check in the suite
+    skips on every push and pull request while CI still reports green.
+    """
+
+    def test_ci_installs_the_tracing_extra_and_runs_the_suite(self) -> None:
+        workflow = (
+            Path(__file__).parents[1] / ".github" / "workflows" / "ci.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("--extra tracing", workflow)
+        self.assertIn("find_spec('lmnr')", workflow)

@@ -106,5 +106,5 @@ is `complex.py` (defects, scoring, profile render) plus `shell_safety.py`
 `python -m toolbench.complexity_gate`, not the console script.
 Opt-in Laminar observability lives in `observability/setup_tracing.py`
 (`setup_tracing` / `load_laminar`) and `tracing.py` (`run_traced`); `cli.py`
-wraps real console processes only (`argv is None`), and skips tracing for
-`worktrees --hook`.
+wraps real console processes only when `argv is None` and
+`TOOLBENCH_TRACING=1`, and skips tracing for `worktrees --hook`.
