@@ -357,12 +357,14 @@ and re-exports the public symbols historical imports expect.
   imports nothing third-party by default; the project is uv-managed
   (`pyproject.toml` + `uv.lock`, empty runtime deps, optional `tracing` extra
   that pulls in `lmnr` for opt-in Laminar CLI observability — not required for
-  the gate or hermetic suite). The `dev` group holds `ruff`/`mypy`/`pytest`
-  plus optional `logfire` for parallel-run tooling (also not imported by the
-  shipped package). Real console processes may wrap subcommands in
-  `toolbench.tracing.run_traced` when `TOOLBENCH_TRACING=1` and the extra /
-  project key are present; programmatic `main([...])` calls and
-  `worktrees --hook` stay untraced.
+  the default gate or hermetic suite). The `dev` group holds
+  `ruff`/`mypy`/`pytest` only (`logfire` was removed in #104; also not
+  imported by the shipped package). Real console processes may wrap
+  subcommands in `toolbench.tracing.run_traced` when `TOOLBENCH_TRACING=1`
+  and the extra / project key are present; programmatic `main([...])` calls
+  and `worktrees --hook` stay untraced. CI runs a separate `tracing` job
+  (`uv sync --extra tracing`) so lmnr-guarded tests execute rather than skip
+  (#112).
 - **S21 — entry points.** Runnable as `uv run toolbench passive` /
   `uv run toolbench probe` / `uv run toolbench worktrees` (unified console
   script via `cli.py`) or `uv run python -m toolbench.passive` /
@@ -377,8 +379,10 @@ and re-exports the public symbols historical imports expect.
   green before any PR. The complexity gate (`src/toolbench/complexity_gate.py`)
   compares Ruff `C901` scores for changed `src/` and `tests/` Python files
   against a Git baseline by `(path, qualified name)`. Threshold defaults to 10
-  (`[tool.ruff.lint.mccabe] max-complexity`): a new function above 10, a
-  function crossing 10, or a legacy hotspot that increases all fail; an
+  (`complexity_gate.DEFAULT_THRESHOLD` — the sole budget; there is no
+  `[tool.ruff.lint.mccabe]` decoration because C901 is not in Ruff's default
+  rule set, so a pyproject value would be inert — #112): a new function above
+  10, a function crossing 10, or a legacy hotspot that increases all fail; an
   increase of ≥2 that stays ≤10 is a warning only. `# noqa: C901` does not
   hide a symbol (`--ignore-noqa`). CI uses the PR base SHA (or the pre-push
   SHA) with `fetch-depth: 0`. Renaming/moving a function changes its identity,
