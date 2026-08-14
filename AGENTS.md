@@ -21,7 +21,7 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   scope via `[tool.mypy]` in `pyproject.toml` (does not descend into `tools/`).
 - Optional live dependencies (`agentsview`, Claude/Codex archives, Hermes) are
   not required for the gate; skips for absent live archives are expected (the
-  hermetic suite is ~738 passing, with 4 skips when live paths / optional
+  hermetic suite is ~748 passing, with 4 skips when live paths / optional
   tracing deps are missing).
 ## Repository integrity
 
@@ -85,8 +85,8 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   manifest explicitly so a stale generated `corpus/manifest.json` cannot change
   a trial SHA. `ensure_deps` also pins npm manifest copies and warmup cwd to
   that entry's SHA via `git show` / `git archive` — never corpus `HEAD` (#99).
-  Rebuilds are still existence-based: after a packaged-SHA bump, wipe
-  `vendor-cache-<uid>/<repo>/` or oracles can run against stale deps.
+  After a successful build it stamps `.manifest-sha`; on the next call a
+  missing or drifted stamp wipes cached dep trees and rebuilds (#102).
 - `complex_runner._assert_deps_base_safe` rejects a replaceable deps-cache leaf
   (including a dangling symlink) *before* `resolve()`, then requires FS-root
   divergence from the corpus, sticky-safe ancestors, and a private uid-owned
@@ -108,5 +108,5 @@ is `complex.py` (defects, scoring, profile render) plus `shell_safety.py`
 `python -m toolbench.complexity_gate`, not the console script.
 Opt-in Laminar observability lives in `observability/setup_tracing.py`
 (`setup_tracing` / `load_laminar`) and `tracing.py` (`run_traced`); `cli.py`
-wraps real console processes only (`argv is None`), and skips tracing for
-`worktrees --hook`.
+wraps real console processes only when `argv is None` and
+`TOOLBENCH_TRACING=1`, and skips tracing for `worktrees --hook`.

@@ -18,7 +18,6 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "logfire>=4.37.0",
     "mypy>=2.2.0",
     "pytest>=9.1.1",
     "ruff>=0.15.20",
@@ -30,8 +29,18 @@ testpaths = ["tests"]
 [tool.ruff]
 target-version = "py313"
 
-[tool.ruff.lint.mccabe]
-max-complexity = 10
+# There is deliberately no [tool.ruff.lint.mccabe] block here. A `max-complexity`
+# key in this file would be inert and actively misleading: `ruff check .` only
+# runs C901 when the rule is selected, and this project keeps Ruff's default rule
+# set (E4, E7, E9, F), which excludes it. A budget written here would silently do
+# nothing -- tightening it to 1 leaves `ruff check .` reporting clean.
+#
+# The complexity budget that actually governs is
+# `toolbench.complexity_gate.DEFAULT_THRESHOLD`, enforced base-relative in CI
+# (see .github/workflows/ci.yml). That gate cannot read this file by design:
+# `collect_complexities()` invokes Ruff with `--isolated` so the base snapshot --
+# written to a temp directory that has no pyproject.toml -- is measured under
+# exactly the same config as the working tree. Change the budget there, not here.
 
 # Pin the type-check scope so a bare local `mypy` mirrors the CI gate
 # (`mypy --strict src/toolbench tests`). Without this, a bare `mypy .` descends

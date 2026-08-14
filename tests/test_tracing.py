@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
-import types
 import unittest
 import unittest.mock
 from collections.abc import Iterator
@@ -14,6 +13,7 @@ from types import TracebackType
 from threading import Event
 from typing import Literal
 
+from tests.fakes import make_module
 from toolbench.tracing import _TracingState, run_traced
 
 
@@ -136,8 +136,7 @@ class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
             def flush(cls) -> None:
                 events.append(("flush",))
 
-        fake_lmnr = types.ModuleType("lmnr")
-        fake_lmnr.Laminar = RecordingLaminar  # type: ignore[attr-defined]
+        fake_lmnr = make_module("lmnr", Laminar=RecordingLaminar)
 
         with (
             unittest.mock.patch.dict(

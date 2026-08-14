@@ -398,6 +398,100 @@ class ProvisionWorktreeTests(unittest.TestCase):
         self.assertIn("pinned-pkg", cached)
         self.assertNotIn("head-pkg", cached)
 
+    def test_ensure_deps_rebuilds_when_manifest_sha_bumps(self) -> None:
+        # After PR #99, manifest reads are pinned -- but a populated cache still
+        # short-circuited on `target.exists()`, so a manifest SHA bump left stale
+        # node_modules in place while trials archived the new SHA.
+        home_tmp = tempfile.TemporaryDirectory(dir=Path.home())
+        self.addCleanup(home_tmp.cleanup)
+        corpus_root = Path(home_tmp.name) / "corpus"
+        repo_dir = corpus_root / "toy"
+        repo_dir.mkdir(parents=True)
+        _run(["git", "init", "-q"], repo_dir)
+        _run(["git", "config", "user.email", "test@example.com"], repo_dir)
+        _run(["git", "config", "user.name", "Test"], repo_dir)
+
+        web_dir = repo_dir / "web"
+        web_dir.mkdir()
+        (web_dir / "package.json").write_text('{"name":"sha-a"}\n', encoding="utf-8")
+        (web_dir / "package-lock.json").write_text(
+            '{"name":"sha-a","lockfileVersion":1}\n', encoding="utf-8"
+        )
+        _run(["git", "add", "-A"], repo_dir)
+        _run(["git", "commit", "-q", "-m", "sha a manifests"], repo_dir)
+        sha_a = _run(["git", "rev-parse", "HEAD"], repo_dir).stdout.strip()
+
+        (web_dir / "package.json").write_text('{"name":"sha-b"}\n', encoding="utf-8")
+        (web_dir / "package-lock.json").write_text(
+            '{"name":"sha-b","lockfileVersion":1}\n', encoding="utf-8"
+        )
+        _run(["git", "add", "-A"], repo_dir)
+        _run(["git", "commit", "-q", "-m", "sha b manifests"], repo_dir)
+        sha_b = _run(["git", "rev-parse", "HEAD"], repo_dir).stdout.strip()
+
+        manifest_path = corpus_root / "manifest.json"
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "toy": {
+                        "sha": sha_a,
+                        "deps": [{"path": "web/node_modules", "npm_ci": "web"}],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        cache_tmp = tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()))
+        self.addCleanup(cache_tmp.cleanup)
+        deps_base = Path(cache_tmp.name) / f"vendor-cache-{os.getpid()}"
+
+        real_run = subprocess.run
+        with mock.patch("subprocess.run") as mock_run:
+            mock_run.side_effect = lambda *args, **kwargs: (
+                subprocess.CompletedProcess(args[0], 0, "", "")
+                if args and args[0][:2] == ["npm", "ci"]
+                else real_run(*args, **kwargs)
+            )
+            ensure_deps(
+                corpus_root,
+                "toy",
+                deps_base=deps_base,
+                manifest_path=manifest_path,
+            )
+            cached_a = (deps_base / "toy" / "web" / "package.json").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("sha-a", cached_a)
+
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "toy": {
+                            "sha": sha_b,
+                            "deps": [{"path": "web/node_modules", "npm_ci": "web"}],
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            ensure_deps(
+                corpus_root,
+                "toy",
+                deps_base=deps_base,
+                manifest_path=manifest_path,
+            )
+
+        cached_b = (deps_base / "toy" / "web" / "package.json").read_text(encoding="utf-8")
+        self.assertIn("sha-b", cached_b)
+        self.assertNotIn("sha-a", cached_b)
+        npm_calls = [
+            call
+            for call in mock_run.call_args_list
+            if call.args and call.args[0][:2] == ["npm", "ci"]
+        ]
+        self.assertEqual(len(npm_calls), 2, "manifest SHA bump must rebuild deps")
+
     def test_default_manifest_cannot_silently_follow_a_stale_corpus_copy(self) -> None:
         authoritative_manifest = self.root / "packaged-manifest.json"
         authoritative_manifest.write_text(

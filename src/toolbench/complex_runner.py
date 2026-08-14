@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -180,6 +181,7 @@ def _find_fixture_dir(fixture_root: Path, defect: DefectSpec) -> Path:
 #     every trial tree and executed by the oracles, so a foreign cache is code
 #     execution. The leaf is therefore per-uid and must be private.
 _DEPS_CACHE_DIRNAME = "vendor-cache"
+_MANIFEST_SHA_STAMP = ".manifest-sha"
 
 
 def _default_deps_base() -> Path:
@@ -347,6 +349,43 @@ def _load_manifest(manifest_path: Path | None) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
 
 
+def _read_deps_stamp(deps_root: Path) -> str | None:
+    stamp = deps_root / _MANIFEST_SHA_STAMP
+    if not stamp.is_file():
+        return None
+    return stamp.read_text(encoding="utf-8").strip()
+
+
+def _write_deps_stamp(deps_root: Path, sha: str) -> None:
+    deps_root.mkdir(parents=True, exist_ok=True)
+    (deps_root / _MANIFEST_SHA_STAMP).write_text(f"{sha}\n", encoding="utf-8")
+
+
+def _invalidate_deps_if_stale(
+    deps_root: Path, sha: str, entry: dict[str, Any]
+) -> None:
+    """Drop cached dep trees when the manifest SHA drifts or the stamp is absent.
+
+    PR #99 pinned manifest reads to the packaged SHA, but a plain
+    ``target.exists()`` skip left ``node_modules`` built for an older SHA in
+    place after a pull bumps the manifest -- trials then archive the new SHA
+    while oracles execute against stale dependencies.
+    """
+    if _read_deps_stamp(deps_root) == sha:
+        return
+    for dep in entry.get("deps", []):
+        target = deps_root / dep["path"]
+        if not target.exists():
+            continue
+        if target.is_symlink() or target.is_file():
+            target.unlink()
+        elif target.is_dir():
+            shutil.rmtree(target)
+    stamp = deps_root / _MANIFEST_SHA_STAMP
+    if stamp.exists():
+        stamp.unlink()
+
+
 def ensure_deps(
     corpus_root: Path,
     repo: str,
@@ -364,9 +403,11 @@ def ensure_deps(
     never selected implicitly because it can survive a pull and silently pin
     trials to obsolete SHAs.
 
-    Idempotent: a dep whose target path already exists is left alone, so this is
-    cheap to call before every trial. All work here happens OUTSIDE the measured
-    window -- it must never appear in an agent transcript.
+    Idempotent for a fixed manifest SHA: a dep whose target path already exists
+    and matches the stamped SHA is left alone, so this is cheap to call before
+    every trial. When the packaged SHA changes, cached dep trees are rebuilt.
+    All work here happens OUTSIDE the measured window -- it must never appear in
+    an agent transcript.
 
     npm deps are built from a COPY of the package manifests in a source-free cache
     dir (so `npm ci`'s `node_modules/..` cannot reach corpus source); the rich venv
@@ -385,6 +426,7 @@ def ensure_deps(
     # leak through it -- and only they need a cache worth trusting.
     if entry.get("deps"):
         _assert_deps_base_safe(deps_base, corpus_root)
+        _invalidate_deps_if_stale(deps_root, sha, entry)
 
     for dep in entry.get("deps", []):
         target = deps_root / dep["path"]
@@ -432,6 +474,9 @@ def ensure_deps(
             )
         else:  # pragma: no cover - guards against a malformed manifest dep
             raise ValueError(f"{repo}: dep {dep!r} declares no known build kind")
+
+    if entry.get("deps"):
+        _write_deps_stamp(deps_root, sha)
 
     warmup = entry.get("warmup", [])
     if warmup:
