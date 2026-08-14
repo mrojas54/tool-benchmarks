@@ -242,6 +242,11 @@ packaged manifest there so the vendored tree stays self-describing). Design:
 - Worktree provisioning and dependency setup default to the packaged manifest,
   not the generated `corpus/manifest.json` copy. Custom corpora must pass their
   manifest explicitly; a stale generated copy must never change a trial's SHA.
+- `ensure_deps` builds npm caches and runs warmups from the **manifest SHA**,
+  not corpus `HEAD` (#99). `package.json` / `package-lock.json` are read via
+  `git show <sha>:…`; warmup commands run inside a short-lived `git archive` of
+  that SHA. A shared corpus clone that advances without re-vendoring therefore
+  cannot silently drift dependency caches away from the pinned trial source.
 - Prompt is always `PROMPT.md` from `provision_worktree` — never the defect
   rationale (that leaks the predicted winner). Missing `PROMPT.md` raises
   `UnprovisionedWorktree`.
@@ -338,7 +343,7 @@ fold probe into `ClaudeParser` (`keep_raw_input` / `track_turns`), and stamp
 inefficiency tags at emit. The strict gate (`uv run ruff check .`,
 `uv run python -m toolbench.complexity_gate --base origin/main`,
 `uv run mypy --strict src/toolbench tests`, `uv run pytest -q`) is green —
-**737** tests passing (4 skipped when the live hermes archive / optional
+**738** tests passing (4 skipped when the live hermes archive / optional
 live paths / tracing deps are absent). `mypy --strict` covers `tests` as well as
 `src/toolbench`. A bare `uv run mypy` also mirrors that scope via
 `[tool.mypy]` in `pyproject.toml` (it does not descend into `tools/`). The
@@ -458,6 +463,8 @@ opt-in for real `toolbench` console commands. It can record one trace per
 opted-in console command; normal `passive` / `probe` runs and library-style
 calls such as `main([...])` stay untraced and do not import the optional SDK, so
 unit tests and embedding applications do not send telemetry.
+`toolbench worktrees --hook` is also untraced: SessionStart must stay silent
+and failure-tolerant even when tracing is otherwise enabled.
 
 Initialization lives in
 `toolbench.observability.setup_tracing.setup_tracing`. It returns `False`
@@ -745,6 +752,7 @@ line means the run headline may understate what the orchestration spent.
 | Agent Breakdown ratios look incomparable across agents | `--limit` truncates in whole-archive recency order (S41) | Read the `sampled` column and the uneven-sampling line. Compare across agents only when that line is absent. |
 | `toolbench` / `-m toolbench.passive` fails from `~` with a system python | The checkout's venv (with the editable install) isn't active | Use `uv run --project ~/tool-benchmarks toolbench passive ...` from any cwd; inside the repo, `uv run toolbench ...` or `uv run python -m toolbench.passive` both work. |
 | `corpus/manifest.json` disappeared after pulling the src-layout change | The manifest now ships inside the package (`src/toolbench/corpus/manifest.json`); the corpus copy is generated / gitignored | Re-run `corpus/vendor.sh` (idempotent — skips existing clones); it copies the packaged manifest back into `corpus/`. Default trial provisioning already uses the packaged pin (#78), so a missing or stale corpus copy no longer changes trial SHAs unless you pass a custom `manifest_path`. |
+| Complex deps cache looks rebuilt from a newer corpus commit than the trial | Pre-#99 `ensure_deps` copied npm manifests / ran warmups at corpus `HEAD` while the trial tree stayed on the packaged SHA | Current code pins both paths to the manifest SHA (`git show` / archived warmup tree). Clear the affected `vendor-cache-<uid>/<repo>/` leaf and re-run `ensure_deps` on current `main`. |
 | Summary cache read ↓ but creation ↑ by ~the same | Prefix-sharing moved cost between buckets (S39/S40) | Not a win. Compare read **and** creation together; read alone misleads. |
 | `--run-manifest` run total looks too low vs wall-clock spend | Detached-HEAD usage (`gitBranch="HEAD"`) cannot match any branch set (TB-28) | Read the `detached-HEAD (unattributable)` line (includes input/output). Do not fold it into the run — a detached delegator is indistinguishable from unrelated detached work. |
 | `--run-manifest` shows a large `unattributed` line | Candidate sessions also ran on non-run branches (straddle spillover, S40) | Expected. The run total is only the in-set entry slice; do not treat session totals as run-owned. |
