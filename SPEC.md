@@ -360,8 +360,9 @@ and re-exports the public symbols historical imports expect.
   the gate or hermetic suite). The `dev` group holds `ruff`/`mypy`/`pytest`
   plus optional `logfire` for parallel-run tooling (also not imported by the
   shipped package). Real console processes may wrap subcommands in
-  `toolbench.tracing.run_traced` when the extra and project key are present;
-  programmatic `main([...])` calls and `worktrees --hook` stay untraced.
+  `toolbench.tracing.run_traced` when `TOOLBENCH_TRACING=1` and the extra /
+  project key are present; programmatic `main([...])` calls and
+  `worktrees --hook` stay untraced.
 - **S21 — entry points.** Runnable as `uv run toolbench passive` /
   `uv run toolbench probe` / `uv run toolbench worktrees` (unified console
   script via `cli.py`) or `uv run python -m toolbench.passive` /
