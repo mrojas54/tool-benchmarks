@@ -8,6 +8,7 @@ import tomllib
 from pathlib import Path
 
 from toolbench.complexity_gate import (
+    DEFAULT_THRESHOLD,
     FunctionComplexity,
     Symbol,
     collect_complexities,
@@ -213,7 +214,23 @@ def test_project_config_and_ci_enforce_the_regression_gate() -> None:
     )
 
     assert config["tool"]["ruff"]["target-version"] == "py313"
-    assert config["tool"]["ruff"]["lint"]["mccabe"]["max-complexity"] == 10
+
+    # The budget must be declared exactly once, in a place that runs. Ruff only
+    # evaluates `[tool.ruff.lint.mccabe] max-complexity` when C901 is selected,
+    # and this project keeps Ruff's default rule set (E4, E7, E9, F), which
+    # excludes it -- so a budget declared there without selecting the rule reads
+    # as authoritative while doing nothing. This assertion permits either design
+    # (enforce through Ruff, or leave the gate as sole owner) and forbids only
+    # the misleading middle state.
+    ruff_lint = config["tool"]["ruff"].get("lint", {})
+    selected = [*ruff_lint.get("select", []), *ruff_lint.get("extend-select", [])]
+    c901_enforced = any(rule.startswith("C9") or rule == "ALL" for rule in selected)
+    assert ("mccabe" in ruff_lint) == c901_enforced, (
+        "`[tool.ruff.lint.mccabe] max-complexity` is inert unless C901 is "
+        "selected; the live budget is complexity_gate.DEFAULT_THRESHOLD"
+    )
+    assert DEFAULT_THRESHOLD == 10
+
     assert "uv run python -m toolbench.complexity_gate" in workflow
     assert "github.event.pull_request.base.sha" in workflow
     assert "github.event.before" in workflow

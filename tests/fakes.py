@@ -1,10 +1,31 @@
-"""Shared test doubles for toolbench subprocess and ToolCall seams."""
+"""Shared test doubles for toolbench subprocess, module, and ToolCall seams."""
 
 from __future__ import annotations
 
 import subprocess
+import types
 
 from toolbench.transcript import ToolCall, UsageProvenance
+
+
+def make_module(name: str, **attributes: object) -> types.ModuleType:
+    """Build a stand-in module for patching into `sys.modules`.
+
+    `types.ModuleType` declares no attributes, so `module.Laminar = ...` is an
+    `attr-defined` error under `--strict` and every call site grew its own
+    `# type: ignore`. `setattr` is typed `(object, str, Any)`, so routing the
+    assignment through here is checked as written and needs no suppression --
+    the escape is designed out rather than moved.
+
+    Nest by passing an inner module as a value:
+
+        utils = make_module("lmnr.sdk.utils", from_env=from_env)
+        sdk = make_module("lmnr.sdk", utils=utils)
+    """
+    module = types.ModuleType(name)
+    for attribute, value in attributes.items():
+        setattr(module, attribute, value)
+    return module
 
 
 def completed(

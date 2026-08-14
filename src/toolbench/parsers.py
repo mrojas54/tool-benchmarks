@@ -15,6 +15,7 @@ from typing import ClassVar
 
 from toolbench.transcript import (
     BranchUsage,
+    JsonLines,
     ParseResult,
     ToolCall,
     TurnStats,
@@ -325,24 +326,13 @@ class ClaudeParser(TranscriptParser):
         """
         pending: dict[str, _PendingCall] = {}
         calls: list[ToolCall] = []
-        malformed = 0
         turns: dict[str, TurnStats] = {}
         # S39 / CQ 1.2: session-grain usage summed over every message that carries
         # `usage`, not only tool_use turns — assistant turns without tools still bill.
         tally = _UsageTally()
 
-        for raw_line in lines:
-            line = raw_line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                malformed += 1
-                continue
-            if not isinstance(entry, dict):
-                malformed += 1
-                continue
+        records = JsonLines(lines)
+        for entry in records:
 
             message = entry.get("message")
             content = message.get("content") if isinstance(message, dict) else None
@@ -419,10 +409,10 @@ class ClaudeParser(TranscriptParser):
             _drain_pending(pending, agent=agent, source=source, project=project)
         )
         if tally.usage_messages == 0:
-            return ParseResult(calls=calls, malformed=malformed, turns=turns)
+            return ParseResult(calls=calls, malformed=records.malformed, turns=turns)
         return ParseResult(
             calls=calls,
-            malformed=malformed,
+            malformed=records.malformed,
             session_cache_read_tokens=tally.cache_read,
             session_cache_creation_tokens=tally.cache_creation,
             session_input_tokens=tally.input_tokens,
@@ -523,22 +513,11 @@ class CodexParser(TranscriptParser):
         pending: dict[str, _PendingCall] = {}
         calls: list[ToolCall] = []
         unjoinable: dict[str, int] = {}
-        malformed = 0
         session_id = ""
         model: str | None = None
 
-        for raw_line in lines:
-            line = raw_line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                malformed += 1
-                continue
-            if not isinstance(entry, dict):
-                malformed += 1
-                continue
+        records = JsonLines(lines)
+        for entry in records:
 
             payload = entry.get("payload")
             if not isinstance(payload, dict):
@@ -611,7 +590,7 @@ class CodexParser(TranscriptParser):
         calls.extend(
             _drain_pending(pending, agent=agent, source=source, project=project)
         )
-        return ParseResult(calls=calls, malformed=malformed, unjoinable=unjoinable)
+        return ParseResult(calls=calls, malformed=records.malformed, unjoinable=unjoinable)
 
 
 class HermesTraceParser(ClaudeParser):

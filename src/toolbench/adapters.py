@@ -60,6 +60,10 @@ def detect_parser(
     the window are skipped and NOT counted -- malformed accounting is the parser's
     job (S5), and counting here would charge a session twice.
     """
+    # Deliberately not `transcript.JsonLines`: the sniff has to keep every RAW
+    # line to replay it via `chain(buffered, lines)`, and the reader yields only
+    # decoded objects. The window `break` also sits between the blank check and
+    # the decode. Sharing the helper here would cost the replay, not just style.
     buffered: list[str] = []
     seen = 0
     for raw_line in lines:

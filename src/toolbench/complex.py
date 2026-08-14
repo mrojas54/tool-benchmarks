@@ -21,7 +21,7 @@ from pathlib import Path
 
 from toolbench.adapters import detect_parser
 from toolbench.parsers import ClaudeParser
-from toolbench.transcript import ToolCall
+from toolbench.transcript import JsonLines, ToolCall
 from toolbench.shell_safety import (
     BANNED_TOOLS as BANNED_TOOLS,
     arm_violations as arm_violations,
@@ -302,18 +302,27 @@ def find_located(path: str | Path) -> tuple[str, dict[str, object]] | None:
     never back-filled.
     """
     with Path(path).open(encoding="utf-8") as handle:
-        for line in handle:
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+        # Scoring does not report a malformed count, so `JsonLines.malformed` is
+        # ignored here. The guard it brings is not: this loop used to hand a
+        # bare-scalar line (`123`) straight to `entry.get(...)` and die with an
+        # AttributeError, taking the whole scoring run with it. A garbled
+        # transcript line is a skipped line, never a crash.
+        for entry in JsonLines(handle):
             if entry.get("type") != "assistant":
                 continue
-            message = entry.get("message") or {}
-            for block in message.get("content") or []:
+            # Same shape-checking discipline as ClaudeParser.parse: a field
+            # arriving from outside is never dereferenced until its type is
+            # checked. `message`, `content`, and `text` were each read straight
+            # off the entry, so a transcript carrying any of them as the wrong
+            # type crashed the run instead of skipping the line.
+            message = entry.get("message")
+            content = message.get("content") if isinstance(message, dict) else None
+            for block in content if isinstance(content, list) else []:
                 if not isinstance(block, dict) or block.get("type") != "text":
                     continue
-                text = block.get("text") or ""
+                text = block.get("text")
+                if not isinstance(text, str):
+                    continue
                 start = text.find(LOCATED_PREFIX)
                 if start == -1:
                     continue
