@@ -7,6 +7,12 @@
 # periodic *assessment* is a separate local tool (see
 # docs/superpowers/specs/2026-07-15-tech-debt-cicd-routine-design.md).
 #
+# Two jobs: `gate` runs the full quality gate on the default install (13
+# packages, no optional extras), and `tracing` re-runs the test suite with the
+# optional `tracing` extra installed so the lmnr-guarded tests actually execute
+# somewhere. Keeping them separate preserves the default install's small
+# supply-chain surface while closing the coverage hole it creates.
+#
 # Security note: the event-derived complexity base is a Git SHA placed in an
 # environment variable and quoted by the static run command; event text is not
 # interpolated into shell source.
@@ -63,4 +69,43 @@ jobs:
         run: uv run mypy --strict src/toolbench tests
 
       - name: Tests (pytest)
+        run: uv run pytest -q
+
+  tracing:
+    name: python (pytest with the optional tracing extra)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # No fetch-depth: 0 here — unlike `gate`, this job runs no Git-base
+      # comparison, so the default shallow checkout is enough.
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # `gate` deliberately does not install the `tracing` extra: the package
+      # keeps zero required runtime dependencies and the default CI install is
+      # 13 packages, which is worth protecting. The cost is that every test
+      # guarded on `lmnr` being importable silently skips there — including
+      # tests/test_observability.py::test_real_sdk_export_is_sanitized, the only
+      # test exercising the real Laminar SDK's export sanitization rather than a
+      # fake. This job is the one lane where the opt-in is actually taken.
+      - name: Install dependencies (with tracing extra)
+        run: uv sync --frozen --python 3.13 --extra tracing
+
+      # Fail loudly if the extra stops resolving. Without this, a rename or a
+      # lock change would quietly turn this job back into a green run of exactly
+      # the skips it exists to prevent.
+      - name: Assert the tracing SDK is importable
+        run: >-
+          uv run python -c "import importlib.util;
+          assert importlib.util.find_spec('lmnr'),
+          'tracing extra did not install lmnr'"
+
+      - name: Tests (pytest, tracing extra installed)
         run: uv run pytest -q

@@ -119,13 +119,17 @@ rather than silently absent (S38 / TB-24).
 - **`cli.py`** — unified console entry (`toolbench passive …` /
   `toolbench probe …` / `toolbench worktrees …`). Dispatches remaining argv
   verbatim to the sub-CLIs; imports are lazy per subcommand so a broken complex
-  fixture cannot break `passive`, `worktrees`, or `--help`. Opt-in Laminar wrap
-  for real console processes requires the `tracing` extra **and**
-  `TOOLBENCH_TRACING=1` (#104); programmatic `main([...])` stays untraced.
-- **`observability/`** + **`tracing.py`** — optional Laminar setup
-  (`setup_tracing` / `load_laminar`) and `run_traced` span wrapper. Best-effort:
-  missing SDK or project key returns `False` without interrupting the CLI.
-  `worktrees --hook` is never wrapped.
+  fixture cannot break `passive`, `worktrees`, or `--help`. Real console
+  processes (`argv is None`) wrap the subcommand in `tracing.run_traced` only
+  when `TOOLBENCH_TRACING=1`; programmatic `main([...])` calls stay untraced,
+  and `worktrees --hook` is always excluded (SessionStart must stay silent /
+  failure-tolerant).
+- **`observability/`** + **`tracing.py`** — opt-in Laminar CLI observability
+  (`tracing` extra / `lmnr`, gated by `TOOLBENCH_TRACING=1`). `setup_tracing`
+  initializes best-effort (returns `False` when the SDK or project key is
+  absent); `run_traced` records a `toolbench.cli` root span with command tags
+  and exit code, never argv, paths, prompts, or report contents. See
+  [Optional Laminar tracing](#optional-laminar-tracing).
 - **`complexity_gate.py`** — regression-aware cyclomatic-complexity gate
   (S22 / PR #95). Compares Ruff `C901` for changed `src/` and `tests/` Python
   files against a Git `--base` by `(path, qualified name)`. Not a console
@@ -253,12 +257,14 @@ packaged manifest there so the vendored tree stays self-describing). Design:
   not the generated `corpus/manifest.json` copy. Custom corpora must pass their
   manifest explicitly; a stale generated copy must never change a trial's SHA.
 - `ensure_deps` builds npm caches and runs warmups from the **manifest SHA**,
-  not corpus `HEAD` (#99): npm `package.json` / `package-lock.json` are read
-  via `git show <sha>:…`, and warmup steps run inside a short-lived
-  `git archive` of that SHA. Idempotency is still existence-based
-  (`target.exists()`), so after a packaged-SHA bump wipe
-  `vendor-cache-<uid>/<repo>/` before re-running `ensure_deps` or oracles can
-  execute against stale `node_modules` while the trial tree archives the new SHA.
+  not corpus `HEAD` (#99). `package.json` / `package-lock.json` are read via
+  `git show <sha>:…`; warmup commands run inside a short-lived `git archive` of
+  that SHA. A shared corpus clone that advances without re-vendoring therefore
+  cannot silently drift dependency caches away from the pinned trial source.
+- Each repo cache leaf stamps `.manifest-sha` after a successful build (#102).
+  A missing or drifted stamp wipes cached dep trees and rebuilds, so a packaged-
+  SHA bump cannot leave oracles on stale `node_modules` while trials archive the
+  new pin (legacy unstamped leaves rebuild once on the next `ensure_deps`).
 - Prompt is always `PROMPT.md` from `provision_worktree` — never the defect
   rationale (that leaks the predicted winner). Missing `PROMPT.md` raises
   `UnprovisionedWorktree`.
@@ -355,14 +361,13 @@ CLI yet). The linked-worktree reclaim reporter (`worktrees.py`, **S42** /
 PR #90) ships as a third console subcommand — table, `--reclaimable-only`, and
 SessionStart `--hook`. Opt-in Laminar CLI tracing (`observability/` +
 `tracing.py`, **S20** / PR #97 / #104) wraps real console processes only when
-the `tracing` extra is installed **and** `TOOLBENCH_TRACING=1` is set.
-CQ follow-ons split passive into
-`reducer`/`report`,
+`TOOLBENCH_TRACING=1` and the `tracing` extra / project key are present. CQ
+follow-ons split passive into `reducer`/`report`,
 fold probe into `ClaudeParser` (`keep_raw_input` / `track_turns`), and stamp
 inefficiency tags at emit. The strict gate (`uv run ruff check .`,
 `uv run python -m toolbench.complexity_gate --base origin/main`,
 `uv run mypy --strict src/toolbench tests`, `uv run pytest -q`) is green —
-**746** tests passing (4 skipped when the live hermes archive / optional
+**748** tests passing (4 skipped when the live hermes archive / optional
 live paths / tracing deps are absent). `mypy --strict` covers `tests` as well as
 `src/toolbench`. A bare `uv run mypy` also mirrors that scope via
 `[tool.mypy]` in `pyproject.toml` (it does not descend into `tools/`). The
@@ -485,9 +490,9 @@ uv run pytest -q
 opt-in for real `toolbench` console commands. It can record one trace per
 opted-in console command; normal `passive` / `probe` runs and library-style
 calls such as `main([...])` stay untraced and do not import the optional SDK, so
-unit tests and embedding applications do not send telemetry. `toolbench
-worktrees --hook` is also untraced: SessionStart must stay silent and
-failure-tolerant even when the optional SDK is present.
+unit tests and embedding applications do not send telemetry.
+`toolbench worktrees --hook` is also untraced: SessionStart must stay silent
+and failure-tolerant even when tracing is otherwise enabled.
 
 Initialization lives in
 `toolbench.observability.setup_tracing.setup_tracing`. It returns `False`
@@ -776,7 +781,7 @@ line means the run headline may understate what the orchestration spent.
 | `toolbench` / `-m toolbench.passive` fails from `~` with a system python | The checkout's venv (with the editable install) isn't active | Use `uv run --project ~/tool-benchmarks toolbench passive ...` from any cwd; inside the repo, `uv run toolbench ...` or `uv run python -m toolbench.passive` both work. |
 | `corpus/manifest.json` disappeared after pulling the src-layout change | The manifest now ships inside the package (`src/toolbench/corpus/manifest.json`); the corpus copy is generated / gitignored | Re-run `corpus/vendor.sh` (idempotent — skips existing clones); it copies the packaged manifest back into `corpus/`. Default trial provisioning already uses the packaged pin (#78), so a missing or stale corpus copy no longer changes trial SHAs unless you pass a custom `manifest_path`. |
 | Complex deps cache looks rebuilt from a newer corpus commit than the trial | Pre-#99 `ensure_deps` copied npm manifests / ran warmups at corpus `HEAD` while the trial tree stayed on the packaged SHA | Current code pins both paths to the manifest SHA (`git show` / archived warmup tree). Clear the affected `vendor-cache-<uid>/<repo>/` leaf and re-run `ensure_deps` on current `main`. |
-| Complex oracles fail / look wrong after a toolbench pull that bumped the packaged manifest SHA | `ensure_deps` still skips rebuild when the dep path already exists, so a warm `vendor-cache-<uid>/<repo>/` leaf can keep `node_modules` from an older SHA | Delete that repo's cache leaf (or the whole `vendor-cache-<uid>/` tree) and re-run `ensure_deps`. Trials archive the new SHA even when the cache does not. |
+| Complex oracles look wrong after a packaged-manifest SHA bump (pre-#102) | Existence-based `target.exists()` skip left stale `node_modules` while trials archived the new SHA | Current code stamps `.manifest-sha` and rebuilds on drift/missing stamp (#102). Re-run `ensure_deps` on current `main`; legacy unstamped leaves rebuild once automatically. |
 | Summary cache read ↓ but creation ↑ by ~the same | Prefix-sharing moved cost between buckets (S39/S40) | Not a win. Compare read **and** creation together; read alone misleads. |
 | `--run-manifest` run total looks too low vs wall-clock spend | Detached-HEAD usage (`gitBranch="HEAD"`) cannot match any branch set (TB-28) | Read the `detached-HEAD (unattributable)` line (includes input/output). Do not fold it into the run — a detached delegator is indistinguishable from unrelated detached work. |
 | `--run-manifest` shows a large `unattributed` line | Candidate sessions also ran on non-run branches (straddle spillover, S40) | Expected. The run total is only the in-set entry slice; do not treat session totals as run-owned. |
