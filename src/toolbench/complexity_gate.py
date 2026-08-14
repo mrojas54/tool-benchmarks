@@ -13,6 +13,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+# The project's cyclomatic-complexity budget, and its single source of truth.
+# It is deliberately *not* mirrored as `[tool.ruff.lint.mccabe] max-complexity`
+# in pyproject.toml: C901 is not in Ruff's default rule set, so a value there
+# would never be evaluated by `ruff check .` while looking authoritative. See
+# the comment under [tool.ruff] in pyproject.toml.
 DEFAULT_THRESHOLD = 10
 DEFAULT_WARNING_DELTA = 2
 _COMPLEXITY_MESSAGE = re.compile(

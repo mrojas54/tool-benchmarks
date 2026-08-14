@@ -377,7 +377,8 @@ and re-exports the public symbols historical imports expect.
   green before any PR. The complexity gate (`src/toolbench/complexity_gate.py`)
   compares Ruff `C901` scores for changed `src/` and `tests/` Python files
   against a Git baseline by `(path, qualified name)`. Threshold defaults to 10
-  (`[tool.ruff.lint.mccabe] max-complexity`): a new function above 10, a
+  (`toolbench.complexity_gate.DEFAULT_THRESHOLD` — the sole budget; there is no
+  live `[tool.ruff.lint.mccabe]` mirror after #112): a new function above 10, a
   function crossing 10, or a legacy hotspot that increases all fail; an
   increase of ≥2 that stays ≤10 is a warning only. `# noqa: C901` does not
   hide a symbol (`--ignore-noqa`). CI uses the PR base SHA (or the pre-push

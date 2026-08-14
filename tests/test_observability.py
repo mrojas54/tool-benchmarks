@@ -378,3 +378,21 @@ Laminar.shutdown()
             events,
             [("initialize", "test-project-key", frozenset())],
         )
+
+
+class TracingIsExercisedInCiTests(unittest.TestCase):
+    """The lmnr-guarded tests must run in at least one CI lane.
+
+    `test_real_sdk_export_is_sanitized` is guarded on the optional `tracing`
+    extra being installed, and the main `gate` job installs no extras -- so
+    without a dedicated lane the only real-SDK sanitization check in the suite
+    skips on every push and pull request while CI still reports green.
+    """
+
+    def test_ci_installs_the_tracing_extra_and_runs_the_suite(self) -> None:
+        workflow = (
+            Path(__file__).parents[1] / ".github" / "workflows" / "ci.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("--extra tracing", workflow)
+        self.assertIn("find_spec('lmnr')", workflow)
