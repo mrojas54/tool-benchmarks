@@ -117,7 +117,17 @@ rather than silently absent (S38 / TB-24).
 - **`cli.py`** — unified console entry (`toolbench passive …` /
   `toolbench probe …` / `toolbench worktrees …`). Dispatches remaining argv
   verbatim to the sub-CLIs; imports are lazy per subcommand so a broken complex
-  fixture cannot break `passive`, `worktrees`, or `--help`.
+  fixture cannot break `passive`, `worktrees`, or `--help`. Real console
+  processes (`argv is None`) wrap the subcommand in `tracing.run_traced` only
+  when `TOOLBENCH_TRACING=1`; programmatic `main([...])` calls stay untraced,
+  and `worktrees --hook` is always excluded (SessionStart must stay silent /
+  failure-tolerant).
+- **`observability/`** + **`tracing.py`** — opt-in Laminar CLI observability
+  (`tracing` extra / `lmnr`, gated by `TOOLBENCH_TRACING=1`). `setup_tracing`
+  initializes best-effort (returns `False` when the SDK or project key is
+  absent); `run_traced` records a `toolbench.cli` root span with command tags
+  and exit code, never argv, paths, prompts, or report contents. See
+  [Optional Laminar tracing](#optional-laminar-tracing).
 - **`complexity_gate.py`** — regression-aware cyclomatic-complexity gate
   (S22 / PR #95). Compares Ruff `C901` for changed `src/` and `tests/` Python
   files against a Git `--base` by `(path, qualified name)`. Not a console
@@ -338,7 +348,10 @@ probe library (`complex.py` / `shell_safety.py` / `complex_runner.py`) is
 implemented as a library (fixtures under `src/toolbench/probes/complex/`; no
 CLI yet). The linked-worktree reclaim reporter (`worktrees.py`, **S42** /
 PR #90) ships as a third console subcommand — table, `--reclaimable-only`, and
-SessionStart `--hook`. CQ follow-ons split passive into `reducer`/`report`,
+SessionStart `--hook`. Opt-in Laminar CLI tracing (`observability/` +
+`tracing.py`, **S20** / PR #97) wraps real console processes only when
+`TOOLBENCH_TRACING=1` and the `tracing` extra / project key are present. CQ
+follow-ons split passive into `reducer`/`report`,
 fold probe into `ClaudeParser` (`keep_raw_input` / `track_turns`), and stamp
 inefficiency tags at emit. The strict gate (`uv run ruff check .`,
 `uv run python -m toolbench.complexity_gate --base origin/main`,
