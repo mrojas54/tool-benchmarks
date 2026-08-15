@@ -12,7 +12,10 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   needed. Runtime deps stay empty (stdlib-only by default); the optional
   `tracing` extra adds Laminar (`lmnr`) without changing the default install.
   Console tracing also requires `TOOLBENCH_TRACING=1` (#104). The `dev` group
-  adds the gate tools plus optional parallel-run tooling (`logfire`).
+  holds the gate tools (`ruff`/`mypy`/`pytest`) only — `logfire` was removed
+  in #104. The complexity budget's sole source of truth is
+  `complexity_gate.DEFAULT_THRESHOLD` (10); there is no
+  `[tool.ruff.lint.mccabe]` block in `pyproject.toml` (#112).
 - Before a PR, run `uv run ruff check .`,
   `uv run python -m toolbench.complexity_gate --base origin/main`,
   `uv run mypy --strict src/toolbench tests`, and `uv run pytest -q`. Do not
@@ -21,8 +24,9 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   scope via `[tool.mypy]` in `pyproject.toml` (does not descend into `tools/`).
 - Optional live dependencies (`agentsview`, Claude/Codex archives, Hermes) are
   not required for the gate; skips for absent live archives are expected (the
-  hermetic suite is ~748 passing, with 4 skips when live paths / optional
-  tracing deps are missing).
+  hermetic suite is ~748 passing / 4 skips on the default install; ~749 / 3
+  with `--extra tracing`). CI keeps a separate `tracing` job so lmnr-guarded
+  tests cannot silently skip on the default lane (#112).
 ## Repository integrity
 
 - Install the clone-local Lattice guard once with
@@ -96,8 +100,9 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
 
 Aggregation is in `reducer.py`; markdown/fingerprints in `report.py`
 (per-section `_render_*` helpers); freeze I/O in `freeze.py`; run-manifest I/O
-in `run_manifest.py`. `passive.py` owns CLI orchestration (`_resolve_corpus`
-for replay-vs-discover) and compatibility re-exports. `transcript.JsonLines`
+in `run_manifest.py`. `passive.py` owns CLI orchestration: `main()` sequences
+`_plan_freeze` → `_resolve_corpus` (replay-vs-discover) → `_scan_refs` →
+render/write (#107), plus compatibility re-exports. `transcript.JsonLines`
 is the shared JSONL reader for parsers (blanks skipped; undecodable /
 non-object lines counted). The complex debug probe is `complex.py` (defects,
 scoring, profile render) plus `shell_safety.py` (arm / read-scope audits;
@@ -108,8 +113,9 @@ console subcommand).
 `worktrees.py` owns the linked-worktree inventory CLI (`classify` /
 `reclaimable` / `--hook`); it prints only and never removes a tree or ref.
 `complexity_gate.py` owns the cyclomatic-complexity regression check
-(`compare_complexity` / `evaluate_repository`); invoke via
-`python -m toolbench.complexity_gate`, not the console script.
+(`compare_complexity` / `evaluate_repository` / `DEFAULT_THRESHOLD`); invoke via
+`python -m toolbench.complexity_gate`, not the console script. Change the
+budget there — not in `pyproject.toml`.
 Opt-in Laminar observability lives in `observability/setup_tracing.py`
 (`setup_tracing` / `load_laminar`) and `tracing.py` (`run_traced`); `cli.py`
 wraps real console processes only when `argv is None` and
