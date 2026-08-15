@@ -131,10 +131,13 @@ rather than silently absent (S38 / TB-24).
   and exit code, never argv, paths, prompts, or report contents. See
   [Optional Laminar tracing](#optional-laminar-tracing).
 - **`complexity_gate.py`** — regression-aware cyclomatic-complexity gate
-  (S22 / PR #95). Compares Ruff `C901` for changed `src/` and `tests/` Python
-  files against a Git `--base` by `(path, qualified name)`. Not a console
-  subcommand — invoke as `uv run python -m toolbench.complexity_gate`. See
-  [Quality gate](#quality-gate).
+  (S22 / PR #95 / #112). Compares Ruff `C901` for changed `src/` and `tests/`
+  Python files against a Git `--base` by `(path, qualified name)`.
+  `DEFAULT_THRESHOLD` (10) is the sole complexity budget — there is no
+  `[tool.ruff.lint.mccabe]` decoration in `pyproject.toml` (C901 is not in
+  Ruff's default rule set, so a pyproject value would be inert). Not a
+  console subcommand — invoke as `uv run python -m toolbench.complexity_gate`.
+  See [Quality gate](#quality-gate).
 - **`worktrees.py`** — linked git worktree inventory with a reclaim verdict per
   tree (S42). Reports only — never removes a tree, deletes a branch, or touches
   a ref. See [Worktree reclaim reporter](#worktree-reclaim-reporter).
@@ -159,7 +162,9 @@ rather than silently absent (S38 / TB-24).
   never attributed per call.
 - **`passive.py`** — CLI and scan orchestration only: argparse, discovery /
   `--freeze` replay via `_resolve_corpus`, per-ref parse, date-range filter,
-  typed skips. Re-exports reducer/report symbols so historical
+  typed skips. `main()` is a thin phase driver (`_plan_freeze` →
+  `_resolve_corpus` → `_scan_refs` → render/write); helpers own the work
+  (#107). Re-exports reducer/report symbols so historical
   `from toolbench.passive import …` imports keep working.
 - **`reducer.py`** — incremental corpus aggregation (S11). Folds each
   session's `ParseResult` into per-agent / per-tool counters and discards the
@@ -367,12 +372,14 @@ fold probe into `ClaudeParser` (`keep_raw_input` / `track_turns`), and stamp
 inefficiency tags at emit. The strict gate (`uv run ruff check .`,
 `uv run python -m toolbench.complexity_gate --base origin/main`,
 `uv run mypy --strict src/toolbench tests`, `uv run pytest -q`) is green —
-**748** tests passing (4 skipped when the live hermes archive / optional
-live paths / tracing deps are absent). `mypy --strict` covers `tests` as well as
-`src/toolbench`. A bare `uv run mypy` also mirrors that scope via
-`[tool.mypy]` in `pyproject.toml` (it does not descend into `tools/`). The
-same four commands run in CI (`.github/workflows/ci.yml`) on every PR and on
-pushes to `main`.
+**748** tests passing / 4 skipped on the default install (**749** / 3 with
+`--extra tracing`). Skips cover absent live hermes / archive paths and, on
+the default install, the lmnr-guarded real-SDK check. `mypy --strict` covers
+`tests` as well as `src/toolbench`. A bare `uv run mypy` also mirrors that
+scope via `[tool.mypy]` in `pyproject.toml` (it does not descend into
+`tools/`). CI runs the four gate commands on every PR and push to `main`,
+plus a separate `tracing` job that installs the optional extra so lmnr-guarded
+tests cannot silently skip (#112).
 
 Source-of-truth documents:
 
@@ -518,8 +525,17 @@ TOOLBENCH_TRACING=1 uv run --extra tracing toolbench probe \
 ```
 
 `TOOLBENCH_TRACING=1` is the opt-in boundary; a Laminar key alone does not
-enable tracing. The normal strict gate uses `uv sync` without the `tracing`
-extra, so the optional SDK is not part of the hermetic default environment.
+enable tracing. The normal strict `gate` job uses `uv sync` without the
+`tracing` extra, so the optional SDK is not part of the hermetic default
+environment. CI also runs a sibling `tracing` job (`uv sync --extra tracing`
+plus an lmnr import assert) so tests guarded on the real SDK cannot skip
+silently (#112). Locally, re-run with the extra when you touch
+`observability/` or `tracing.py`:
+
+```sh
+uv sync --extra tracing
+uv run pytest -q tests/test_observability.py tests/test_tracing.py
+```
 
 Verify the newest trace:
 
@@ -776,7 +792,9 @@ line means the run headline may understate what the orchestration spent.
 | `--freeze` exits 1 with `fatal freeze error` / traceback used to escape | Path is a directory, unreadable, non-UTF-8, or invalid JSON; or the first-write could not create the file | Point `--freeze` at a JSON *file* path (create parent dirs if needed). Same contract as a bad `--run-manifest` (S23 / PR #87). |
 | Complexity gate fails a function you only moved / renamed | Identity is `(path, qualified name)`; a rename looks like a new function | Reduce it under 10, or land the move with a real simplification. `# noqa: C901` will not hide it. |
 | Complexity gate is silent on a hotspot you expected to fail | Only `src/` and `tests/` `*.py` changed vs `--base` are measured; files outside that scope, or unchanged files, are ignored | Diff against the intended base (`origin/main` locally; CI uses the PR base / pre-push SHA). Confirm the path is under `src/` or `tests/`. |
+| Edited `[tool.ruff.lint.mccabe]` (or added one) and `ruff check .` still looks clean | C901 is not in Ruff's default rule set; the gate measures with `--isolated` and never reads that key | Change `complexity_gate.DEFAULT_THRESHOLD` (or pass `--threshold`). A pyproject mccabe budget is inert here (#112). |
 | Local complexity gate cannot find `--base` | Shallow clone or missing remote-tracking ref | `git fetch origin main` (or deepen the clone). CI sets `fetch-depth: 0` for the same reason. |
+| Real-SDK observability test skips locally / in CI `gate` | Default install has no `lmnr`; the test is guarded on import | Expected on `gate`. Run `uv sync --extra tracing` locally, or rely on the CI `tracing` job (#112). |
 | Agent Breakdown ratios look incomparable across agents | `--limit` truncates in whole-archive recency order (S41) | Read the `sampled` column and the uneven-sampling line. Compare across agents only when that line is absent. |
 | `toolbench` / `-m toolbench.passive` fails from `~` with a system python | The checkout's venv (with the editable install) isn't active | Use `uv run --project ~/tool-benchmarks toolbench passive ...` from any cwd; inside the repo, `uv run toolbench ...` or `uv run python -m toolbench.passive` both work. |
 | `corpus/manifest.json` disappeared after pulling the src-layout change | The manifest now ships inside the package (`src/toolbench/corpus/manifest.json`); the corpus copy is generated / gitignored | Re-run `corpus/vendor.sh` (idempotent — skips existing clones); it copies the packaged manifest back into `corpus/`. Default trial provisioning already uses the packaged pin (#78), so a missing or stale corpus copy no longer changes trial SHAs unless you pass a custom `manifest_path`. |
@@ -809,7 +827,11 @@ uv run pytest -q
 The complexity command uses Ruff's `C901` measurement and compares changed
 Python functions under `src/` and `tests/` by file plus qualified function name
 (untracked `*.py` under those trees are included). Defaults match
-`[tool.ruff.lint.mccabe] max-complexity = 10` and `--warning-delta 2`:
+`complexity_gate.DEFAULT_THRESHOLD` (10) and `--warning-delta 2`. That constant
+is the sole complexity budget (#112): there is deliberately no
+`[tool.ruff.lint.mccabe]` block in `pyproject.toml`, because C901 is not in
+Ruff's default rule set and the gate invokes Ruff with `--isolated` (so a
+pyproject decoration would be inert and misleading).
 
 - a new function above 10 or an existing function crossing 10 fails;
 - an already-baselined function above 10 passes when unchanged or reduced, but
@@ -834,8 +856,11 @@ The pytest command must collect every test, including module-level `test_*`
 functions that `unittest discover` silently misses (S31).
 
 GitHub Actions runs that same gate on every pull request and every push to
-`main` (`.github/workflows/ci.yml`: `uv sync --frozen --python 3.13`, then
-Ruff / complexity regression / mypy strict / pytest). PRs compare with the
+`main` (`.github/workflows/ci.yml`). The `gate` job uses
+`uv sync --frozen --python 3.13` (no optional extras), then Ruff / complexity
+regression / mypy strict / pytest. A sibling `tracing` job installs
+`--extra tracing`, asserts `lmnr` is importable, and re-runs pytest so
+real-SDK tests cannot skip silently (#112). PRs compare complexity with the
 pull request's base SHA; pushes compare with the pre-push SHA. The workflow
 fetches full Git history so both commits are available. It remains least-privilege
 (`permissions: contents: read`) and does not broaden the gate (no

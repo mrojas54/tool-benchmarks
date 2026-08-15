@@ -63,32 +63,42 @@ repo's documented gate verbatim.
 
 - **Triggers:** `pull_request: {}` and `push: { branches: [main] }`
 - **`permissions: contents: read`** — the gate only reads the tree
-- **One job**, `runs-on: ubuntu-latest`, `timeout-minutes: 15`
-- **Checkout:** `actions/checkout@v4` with `fetch-depth: 0` (full history for
-  the complexity base SHA)
+- **Two jobs**, both `runs-on: ubuntu-latest`, `timeout-minutes: 15`:
+  - `gate` — default install (no optional extras): ruff + complexity + mypy +
+    pytest
+  - `tracing` (#112) — `uv sync --extra tracing`, asserts `lmnr` is
+    importable, then pytest again so real-SDK tests cannot skip silently on
+    the default lane
+- **Checkout:** `gate` uses `actions/checkout@v4` with `fetch-depth: 0`
+  (full history for the complexity base SHA); `tracing` uses the default
+  shallow checkout (no Git-base comparison)
 
 | step | command | why |
 |---|---|---|
 | checkout | `actions/checkout@v4` (`fetch-depth: 0`) | full history so `--base` resolves |
 | install uv | `astral-sh/setup-uv@v5` with `enable-cache: true`, `cache-dependency-glob: uv.lock` | cache keyed on the lockfile |
-| sync deps | `uv sync --frozen --python 3.13` | `--frozen` fails CI if `uv.lock` drifted from `pyproject.toml`; `--python 3.13` matches `requires-python >=3.13` (uv provisions the interpreter if the runner lacks it) |
+| sync deps (`gate`) | `uv sync --frozen --python 3.13` | `--frozen` fails CI if `uv.lock` drifted from `pyproject.toml`; `--python 3.13` matches `requires-python >=3.13` (uv provisions the interpreter if the runner lacks it); keeps the default install free of optional extras |
 | lint | `uv run ruff check .` | the documented gate |
-| complexity | `uv run python -m toolbench.complexity_gate --base $COMPLEXITY_BASE_SHA` | PR base SHA, or push `github.event.before`; fail only on new / crossed / worsened debt vs that baseline (threshold 10; warn on ≥2 rise still ≤10) |
+| complexity | `uv run python -m toolbench.complexity_gate --base $COMPLEXITY_BASE_SHA` | PR base SHA, or push `github.event.before`; fail only on new / crossed / worsened debt vs that baseline (`DEFAULT_THRESHOLD` 10; warn on ≥2 rise still ≤10). Budget lives only in `complexity_gate.py` — no `[tool.ruff.lint.mccabe]` decoration (#112) |
 | type-check | `uv run mypy --strict src/toolbench tests` | the documented gate (path updated with the src-layout move; originally `toolbench tests`) |
-| test | `uv run pytest -q` | the documented gate |
+| test (`gate`) | `uv run pytest -q` | the documented gate on the default install |
+| sync deps (`tracing`) | `uv sync --frozen --python 3.13 --extra tracing` | install the optional Laminar SDK without contaminating `gate` |
+| assert lmnr | `python -c "… find_spec('lmnr') …"` | fail loudly if the extra stops delivering the SDK |
+| test (`tracing`) | `uv run pytest -q` | exercises lmnr-guarded tests that skip on `gate` |
 
 `--frozen` is not incidental — a lockfile silently drifted from `pyproject.toml`
 is itself tech debt, and this is the cheapest place to catch it. The dev group
 (ruff, mypy, pytest) installs by default under `uv sync`, so no extra flag is
-needed to reach the gate tools. The gate runs `ruff check .`, **not** `ruff format
---check`, and mypy over `src/toolbench tests` and no wider — it reproduces the gate the
-repo documents, it does not invent a stricter one beyond the intentional
-complexity-regression step. (Before the src-layout
-move the mypy path was `toolbench tests`; CI and live operator docs now use
-`src/toolbench`.) Locally, `[tool.mypy]` in `pyproject.toml` pins the same
-`files` + `strict` so a bare `uv run mypy` mirrors CI and does not descend into
-the `tools/` probe corpus; CI still passes explicit paths + `--strict` on the
-command line (those take precedence).
+needed to reach the gate tools. The `gate` job runs `ruff check .`, **not**
+`ruff format --check`, and mypy over `src/toolbench tests` and no wider — it
+reproduces the gate the repo documents, it does not invent a stricter one
+beyond the intentional complexity-regression step and the separate `tracing`
+lane. (Before the src-layout move the mypy path was `toolbench tests`; CI and
+live operator docs now use `src/toolbench`.) Locally, `[tool.mypy]` in
+`pyproject.toml` pins the same `files` + `strict` so a bare `uv run mypy`
+mirrors CI and does not descend into the `tools/` probe corpus; CI still
+passes explicit paths + `--strict` on the command line (those take
+precedence).
 
 The complexity base is placed in an environment variable and quoted by a static
 `run:` command — event text is not interpolated into shell source.
@@ -181,7 +191,8 @@ checking its output, not by a harness:
 | `--date 20260101` | filename is deterministic and honors the override |
 | `--repo` at a non-git path | clean error message, non-zero exit |
 | the gate, dry-run locally before pushing: `uv run ruff check .`, `uv run python -m toolbench.complexity_gate --base origin/main`, `uv run mypy --strict src/toolbench tests`, `uv run pytest -q` | `ci.yml` will pass; the first PR run is the live confirmation |
-| complexity policy hermetic tests | `tests/test_complexity_gate.py` pins threshold / noqa / CI wiring |
+| complexity policy hermetic tests | `tests/test_complexity_gate.py` pins threshold / noqa / CI wiring; forbids an inert mccabe budget unless C901 is selected |
+| tracing-lane CI pin | `tests/test_observability.py` asserts `ci.yml` installs `--extra tracing` and that lmnr is importable in that job |
 
 ## Out of scope
 
