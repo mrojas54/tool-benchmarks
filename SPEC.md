@@ -384,9 +384,10 @@ and re-exports the public symbols historical imports expect.
   rule set, so a pyproject value would be inert — #112): a new function above
   10, a function crossing 10, or a legacy hotspot that increases all fail; an
   increase of ≥2 that stays ≤10 is a warning only. `# noqa: C901` does not
-  hide a symbol (`--ignore-noqa`). CI uses the PR base SHA (or the pre-push
-  SHA) with `fetch-depth: 0`. Renaming/moving a function changes its identity,
-  so a moved hotspot above 10 is treated as new.
+  hide a symbol (`--ignore-noqa`). The CI `gate` job uses the PR base SHA (or
+  the pre-push SHA) with `fetch-depth: 0`; the sibling `tracing` job stays
+  shallow. Renaming/moving a function changes its identity, so a moved hotspot
+  above 10 is treated as new.
 - **S23 — error handling.** Empty session selection → clear message,
   exit 0. Missing selected raw root → exit 1 for a strict source; but
   `--agent all --index-source auto` continues with other sources and

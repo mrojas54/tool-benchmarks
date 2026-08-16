@@ -3,14 +3,15 @@
 ## Status
 
 **CI gate shipped** (`.github/workflows/ci.yml`, merged with the design; extended
-by PR #95): every PR and every push to `main` runs
-`uv sync --frozen --python 3.13`, then the documented gate
-(`ruff check .`, `python -m toolbench.complexity_gate --base <sha>`,
-`mypy --strict src/toolbench tests`, `pytest -q`). Checkout uses
-`fetch-depth: 0` so the complexity base commit is available. `[tool.mypy]` in
-`pyproject.toml` pins the same type-check scope so a bare local `mypy` mirrors
-CI (and does not type-check `tools/`). The assessment tool remains local-only
-under `~/tech-debt-work/` (not in this repo).
+by PR #95 / #112): every PR and every push to `main` runs two jobs. `gate`
+does `uv sync --frozen --python 3.13` (no optional extras), then the documented
+gate (`ruff check .`, `python -m toolbench.complexity_gate --base <sha>`,
+`mypy --strict src/toolbench tests`, `pytest -q`) with `fetch-depth: 0` so the
+complexity base commit is available. `tracing` (#112) installs `--extra tracing`,
+asserts `lmnr` is importable, and re-runs pytest on a shallow checkout.
+`[tool.mypy]` in `pyproject.toml` pins the same type-check scope so a bare local
+`mypy` mirrors CI (and does not type-check `tools/`). The assessment tool remains
+local-only under `~/tech-debt-work/` (not in this repo).
 
 ## Problem
 

@@ -793,7 +793,7 @@ line means the run headline may understate what the orchestration spent.
 | Complexity gate fails a function you only moved / renamed | Identity is `(path, qualified name)`; a rename looks like a new function | Reduce it under 10, or land the move with a real simplification. `# noqa: C901` will not hide it. |
 | Complexity gate is silent on a hotspot you expected to fail | Only `src/` and `tests/` `*.py` changed vs `--base` are measured; files outside that scope, or unchanged files, are ignored | Diff against the intended base (`origin/main` locally; CI uses the PR base / pre-push SHA). Confirm the path is under `src/` or `tests/`. |
 | Edited `[tool.ruff.lint.mccabe]` (or added one) and `ruff check .` still looks clean | C901 is not in Ruff's default rule set; the gate measures with `--isolated` and never reads that key | Change `complexity_gate.DEFAULT_THRESHOLD` (or pass `--threshold`). A pyproject mccabe budget is inert here (#112). |
-| Local complexity gate cannot find `--base` | Shallow clone or missing remote-tracking ref | `git fetch origin main` (or deepen the clone). CI sets `fetch-depth: 0` for the same reason. |
+| Local complexity gate cannot find `--base` | Shallow clone or missing remote-tracking ref | `git fetch origin main` (or deepen the clone). The CI `gate` job sets `fetch-depth: 0` for the same reason (`tracing` stays shallow). |
 | Real-SDK observability test skips locally / in CI `gate` | Default install has no `lmnr`; the test is guarded on import | Expected on `gate`. Run `uv sync --extra tracing` locally, or rely on the CI `tracing` job (#112). |
 | Agent Breakdown ratios look incomparable across agents | `--limit` truncates in whole-archive recency order (S41) | Read the `sampled` column and the uneven-sampling line. Compare across agents only when that line is absent. |
 | `toolbench` / `-m toolbench.passive` fails from `~` with a system python | The checkout's venv (with the editable install) isn't active | Use `uv run --project ~/tool-benchmarks toolbench passive ...` from any cwd; inside the repo, `uv run toolbench ...` or `uv run python -m toolbench.passive` both work. |
@@ -861,8 +861,9 @@ GitHub Actions runs that same gate on every pull request and every push to
 regression / mypy strict / pytest. A sibling `tracing` job installs
 `--extra tracing`, asserts `lmnr` is importable, and re-runs pytest so
 real-SDK tests cannot skip silently (#112). PRs compare complexity with the
-pull request's base SHA; pushes compare with the pre-push SHA. The workflow
-fetches full Git history so both commits are available. It remains least-privilege
+pull request's base SHA; pushes compare with the pre-push SHA. Only the `gate`
+job sets `fetch-depth: 0` so that base commit is available; `tracing` keeps the
+default shallow checkout (no Git-base comparison). It remains least-privilege
 (`permissions: contents: read`) and does not broaden the gate (no
 `ruff format --check`, no mypy over `tools/`). `[tool.mypy]` in
 `pyproject.toml` pins `files` + `strict` to the same scope, so a bare local
