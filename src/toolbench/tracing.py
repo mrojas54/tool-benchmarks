@@ -15,8 +15,13 @@ R = TypeVar("R", int, Awaitable[int])
 
 
 def _is_async_operation(operation: object) -> bool:
+    # B004 reads this as a callable check and suggests `callable(operation)`, but
+    # the attribute is being FETCHED, not tested: an async callable object hides
+    # its coroutine-ness on `__call__`, so that is the thing `iscoroutinefunction`
+    # has to see. `callable()` returns a bool and would answer a question nobody
+    # asked, silently demoting every async callable object to the sync path.
     return iscoroutinefunction(operation) or iscoroutinefunction(
-        getattr(operation, "__call__", None)
+        getattr(operation, "__call__", None)  # noqa: B004
     )
 
 

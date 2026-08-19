@@ -1,7 +1,6 @@
 import unittest
 from pathlib import Path
 
-
 from tests.fakes import make_call
 from toolbench.passive import (
     CorpusFingerprint,

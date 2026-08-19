@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import os
 import sys
-from concurrent.futures import ThreadPoolExecutor
 import unittest
 import unittest.mock
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from types import TracebackType
 from threading import Event
+from types import TracebackType
 from typing import Literal
 
 from tests.fakes import make_module
@@ -487,8 +487,11 @@ class TracingDecoratorTests(unittest.IsolatedAsyncioTestCase):
             for code in (0, 2):
                 with self.subTest(code=code):
 
+                    # `code` is bound as a default rather than closed over: the
+                    # call below is immediate, so late binding does not bite
+                    # today, but it would the moment this is deferred.
                     @run_traced("probe")
-                    def operation() -> int:
+                    def operation(code: int = code) -> int:
                         raise SystemExit(code)
 
                     with self.assertRaises(SystemExit) as raised:

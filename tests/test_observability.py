@@ -344,9 +344,9 @@ Laminar.shutdown()
             unittest.mock.patch.object(
                 module.importlib, "import_module", side_effect=failing_import
             ),
+            self.assertRaises(ModuleNotFoundError) as ctx,
         ):
-            with self.assertRaises(ModuleNotFoundError) as ctx:
-                module.setup_tracing()
+            module.setup_tracing()
 
         self.assertEqual(ctx.exception.name, "numpy")
 

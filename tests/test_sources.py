@@ -356,7 +356,7 @@ class AgentCensusTests(unittest.TestCase):
             completed(stdout=_total_page(5)),
             completed(stdout=probe),
         ])
-        census, refs = discover_agentsview(
+        _census, refs = discover_agentsview(
             runner, agent="all", project="tool-benchmarks", since="2026-07-01", limit=500
         )
         list(refs)

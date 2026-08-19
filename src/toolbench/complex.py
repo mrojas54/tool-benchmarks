@@ -21,13 +21,13 @@ from pathlib import Path
 
 from toolbench.adapters import detect_parser
 from toolbench.parsers import ClaudeParser
-from toolbench.transcript import JsonLines, ToolCall
 from toolbench.shell_safety import (
     BANNED_TOOLS as BANNED_TOOLS,
+    _command_escapes_gate as _command_escapes_gate,
     arm_violations as arm_violations,
     read_escapes as read_escapes,
-    _command_escapes_gate as _command_escapes_gate,
 )
+from toolbench.transcript import JsonLines, ToolCall
 
 # The agent emits this once, as soon as it believes it has localized the defect.
 # Making the moment explicit beats inferring it: N1 is the tokens before it.

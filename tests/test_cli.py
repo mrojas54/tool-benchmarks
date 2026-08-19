@@ -14,11 +14,9 @@ import types
 import unittest
 import unittest.mock
 from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 
 from tests.fakes import make_module
-
 from toolbench.cli import main
 
 
@@ -68,9 +66,11 @@ class DispatchTests(unittest.TestCase):
         # The dispatcher's documented convention: `toolbench.probe` loads the
         # DEFECTS fixtures at import time, and that must never be on the path to
         # a worktree report.
-        with unittest.mock.patch.dict("sys.modules", {"toolbench.probe": None}):
-            with unittest.mock.patch("toolbench.worktrees.main", return_value=0) as sub:
-                self.assertEqual(main(["worktrees", "--help"]), 0)
+        with (
+            unittest.mock.patch.dict("sys.modules", {"toolbench.probe": None}),
+            unittest.mock.patch("toolbench.worktrees.main", return_value=0) as sub,
+        ):
+            self.assertEqual(main(["worktrees", "--help"]), 0)
         sub.assert_called_once_with(["--help"])
 
     def test_a_leading_option_is_never_parsed_by_the_dispatcher(self) -> None:
@@ -223,9 +223,9 @@ class DispatchTests(unittest.TestCase):
                 "toolbench.probe.main",
                 side_effect=FileNotFoundError(private_session),
             ),
+            self.assertRaisesRegex(FileNotFoundError, private_session),
         ):
-            with self.assertRaisesRegex(FileNotFoundError, private_session):
-                main()
+            main()
 
         self.assertEqual(
             events,

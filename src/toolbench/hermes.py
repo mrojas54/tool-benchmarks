@@ -94,7 +94,7 @@ def _connect(db: Path) -> sqlite3.Connection:
 
 
 def _bare_id(session_id: str) -> str:
-    return session_id[len(_ID_PREFIX) :] if session_id.startswith(_ID_PREFIX) else session_id
+    return session_id.removeprefix(_ID_PREFIX)
 
 
 def resolve_session(session_id: str, home: Path | None = None) -> Path | None:

@@ -168,7 +168,10 @@ def collect_complexities(
             or not isinstance(location, dict)
             or not isinstance(message, str)
         ):
-            raise RuntimeError("Ruff returned a malformed C901 diagnostic")
+            # Not a caller type error: Ruff's JSON contract is the thing that
+            # broke. A `TypeError` here would read as "toolbench was called
+            # wrong" rather than "the subprocess we shell out to changed shape".
+            raise RuntimeError("Ruff returned a malformed C901 diagnostic")  # noqa: TRY004
         line = location.get("row")
         match = _COMPLEXITY_MESSAGE.fullmatch(message)
         if not isinstance(line, int) or match is None:

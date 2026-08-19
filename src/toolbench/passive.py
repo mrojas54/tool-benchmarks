@@ -98,7 +98,10 @@ def _call_in_range(ts: str, date_from: str | None, date_to: str | None) -> bool:
     date_part = ts[:10]
     if date_from is not None and date_part < date_from:
         return False
-    if date_to is not None and date_part > date_to:
+    # SIM103 would collapse this into `return not (...)`. The two range guards are
+    # deliberately the same shape; negating only the second one to save a line
+    # makes the pair read as though it tests something different.
+    if date_to is not None and date_part > date_to:  # noqa: SIM103
         return False
     return True
 

@@ -14,7 +14,12 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from itertools import chain
 
-from toolbench.parsers import ClaudeParser, CodexParser, HermesTraceParser, TranscriptParser
+from toolbench.parsers import (
+    ClaudeParser,
+    CodexParser,
+    HermesTraceParser,
+    TranscriptParser,
+)
 from toolbench.sources import (
     AgentsViewLoader,
     RawFileLoader,

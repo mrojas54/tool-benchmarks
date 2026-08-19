@@ -222,7 +222,7 @@ def _parse_worktree_list(stdout: str) -> list[_Stanza]:
 
 
 def _short_branch(ref: str) -> str:
-    return ref[len("refs/heads/") :] if ref.startswith("refs/heads/") else ref
+    return ref.removeprefix("refs/heads/")
 
 
 def _parse_upstreams(stdout: str) -> dict[str, str]:
