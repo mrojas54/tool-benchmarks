@@ -628,8 +628,24 @@ def _resolve_corpus(
         except (FileNotFoundError, RuntimeError, ValueError) as exc:
             print(f"toolbench.passive: fatal source error: {exc}", file=sys.stderr)
             return None
-        if freeze_path is not None and not _write_freeze(freeze_path, refs, census, args):
-            return None
+        if freeze_path is not None:
+            if not refs:
+                detail = (
+                    f"toolbench.passive: fatal freeze error: discovery matched zero "
+                    f"sessions; refusing to write an empty freeze manifest to "
+                    f"{freeze_path}."
+                )
+                if census.archive_total > 0:
+                    detail += (
+                        f" The archive reports {census.archive_total} session(s) -- "
+                        "the selection filters likely excluded them all."
+                    )
+                else:
+                    detail += " Widen the selection or drop --freeze."
+                print(detail, file=sys.stderr)
+                return None
+            if not _write_freeze(freeze_path, refs, census, args):
+                return None
     return _ResolvedCorpus(
         refs,
         fallback_reason,
@@ -762,6 +778,8 @@ def _no_sessions_lines(
     args: CliArgs,
     limit_truncated: bool | None,
     sampled_by_agent: dict[str, int],
+    *,
+    freeze: _FreezePlan | None = None,
 ) -> list[str]:
     """The empty-selection report: the headline, plus the census notes behind it.
 
@@ -781,6 +799,10 @@ def _no_sessions_lines(
     else:
         suffix = ""
     lines = [f"toolbench.passive: no sessions matched the given selection.{suffix}"]
+    if freeze is not None:
+        note = _freeze_note(freeze, skips)
+        if note is not None:
+            lines.append(note)
     lines.extend(
         _sampling_notes(
             reducer, census, skips, args.limit, limit_truncated, sampled_by_agent
@@ -854,6 +876,7 @@ def main(
                     args,
                     resolved.limit_truncated,
                     dict(sampled_by_agent),
+                    freeze=freeze,
                 )
             )
         )

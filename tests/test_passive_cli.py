@@ -1055,6 +1055,51 @@ class CorpusFreezeMainTests(unittest.TestCase):
             m = read_manifest(manifest)
             self.assertEqual({r.session_id for r in m.refs}, {"good-1", "good-2"})
 
+    def test_refuses_to_write_empty_freeze_manifest(self) -> None:
+        """A narrow discovery window must not write-once pin an empty ref set (S37).
+
+        Without this guard, a first `--freeze` run whose filters exclude every
+        session writes `count: 0`, and every later replay bypasses live discovery
+        forever -- silently analyzing nothing while the archive still has sessions.
+        """
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "projects" / "proj"
+            root.mkdir(parents=True)
+            shutil.copy(FIXTURES / "sample.jsonl", root / "s1.jsonl")
+            manifest = str(Path(tmp) / "freeze.json")
+            argv = [
+                "--index-source",
+                "raw",
+                "--all",
+                "--freeze",
+                manifest,
+                "--since",
+                "2099-01-01",
+            ]
+            err = io.StringIO()
+            with redirect_stderr(err):
+                code = main(argv, root=str(Path(tmp) / "projects"))
+            self.assertEqual(code, 1)
+            self.assertIn("fatal freeze error", err.getvalue())
+            self.assertIn("empty freeze manifest", err.getvalue())
+            self.assertFalse(Path(manifest).exists())
+
+    def test_replay_empty_freeze_names_provenance_on_zero_match(self) -> None:
+        """Replaying an already-empty freeze must say so on the zero-match path."""
+        with TemporaryDirectory() as tmp:
+            manifest = str(Path(tmp) / "freeze.json")
+            write_manifest(manifest, [], corpus_fingerprint([]).digest)
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = main(
+                    ["--index-source", "raw", "--all", "--freeze", manifest],
+                    root=str(Path(tmp) / "projects"),
+                )
+            self.assertEqual(code, 0)
+            message = out.getvalue()
+            self.assertIn("no sessions matched", message)
+            self.assertIn("Replaying frozen corpus", message)
+
     def test_replay_uses_frozen_refs_not_live_discovery(self) -> None:
         good = (FIXTURES / "sample.jsonl").read_text()
         with TemporaryDirectory() as d:
