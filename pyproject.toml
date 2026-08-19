@@ -29,11 +29,25 @@ testpaths = ["tests"]
 [tool.ruff]
 target-version = "py313"
 
+# The rule set is pinned EXPLICITLY rather than inherited from Ruff's defaults,
+# because "the default rule set" is not a fixed thing to depend on. Ruff 0.16
+# expanded its defaults from these four families to 413 rules (adding S, BLE, B,
+# SIM, UP, I, PL, RUF, FURB, ISC, ...), and on this tree that turned a clean
+# `ruff check .` into 122 findings across a routine `uv lock --upgrade` -- 49 of
+# them inside `tools/`, the vendored probe corpus, whose files are benchmark
+# *inputs*: "fixing" them would silently change what the benchmark measures.
+#
+# Pinning keeps the gate's meaning a property of this repo instead of a property
+# of whichever Ruff version happens to resolve. Widening the set is a deliberate
+# act -- add families here, triage the findings, and leave `tools/` alone.
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
 # There is deliberately no [tool.ruff.lint.mccabe] block here. A `max-complexity`
 # key in this file would be inert and actively misleading: `ruff check .` only
-# runs C901 when the rule is selected, and this project keeps Ruff's default rule
-# set (E4, E7, E9, F), which excludes it. A budget written here would silently do
-# nothing -- tightening it to 1 leaves `ruff check .` reporting clean.
+# runs C901 when the rule is selected, and the `select` above excludes it. A
+# budget written here would silently do nothing -- tightening it to 1 leaves
+# `ruff check .` reporting clean.
 #
 # The complexity budget that actually governs is
 # `toolbench.complexity_gate.DEFAULT_THRESHOLD`, enforced base-relative in CI
