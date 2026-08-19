@@ -23,6 +23,17 @@ One row per SPEC criterion, each tagged by how it is verified:
   AgentsView daemon. Not hermetic; operator-run. Tests that read a live
   archive are gated on `TOOLBENCH_LIVE=1` and skip out of the fast suite;
   run them with `TOOLBENCH_LIVE=1 uv run pytest -q`.
+- **`TOOLBENCH_LIVE=1` is deliberately human-run, and that is a decision, not
+  an oversight.** `tests/test_hermes.py::LiveArchive` guards the Hermes schema
+  compatibility envelope (v16 and v19) by opening the profile databases under
+  `~/.hermes`. A GitHub-hosted runner has no Hermes install and no archive, so
+  there is nothing for a CI lane to assert against — a job would only reproduce
+  the skip. It stays an operator check, with a named trigger so it is not left
+  to memory: **run `TOOLBENCH_LIVE=1 uv run pytest -q` before cutting a release,
+  and whenever a Hermes upgrade changes the `sessions` or `messages` schema.**
+  The operator cutting the release owns it. (Contrast the corpus fixtures, which
+  *can* be provisioned on a runner and therefore do have a lane — see
+  `.github/workflows/corpus.yml`.)
 - **lint / types / complexity** — `uv run ruff check .`;
   `uv run python -m toolbench.complexity_gate --base origin/main` (or the PR
   base SHA); `uv run mypy --strict src/toolbench tests`.
