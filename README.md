@@ -2,7 +2,7 @@
 
 A re-runnable harness that analyzes **tooling inefficiencies across agent
 systems** — Claude Code, Codex, Hermes, and other
-[AgentsView](https://github.com/)-supported runtimes — from their on-disk
+[AgentsView](https://github.com/kenn-io/agentsview)-supported runtimes — from their on-disk
 session transcripts. The goal is evidence for where agent work wastes
 context, time, retries, or tool calls, emitted as a single markdown report.
 
@@ -367,8 +367,15 @@ fold probe into `ClaudeParser` (`keep_raw_input` / `track_turns`), and stamp
 inefficiency tags at emit. The strict gate (`uv run ruff check .`,
 `uv run python -m toolbench.complexity_gate --base origin/main`,
 `uv run mypy --strict src/toolbench tests`, `uv run pytest -q`) is green —
-**748** tests passing (4 skipped when the live hermes archive / optional
-live paths / tracing deps are absent). `mypy --strict` covers `tests` as well as
+**749** tests passing, 3 skipped. Each skip runs somewhere and the "somewhere"
+is recorded in `AGENTS.md` so a skip is never mistaken for coverage: the
+optional-tracing test runs in the `tracing` job of `ci.yml`; the corpus
+fixtures (`tests/test_complex_fixtures.py`) run in
+[`.github/workflows/corpus.yml`](.github/workflows/corpus.yml) — weekly, on
+demand, and on `pull_request` for corpus-touching paths (#119); and the Hermes
+live-archive test in `tests/test_hermes.py::LiveArchive` is deliberately
+operator-run before a release and whenever a Hermes upgrade changes the
+`sessions`/`messages` schema, per `EVALUATION.md`. `mypy --strict` covers `tests` as well as
 `src/toolbench`. A bare `uv run mypy` also mirrors that scope via
 `[tool.mypy]` in `pyproject.toml` (it does not descend into `tools/`). The
 same four commands run in CI (`.github/workflows/ci.yml`) on every PR and on
@@ -808,8 +815,13 @@ uv run pytest -q
 
 The complexity command uses Ruff's `C901` measurement and compares changed
 Python functions under `src/` and `tests/` by file plus qualified function name
-(untracked `*.py` under those trees are included). Defaults match
-`[tool.ruff.lint.mccabe] max-complexity = 10` and `--warning-delta 2`:
+(untracked `*.py` under those trees are included). Defaults are
+`toolbench.complexity_gate.DEFAULT_THRESHOLD = 10` and `--warning-delta 2`.
+There is deliberately no `[tool.ruff.lint.mccabe]` block in `pyproject.toml` —
+`ruff check .` does not select `C901`, so a `max-complexity` key there would be
+inert. The gate reads its threshold from `complexity_gate.py` and runs Ruff
+with `--isolated` so the base snapshot is measured under the same config as the
+working tree. Change the budget in `complexity_gate.py`, not in `pyproject.toml`:
 
 - a new function above 10 or an existing function crossing 10 fails;
 - an already-baselined function above 10 passes when unchanged or reduced, but
@@ -822,6 +834,14 @@ Exit code is 1 only when there are errors; warnings still exit 0 and print
 GitHub Actions annotations (`::error` / `::warning`). Override locally with
 `--threshold` / `--warning-delta` if you need to reproduce a narrower check —
 CI uses the defaults.
+
+The Ruff rule set is also pinned explicitly in `pyproject.toml` rather than
+inherited from Ruff's defaults (#120). Ruff 0.16 expanded its default set from
+four families to 413 rules, which turned a clean `ruff check .` into 122
+findings across a routine `uv lock --upgrade`. Every family and individual rule
+in `[tool.ruff.lint]` was adopted deliberately after triaging its findings on
+this tree; widening the list is the same deliberate act (see the comments in
+`pyproject.toml`).
 
 This keeps legacy hotspots visible without making old debt an unrelated PR
 failure. Renaming or moving a function changes its comparison identity, so a
