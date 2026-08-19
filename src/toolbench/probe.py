@@ -9,7 +9,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from toolbench.adapters import detect_parser
-from toolbench.parsers import ClaudeParser, HermesTraceParser, TurnKeyError, _claude_turn_key
+from toolbench.parsers import (
+    ClaudeParser,
+    HermesTraceParser,
+    TurnKeyError,
+    _claude_turn_key,
+)
 from toolbench.transcript import ToolCall, TurnStats
 
 BASH_TOOL_NAME = "Bash"

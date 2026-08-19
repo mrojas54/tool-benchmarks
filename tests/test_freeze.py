@@ -9,7 +9,12 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
-from toolbench.freeze import MANIFEST_VERSION, MalformedFreezeManifest, read_manifest, write_manifest
+from toolbench.freeze import (
+    MANIFEST_VERSION,
+    MalformedFreezeManifest,
+    read_manifest,
+    write_manifest,
+)
 from toolbench.sources import AgentCensus, SessionRef
 
 

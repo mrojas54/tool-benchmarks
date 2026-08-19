@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from typing import ClassVar
 
 from toolbench import probe
 from toolbench.probe import (
@@ -247,7 +248,7 @@ class ToolArmSchemaTests(unittest.TestCase):
 
     # Exactly the parameters the serena MCP server accepts. `find_file` has no
     # free-text field, which is the whole of TB-15.
-    ALLOWED: dict[str, frozenset[str]] = {
+    ALLOWED: ClassVar[dict[str, frozenset[str]]] = {
         "find_file": frozenset({"file_mask", "relative_path"}),
         "search_for_pattern": frozenset(
             {

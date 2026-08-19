@@ -570,9 +570,11 @@ class ConnectWalWithoutShm(unittest.TestCase):
                 conn: sqlite3.Connection = real_connect(dsn, *args, **kwargs)
                 return conn
 
-            with mock.patch.object(sqlite3, "connect", side_effect=fail_mode_ro):
-                with self.assertRaises(sqlite3.OperationalError):
-                    _connect(db)
+            with (
+                mock.patch.object(sqlite3, "connect", side_effect=fail_mode_ro),
+                self.assertRaises(sqlite3.OperationalError),
+            ):
+                _connect(db)
 
     def test_connect_reads_a_healthy_wal_db_without_falling_back(self) -> None:
         """Wal present: `mode=ro` works and the immutable path must not engage."""

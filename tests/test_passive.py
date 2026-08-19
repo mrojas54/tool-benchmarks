@@ -1,6 +1,6 @@
 """Facade re-exports for the passive analyzer split."""
 
-import toolbench.passive as passive
+from toolbench import passive
 
 
 def test_passive_facade_reexports() -> None:

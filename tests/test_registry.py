@@ -1,7 +1,7 @@
 """pick_adapter ordering: hermes claims by source, everything else by content (TB-13, Task 4)."""
 
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
 

@@ -272,7 +272,7 @@ class ProvisionWorktreeTests(unittest.TestCase):
             manifest_path=self.manifest_path,
         )
         proc = subprocess.run(
-            ["git", "cat-file", "-e", self.sha], cwd=dest, capture_output=True
+            ["git", "cat-file", "-e", self.sha], cwd=dest, capture_output=True, check=False
         )
         self.assertNotEqual(
             proc.returncode, 0, "the pinned sha must not resolve in the trial repo"
@@ -865,9 +865,11 @@ class DepsCacheRuntimeGuardTests(unittest.TestCase):
                 return os.stat_result(fields)
             return st
 
-        with mock.patch.object(Path, "stat", fake_stat):
-            with self.assertRaises(UnsafeDepsCache):
-                _assert_deps_base_safe(parent / "cache", self.corpus_root)
+        with (
+            mock.patch.object(Path, "stat", fake_stat),
+            self.assertRaises(UnsafeDepsCache),
+        ):
+            _assert_deps_base_safe(parent / "cache", self.corpus_root)
 
     def test_ensure_deps_refuses_a_pre_existing_group_or_world_writable_cache(self) -> None:
         # `if target.exists(): continue` trusts whatever is already on disk. A cache
@@ -896,14 +898,16 @@ class DepsCacheRuntimeGuardTests(unittest.TestCase):
             for name in ("package.json", "package-lock.json"):
                 (repo_web / name).write_text("{}\n", encoding="utf-8")
 
-            with mock.patch("toolbench.complex_runner.subprocess.run") as run:
-                with self.assertRaisesRegex(UnsafeDepsCache, "is a symlink"):
-                    ensure_deps(
-                        self.corpus_root,
-                        "toy",
-                        deps_base=deps_base,
-                        manifest_path=self.corpus_root / "manifest.json",
-                    )
+            with (
+                mock.patch("toolbench.complex_runner.subprocess.run") as run,
+                self.assertRaisesRegex(UnsafeDepsCache, "is a symlink"),
+            ):
+                ensure_deps(
+                    self.corpus_root,
+                    "toy",
+                    deps_base=deps_base,
+                    manifest_path=self.corpus_root / "manifest.json",
+                )
 
             self.assertFalse((victim / "toy").exists())
             run.assert_not_called()
@@ -939,9 +943,8 @@ class DepsCacheRuntimeGuardTests(unittest.TestCase):
             with mock.patch(
                 "toolbench.complex_runner._mkdir_private",
                 side_effect=swap_before_mkdir,
-            ):
-                with self.assertRaisesRegex(UnsafeDepsCache, "changed while"):
-                    _assert_deps_base_safe(deps_base, self.corpus_root)
+            ), self.assertRaisesRegex(UnsafeDepsCache, "changed while"):
+                _assert_deps_base_safe(deps_base, self.corpus_root)
 
             self.assertTrue(swapped, "test must replace the leaf after the initial check")
             self.assertFalse(victim.exists())

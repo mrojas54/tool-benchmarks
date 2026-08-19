@@ -31,17 +31,95 @@ target-version = "py313"
 
 # The rule set is pinned EXPLICITLY rather than inherited from Ruff's defaults,
 # because "the default rule set" is not a fixed thing to depend on. Ruff 0.16
-# expanded its defaults from these four families to 413 rules (adding S, BLE, B,
-# SIM, UP, I, PL, RUF, FURB, ISC, ...), and on this tree that turned a clean
-# `ruff check .` into 122 findings across a routine `uv lock --upgrade` -- 49 of
-# them inside `tools/`, the vendored probe corpus, whose files are benchmark
-# *inputs*: "fixing" them would silently change what the benchmark measures.
+# expanded its defaults from four families to 413 rules, which turned a clean
+# `ruff check .` into 122 findings across a routine `uv lock --upgrade`. Pinning
+# keeps the gate's meaning a property of this repo instead of a property of
+# whichever Ruff version happens to resolve.
 #
-# Pinning keeps the gate's meaning a property of this repo instead of a property
-# of whichever Ruff version happens to resolve. Widening the set is a deliberate
-# act -- add families here, triage the findings, and leave `tools/` alone.
+# The families below were adopted deliberately, one triage pass at a time. Every
+# finding they raised in `src/` and `tests/` was read and either fixed or given a
+# recorded reason -- see `ignore` and `per-file-ignores`. Widening this list
+# further is the same deliberate act: add a family, triage what it finds.
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F"]
+# Individual rules, not whole families, and the distinction is load-bearing:
+# selecting the families these belong to (S, PL, TRY, ...) raises 633 findings on
+# this tree, because a family is much larger than the curated slice Ruff enables
+# by default. S101 alone fires on all 311 asserts in the suite, and TRY003 on 99
+# exception messages. Those are unexamined rules, and an unexamined rule in the
+# gate is the decorative config this file already warns about twice.
+#
+# Each code here was raised on this tree, read at its site, and then fixed or
+# recorded below. Adding one is cheap; adding a family is a triage project.
+select = [
+    "E4", "E7", "E9", "F",  # the original set: pycodestyle subset + pyflakes
+    "B004", "B023",         # unreliable callable check; loop-var capture in a closure
+    "BLE001",               # blind except
+    "FURB188",              # slice-and-startswith instead of removeprefix
+    "I001",                 # unsorted imports
+    "PLC0414", "PLR0402",   # useless import alias; `import x.y as y`
+    "PLW1510",              # subprocess.run without an explicit `check`
+    "RUF012", "RUF059",     # mutable class default; unused unpacked variable
+    "S110",                 # try-except-pass
+    "SIM103", "SIM117",     # indirect boolean return; nested `with`
+    "TRY004",               # prefer TypeError for an invalid type
+    "UP034",                # extraneous parentheses
+]
+
+# Two rules were raised, read, and declined. Recorded rather than dropped
+# silently, so the next person inherits the reasoning and not just the absence.
+#
+# ISC004 (20 sites) fires on every long string wrapped across source lines inside
+# a list -- the pattern the report renderers are built out of. Its real value is
+# catching a MISSING COMMA that silently welds two list items into one, so it was
+# not dismissed on taste: all 20 sites were checked, and the 13 in
+# tests/test_parsers.py were verified mechanically by parsing each concatenated
+# result as JSON. Zero were defects. Parenthesizing 20 sites in the most-read
+# rendering code to guard a bug this tree has never had is a bad trade -- but
+# that rests on the check, so re-run it before assuming it still holds.
+#
+# UP047 (4 sites) wants PEP 695 type parameters on four generics in `tracing.py`.
+# A real modernization, but `run_traced` shares module-level `P`/`R` with them, so
+# it is an all-or-nothing rewrite of the generics in the module with the heaviest
+# corrective history in the repo. It belongs in its own change with the tracing
+# tests in view, not bundled into a lint sweep.
+
+[tool.ruff.lint.isort]
+# Keep `from x import (a as a, b as b)` re-export blocks in ONE statement.
+# Without this, I001 "fixes" `complex.py`'s four-name re-export block by splitting
+# it into four separate `from toolbench.shell_safety import (...)` statements --
+# sorted, but a worse artifact than it started as. The `name as name` form is the
+# explicit re-export idiom `mypy --strict` requires, so these blocks are load
+# bearing and want to stay legible as a group.
+combine-as-imports = true
+
+[tool.ruff.lint.per-file-ignores]
+# `tools/` is the vendored probe corpus: benchmark *inputs*, not project code.
+# It stays on the original narrow set so corpus rot still trips a syntax error or
+# an undefined name, but it is never asked to meet style rules -- "fixing" a
+# fixture changes what the benchmark measures. This is the same boundary
+# `[tool.mypy] files` draws below.
+"tools/**" = [
+    "B004", "B023", "BLE001", "FURB188", "I001", "PLC0414", "PLR0402",
+    "PLW1510", "RUF012", "RUF059", "S110", "SIM103", "SIM117", "TRY004",
+    "UP034",
+]
+
+# PLC0414 wants the redundant-looking alias dropped from `X as X`, but that form
+# is exactly how a module tells `mypy --strict` a name is deliberately
+# re-exported. Verified rather than assumed: deleting one alias here makes mypy
+# fail with `Module "toolbench.complex" does not explicitly export attribute
+# "BANNED_TOOLS"` in two files. The two gates disagree, and the type gate wins.
+# All four sites in the repo are this one re-export block.
+"src/toolbench/complex.py" = ["PLC0414"]
+
+# `tracing.py` is best-effort by contract: observability must never break the
+# CLI, so it catches broadly on purpose. This is not a blanket exemption -- the
+# module was read line by line to confirm nothing is swallowed. `_invoke_sync` /
+# `_invoke_async` catch `BaseException` to CAPTURE it, and `_run_sync` /
+# `_run_async` re-raise it with its original traceback
+# (`raise error.with_traceback(...)`). `_safe_report` / `_safe_flush` are the two
+# S110 sites, and discarding a telemetry failure is the whole of their contract.
+"src/toolbench/tracing.py" = ["BLE001", "S110"]
 
 # There is deliberately no [tool.ruff.lint.mccabe] block here. A `max-complexity`
 # key in this file would be inert and actively misleading: `ruff check .` only

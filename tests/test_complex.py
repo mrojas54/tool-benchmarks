@@ -432,7 +432,7 @@ class PatchTruthTests(unittest.TestCase):
         # needs more, that is a deliberate decision to make -- not a number to
         # quietly raise until the suite goes green.
         worst = max(
-            (
+            
                 (defect.truth.lines[1] - defect.truth.lines[0] + 1)
                 - (max(added) - min(added) + 1)
                 for defect in DEFECTS
@@ -448,7 +448,7 @@ class PatchTruthTests(unittest.TestCase):
                         .read_text(encoding="utf-8")
                     )[1]
                 ]
-            )
+            
         )
         self.assertLessEqual(worst, MAX_TRUTH_SLACK)
         # The bound is not slack-plus-epsilon fitted to the fixtures, but it is

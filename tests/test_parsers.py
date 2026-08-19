@@ -132,7 +132,7 @@ def test_probe_scan_does_not_construct_pending_calls() -> None:
     """CQ 7.1: probe must consume ClaudeParser, not re-join with _PendingCall."""
     import inspect
 
-    import toolbench.probe as probe
+    from toolbench import probe
 
     source = inspect.getsource(probe._scan_tool_use_blocks)
     assert "_PendingCall" not in source
