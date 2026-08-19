@@ -30,10 +30,9 @@ raw roots + AgentsView exports
   observability only; `TOOLBENCH_TRACING=1` is the operator opt-in (#104).
 - **Project:** uv-managed; `pyproject.toml` + `uv.lock`; runtime deps empty;
   optional `[project.optional-dependencies] tracing`. The `dev` group holds
-  gate tools (`ruff`/`mypy`/`pytest`) plus optional parallel-run tooling
-  (`logfire`). `[tool.mypy]` pins `files` + `strict` so a bare local `mypy`
-  mirrors the CI gate (`src/toolbench` + `tests`) and does not type-check
-  `tools/`.
+  only the gate tools (`ruff`/`mypy`/`pytest`); `#104` removed `logfire`.
+  `[tool.mypy]` pins `files` + `strict` so a bare local `mypy` mirrors the CI
+  gate (`src/toolbench` + `tests`) and does not type-check `tools/`.
 - **Parser seam (decided):** callers open lines and use `ClaudeParser.parse`
   or `registry.pick_adapter` → `SessionAdapter.parse`. Path-based
   `parse_session` was retired (CQ 1.3). Probe reuses the same pass via
