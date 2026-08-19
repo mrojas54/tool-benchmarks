@@ -12,7 +12,8 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   needed. Runtime deps stay empty (stdlib-only by default); the optional
   `tracing` extra adds Laminar (`lmnr`) without changing the default install.
   Console tracing also requires `TOOLBENCH_TRACING=1` (#104). The `dev` group
-  adds the gate tools plus optional parallel-run tooling (`logfire`).
+  holds only the gate tools (`ruff` / `mypy` / `pytest`); `#104` removed
+  `logfire` from `dev`.
 - Before a PR, run `uv run ruff check .`,
   `uv run python -m toolbench.complexity_gate --base origin/main`,
   `uv run mypy --strict src/toolbench tests`, and `uv run pytest -q`. Do not
@@ -20,16 +21,21 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   executes module-level report code. A bare `uv run mypy` also mirrors that
   scope via `[tool.mypy]` in `pyproject.toml` (does not descend into `tools/`).
 - Optional live dependencies (`agentsview`, Claude/Codex archives, Hermes) are
-  not required for the gate; skips for absent live archives are expected (the
-  hermetic suite is ~749 passing, with 3 skips when live paths / optional
-  tracing deps are missing).
-- Each of those three skips runs somewhere, and the "somewhere" is recorded so a
-  skip is never mistaken for coverage: the optional-tracing test runs in the
-  `tracing` job of `ci.yml`; the corpus fixtures run in
-  `.github/workflows/corpus.yml` (weekly, on demand, and on corpus-touching
-  PRs); the Hermes live-archive test is deliberately operator-run before a
-  release, per EVALUATION.md. Adding a fourth environment-gated skip means
-  naming its lane too.
+  not required for the gate; skips for absent live archives are expected. On the
+  default install the hermetic suite is ~748 passing / 4 skipped; with
+  `uv sync --extra tracing` it is ~749 / 3 (the observability skip becomes a
+  pass). The four default skips: optional-tracing (`lmnr` missing), corpus
+  fixtures (`TOOLBENCH_CORPUS_TESTS`), Hermes live-archive (`TOOLBENCH_LIVE`),
+  and the sidecar-less WAL classic-reject pin in `test_hermes.py` when this
+  SQLite build no longer rejects that shape (build-dependent, not a missing
+  lane).
+- Each coverage-oriented skip runs somewhere, and the "somewhere" is recorded so
+  a skip is never mistaken for coverage: the optional-tracing test runs in the
+  `tracing` job of `ci.yml` (shallow checkout; no complexity base); the corpus
+  fixtures run in `.github/workflows/corpus.yml` (weekly, on demand, and on
+  corpus-touching PRs); the Hermes live-archive test is deliberately
+  operator-run before a release, per EVALUATION.md. Adding another
+  environment-gated skip that needs a lane means naming that lane too.
 ## Repository integrity
 
 - Install the clone-local Lattice guard once with
@@ -103,10 +109,11 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
 
 Aggregation is in `reducer.py`; markdown/fingerprints in `report.py`
 (per-section `_render_*` helpers); freeze I/O in `freeze.py`; run-manifest I/O
-in `run_manifest.py`. `passive.py` owns CLI orchestration (`_resolve_corpus`
-for replay-vs-discover) and compatibility re-exports. `transcript.JsonLines`
-is the shared JSONL reader for parsers (blanks skipped; undecodable /
-non-object lines counted). The complex debug probe is `complex.py` (defects,
+in `run_manifest.py`. `passive.py` owns CLI orchestration: `main()` runs named
+phases `_plan_freeze` → `_resolve_corpus` (replay-vs-discover) → `_scan_refs`
+→ render/write, plus compatibility re-exports. `transcript.JsonLines` is the
+shared JSONL reader for parsers (blanks skipped; undecodable / non-object
+lines counted). The complex debug probe is `complex.py` (defects,
 scoring, profile render) plus `shell_safety.py` (arm / read-scope audits;
 re-exported from `complex`) plus `complex_runner.py` (worktree, deps cache,
 trial driver) — library only, no CLI yet. Harbor packaging for selected

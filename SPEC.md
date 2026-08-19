@@ -357,12 +357,11 @@ and re-exports the public symbols historical imports expect.
   imports nothing third-party by default; the project is uv-managed
   (`pyproject.toml` + `uv.lock`, empty runtime deps, optional `tracing` extra
   that pulls in `lmnr` for opt-in Laminar CLI observability — not required for
-  the gate or hermetic suite). The `dev` group holds `ruff`/`mypy`/`pytest`
-  plus optional `logfire` for parallel-run tooling (also not imported by the
-  shipped package). Real console processes may wrap subcommands in
-  `toolbench.tracing.run_traced` when `TOOLBENCH_TRACING=1` and the extra /
-  project key are present; programmatic `main([...])` calls and
-  `worktrees --hook` stay untraced.
+  the gate or hermetic suite). The `dev` group holds only the gate tools
+  (`ruff` / `mypy` / `pytest`); it does not include `logfire` (#104). Real
+  console processes may wrap subcommands in `toolbench.tracing.run_traced`
+  when `TOOLBENCH_TRACING=1` and the extra / project key are present;
+  programmatic `main([...])` calls and `worktrees --hook` stay untraced.
 - **S21 — entry points.** Runnable as `uv run toolbench passive` /
   `uv run toolbench probe` / `uv run toolbench worktrees` (unified console
   script via `cli.py`) or `uv run python -m toolbench.passive` /
@@ -376,13 +375,17 @@ and re-exports the public symbols historical imports expect.
   `uv run mypy --strict src/toolbench tests`, and the full pytest suite are
   green before any PR. The complexity gate (`src/toolbench/complexity_gate.py`)
   compares Ruff `C901` scores for changed `src/` and `tests/` Python files
-  against a Git baseline by `(path, qualified name)`. Threshold defaults to 10
-  (`[tool.ruff.lint.mccabe] max-complexity`): a new function above 10, a
-  function crossing 10, or a legacy hotspot that increases all fail; an
-  increase of ≥2 that stays ≤10 is a warning only. `# noqa: C901` does not
-  hide a symbol (`--ignore-noqa`). CI uses the PR base SHA (or the pre-push
-  SHA) with `fetch-depth: 0`. Renaming/moving a function changes its identity,
-  so a moved hotspot above 10 is treated as new.
+  against a Git baseline by `(path, qualified name)`. The sole budget is
+  `DEFAULT_THRESHOLD = 10` (plus `--warning-delta 2`) in that module — there
+  is deliberately no `[tool.ruff.lint.mccabe]` block in `pyproject.toml`,
+  because `ruff check .` does not select `C901` and a `max-complexity` key
+  there would be inert (#112). A new function above 10, a function crossing
+  10, or a legacy hotspot that increases all fail; an increase of ≥2 that
+  stays ≤10 is a warning only. `# noqa: C901` does not hide a symbol
+  (`--ignore-noqa`). The `gate` job in `.github/workflows/ci.yml` uses the PR
+  base SHA (or the pre-push SHA) with `fetch-depth: 0`; the sibling `tracing`
+  job is shallow and runs pytest only. Renaming/moving a function changes its
+  identity, so a moved hotspot above 10 is treated as new.
 - **S23 — error handling.** Empty session selection → clear message,
   exit 0. Missing selected raw root → exit 1 for a strict source; but
   `--agent all --index-source auto` continues with other sources and
