@@ -21,8 +21,15 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   scope via `[tool.mypy]` in `pyproject.toml` (does not descend into `tools/`).
 - Optional live dependencies (`agentsview`, Claude/Codex archives, Hermes) are
   not required for the gate; skips for absent live archives are expected (the
-  hermetic suite is ~748 passing, with 4 skips when live paths / optional
+  hermetic suite is ~749 passing, with 3 skips when live paths / optional
   tracing deps are missing).
+- Each of those three skips runs somewhere, and the "somewhere" is recorded so a
+  skip is never mistaken for coverage: the optional-tracing test runs in the
+  `tracing` job of `ci.yml`; the corpus fixtures run in
+  `.github/workflows/corpus.yml` (weekly, on demand, and on corpus-touching
+  PRs); the Hermes live-archive test is deliberately operator-run before a
+  release, per EVALUATION.md. Adding a fourth environment-gated skip means
+  naming its lane too.
 ## Repository integrity
 
 - Install the clone-local Lattice guard once with

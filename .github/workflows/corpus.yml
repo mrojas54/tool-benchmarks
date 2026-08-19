@@ -1,0 +1,129 @@
+# Corpus fixtures — the acceptance lane for the defect corpus.
+#
+# `tests/test_complex_fixtures.py` (C7) provisions a real trial tree for each of
+# the 8 defects and asserts both halves of fixture validity: the clean tree is
+# GREEN and the defect tree is RED. It is the only check that a defect patch
+# breaks its own oracle and nothing else, and it is what would have caught C1 and
+# C6 on first run.
+#
+# It cannot live in `ci.yml`: it needs the vendored corpus (three git clones at
+# pinned SHAs), `npm ci` twice, `cargo fetch`, and a python venv, so it is far too
+# slow for the PR gate. Before this workflow existed it therefore ran nowhere at
+# all -- `TOOLBENCH_CORPUS_TESTS` appeared in no workflow, so the test skipped on
+# every PR, every push, and every scheduled run. A test that exists but executes
+# nowhere is indistinguishable from one that passes.
+#
+# Three triggers, deliberately:
+#   * `schedule`  -- weekly, so corpus rot (an upstream force-push, a dependency
+#                    that stops resolving) surfaces within a week rather than at
+#                    the next person's first run.
+#   * `workflow_dispatch` -- so it can be run on demand before a release.
+#   * `pull_request` on corpus-touching paths only -- the fixtures' own failure
+#     mode is a PR editing a defect patch, a manifest SHA, or the provisioning
+#     code. Those PRs are rare, and on them the ~20 minutes is worth paying to
+#     learn immediately rather than up to a week later.
+
+name: Corpus
+
+on:
+  schedule:
+    # Mondays 06:17 UTC. The offset minute keeps this off the top of the hour,
+    # where GitHub's scheduled-run queue is deepest and start times drift most.
+    - cron: "17 6 * * 1"
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - "corpus/**"
+      - "src/toolbench/corpus/**"
+      - "src/toolbench/complex.py"
+      - "src/toolbench/complex_runner.py"
+      - "tests/test_complex_fixtures.py"
+      - ".github/workflows/corpus.yml"
+
+permissions:
+  contents: read
+
+# A scheduled run and a dispatch can collide; the corpus provisions into the
+# workspace, so let the newer one win rather than interleaving two vendorings.
+concurrency:
+  group: corpus-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fixtures:
+    name: defect fixtures (red/green acceptance)
+    runs-on: ubuntu-latest
+    # Three clones, two `npm ci` runs, a cargo fetch, a pip install -e, then 16
+    # oracle invocations (8 defects x clean/defective). Generous on purpose: a
+    # timeout here should mean something hung, not that the corpus grew.
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # `corpus/vendor.sh` provisions rich with stdlib `venv` + `pip` (never uv,
+      # by design), and `ensure_deps` runs `npm ci` and `cargo fetch` per the
+      # manifest. Node and Rust are preinstalled on ubuntu-latest, but pinning
+      # Node keeps a runner-image bump from silently changing what `npm ci`
+      # resolves.
+      - name: Install Node (for the npm_ci deps)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: uv sync --frozen --python 3.13
+
+      # Clones the three repos at their pinned SHAs, writes serena config, and
+      # provisions rich's venv. `set -euo pipefail` plus the script's own
+      # `provision_check` mean a half-provisioned corpus fails here rather than
+      # surfacing later as a mysterious RED clean tree.
+      - name: Vendor the corpus
+        run: ./corpus/vendor.sh
+
+      # The C7 test has TWO skip guards, and the env var defeats only the first.
+      # The second checks for `corpus/manifest.json`, so a vendoring step that
+      # failed softly would turn this whole job into a green run of exactly the
+      # skip it exists to prevent -- the same failure mode the `tracing` job in
+      # ci.yml guards against with its importability assertion.
+      - name: Assert the corpus is actually vendored
+        run: |
+          if [ ! -f corpus/manifest.json ]; then
+            echo "::error::corpus/manifest.json missing -- vendor.sh did not produce a corpus, so the fixture test would have skipped"
+            exit 1
+          fi
+
+      - name: Corpus fixtures (C7)
+        env:
+          TOOLBENCH_CORPUS_TESTS: "1"
+        run: uv run pytest tests/test_complex_fixtures.py -q -rs | tee corpus-run.log
+
+      # pytest exits 0 for a skipped test exactly as it does for a passing one,
+      # so the exit code above cannot distinguish "the fixtures are valid" from
+      # "the fixtures never ran". This is the assertion that makes the lane mean
+      # something. (GitHub runs `run:` under `bash -e -o pipefail`, so a pytest
+      # failure in the pipeline above is not masked by `tee`.)
+      - name: Assert the fixtures ran rather than skipped
+        run: |
+          if grep -q "^SKIPPED" corpus-run.log; then
+            echo "::error::corpus fixture test SKIPPED despite TOOLBENCH_CORPUS_TESTS=1 and a vendored corpus -- this lane proved nothing"
+            exit 1
+          fi
+
+      # The vendored trees and provisioning logs are what a failure investigation
+      # actually needs: which SHA was checked out, what the oracle printed.
+      - name: Upload the run log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-run-log
+          path: corpus-run.log
+          if-no-files-found: warn
+          retention-days: 14
