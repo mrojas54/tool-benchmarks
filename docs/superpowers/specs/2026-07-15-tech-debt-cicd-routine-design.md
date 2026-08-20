@@ -3,14 +3,19 @@
 ## Status
 
 **CI gate shipped** (`.github/workflows/ci.yml`, merged with the design; extended
-by PR #95): every PR and every push to `main` runs
-`uv sync --frozen --python 3.13`, then the documented gate
+by PR #95 / #112 / #119): every PR and every push to `main` runs the `gate` job
+— `uv sync --frozen --python 3.13`, then the documented gate
 (`ruff check .`, `python -m toolbench.complexity_gate --base <sha>`,
-`mypy --strict src/toolbench tests`, `pytest -q`). Checkout uses
-`fetch-depth: 0` so the complexity base commit is available. `[tool.mypy]` in
-`pyproject.toml` pins the same type-check scope so a bare local `mypy` mirrors
-CI (and does not type-check `tools/`). The assessment tool remains local-only
-under `~/tech-debt-work/` (not in this repo).
+`mypy --strict src/toolbench tests`, `pytest -q`) with `fetch-depth: 0` so the
+complexity base resolves. A sibling `tracing` job (#112) uses a shallow
+checkout, installs `--extra tracing`, asserts `lmnr` is importable, and re-runs
+pytest so the optional-tracing skip is not the only coverage. Corpus fixture
+acceptance lives in `.github/workflows/corpus.yml` (#119), not in `ci.yml`.
+`[tool.mypy]` in `pyproject.toml` pins the same type-check scope so a bare local
+`mypy` mirrors CI (and does not type-check `tools/`). The assessment tool
+remains local-only under `~/tech-debt-work/` (not in this repo). The "one job"
+layout below is the original design snapshot; live CI is the two-job
+`gate` + `tracing` split plus the separate corpus workflow.
 
 ## Problem
 

@@ -92,7 +92,9 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   subagent filter each leave fractions unavailable and name the reason.
   Unreadable / malformed / non-UTF-8 freeze paths, a directory at the path, or
   a write failure are hard stops (`fatal freeze error`, exit 1) — not
-  tracebacks (S23 / PR #87).
+  tracebacks (S23 / PR #87). An empty first write (filters exclude every
+  session) still pins `count: 0`; delete or rewrite the manifest before
+  expecting later runs to rediscover.
 - `ensure_deps` / `provision_worktree` default to the **packaged** manifest
   (`src/toolbench/corpus/manifest.json`); custom corpora must pass their own
   manifest explicitly so a stale generated `corpus/manifest.json` cannot change

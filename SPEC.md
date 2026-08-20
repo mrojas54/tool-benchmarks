@@ -193,7 +193,9 @@ and re-exports the public symbols historical imports expect.
   (<V> vanished since freeze)`, with their ids listed under `--verbose` via the S35
   skip detail. Over an unchanged corpus a replay is byte-identical (the fingerprint
   line included); when the tail has moved, the vanished count names the mechanism
-  rather than letting the delta pass as code (TB-22).
+  rather than letting the delta pass as code (TB-22). Write-once also pins an
+  empty discovery: if filters exclude every session on the first write, later
+  replays analyze nothing until the operator deletes or rewrites the manifest.
   - **TB-37 — manifest format v2 persists the freeze-time census.** `MANIFEST_VERSION`
     bumped `toolbench-freeze-1` -> `toolbench-freeze-2`. A freeze pins the REF LIST,
     not the archive it was drawn from, so TB-22/TB-33 shipped replay with a

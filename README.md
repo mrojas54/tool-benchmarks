@@ -673,6 +673,11 @@ moving, not your code (TB-22).
   file** at the path (`Path.is_file()`); a directory, unreadable / non-UTF-8 /
   invalid JSON manifest, or a write failure is a hard stop (`fatal freeze error`,
   exit 1) — not a traceback and not a silent re-discover (S23 / PR #87).
+  **Write-once includes an empty first write:** if discovery filters exclude every
+  session (e.g. an overly narrow `--since`), the manifest is still pinned with
+  `count: 0`, and later replays analyze nothing until you delete or rewrite the
+  file on purpose. Confirm the first-write Summary session count before treating
+  the path as a durable pin.
   - **Manifest v2 + freeze-time census (TB-37).** New freezes write
     `toolbench-freeze-2` and, when the freeze-time census succeeded, persist it
     under a `census` key together with its subagent-population filter. Replay then
@@ -788,6 +793,7 @@ line means the run headline may understate what the orchestration spent.
 | `--freeze` replay shows "Historical denominator" | Manifest v2 carried a freeze-time census (TB-37) | Expected. Fractions are archive size at freeze time, not today. Do not treat them as a live census. |
 | `--freeze` replay still says fractions unavailable | Manifest has no usable `census` (v1, freeze-time census failure, legacy v2 without population metadata, or replay changed `--exclude-subagents`) | Expected. Use the same subagent filter as the freeze; rewrite a legacy freeze on current `main` if you want historical fractions. |
 | `--freeze` exits 1 with `fatal freeze error` / traceback used to escape | Path is a directory, unreadable, non-UTF-8, or invalid JSON; or the first-write could not create the file | Point `--freeze` at a JSON *file* path (create parent dirs if needed). Same contract as a bad `--run-manifest` (S23 / PR #87). |
+| `--freeze` replay always analyzes zero sessions after a "successful" first write | First write happened while filters excluded every session (`count: 0`); write-once then permanently pins the empty set | Delete or intentionally rewrite the manifest after widening `--since` / `--project` / other filters. Check the first-write Summary session count before reusing the path. |
 | Complexity gate fails a function you only moved / renamed | Identity is `(path, qualified name)`; a rename looks like a new function | Reduce it under 10, or land the move with a real simplification. `# noqa: C901` will not hide it. |
 | Complexity gate is silent on a hotspot you expected to fail | Only `src/` and `tests/` `*.py` changed vs `--base` are measured; files outside that scope, or unchanged files, are ignored | Diff against the intended base (`origin/main` locally; CI uses the PR base / pre-push SHA). Confirm the path is under `src/` or `tests/`. |
 | Local complexity gate cannot find `--base` | Shallow clone or missing remote-tracking ref | `git fetch origin main` (or deepen the clone). The `gate` job in `ci.yml` sets `fetch-depth: 0` for the same reason; the `tracing` job stays shallow. |
