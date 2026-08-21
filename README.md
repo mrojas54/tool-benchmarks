@@ -800,6 +800,7 @@ line means the run headline may understate what the orchestration spent.
 | Agent Breakdown ratios look incomparable across agents | `--limit` truncates in whole-archive recency order (S41) | Read the `sampled` column and the uneven-sampling line. Compare across agents only when that line is absent. |
 | `toolbench` / `-m toolbench.passive` fails from `~` with a system python | The checkout's venv (with the editable install) isn't active | Use `uv run --project ~/tool-benchmarks toolbench passive ...` from any cwd; inside the repo, `uv run toolbench ...` or `uv run python -m toolbench.passive` both work. |
 | `corpus/manifest.json` disappeared after pulling the src-layout change | The manifest now ships inside the package (`src/toolbench/corpus/manifest.json`); the corpus copy is generated / gitignored | Re-run `corpus/vendor.sh` (idempotent — skips existing clones); it copies the packaged manifest back into `corpus/`. Default trial provisioning already uses the packaged pin (#78), so a missing or stale corpus copy no longer changes trial SHAs unless you pass a custom `manifest_path`. |
+| `tests/test_complex_fixtures.py` always skips locally | Gated behind `TOOLBENCH_CORPUS_TESTS` (needs vendored corpus + `npm`/`cargo`/venv) | Run `corpus/vendor.sh`, then `TOOLBENCH_CORPUS_TESTS=1 uv run pytest -q tests/test_complex_fixtures.py`. CI coverage is `.github/workflows/corpus.yml`, not the `gate` job — see [`EVALUATION.md`](EVALUATION.md). |
 | Complex deps cache looks rebuilt from a newer corpus commit than the trial | Pre-#99 `ensure_deps` copied npm manifests / ran warmups at corpus `HEAD` while the trial tree stayed on the packaged SHA | Current code pins both paths to the manifest SHA (`git show` / archived warmup tree). Clear the affected `vendor-cache-<uid>/<repo>/` leaf and re-run `ensure_deps` on current `main`. |
 | Complex oracles look wrong after a packaged-manifest SHA bump (pre-#102) | Existence-based `target.exists()` skip left stale `node_modules` while trials archived the new SHA | Current code stamps `.manifest-sha` and rebuilds on drift/missing stamp (#102). Re-run `ensure_deps` on current `main`; legacy unstamped leaves rebuild once automatically. |
 | Summary cache read ↓ but creation ↑ by ~the same | Prefix-sharing moved cost between buckets (S39/S40) | Not a win. Compare read **and** creation together; read alone misleads. |
@@ -876,7 +877,9 @@ base resolves; the sibling `tracing` job uses a shallow checkout, installs
 optional-tracing skip is not the only coverage. Corpus fixture acceptance
 lives in a separate workflow
 ([`.github/workflows/corpus.yml`](.github/workflows/corpus.yml): weekly, on
-demand, and on corpus-touching PRs). The workflows remain least-privilege
+demand, and on corpus-touching PRs). For the local opt-in command and the exact
+path filter, see [`EVALUATION.md`](EVALUATION.md) (`TOOLBENCH_CORPUS_TESTS=1`).
+The workflows remain least-privilege
 (`permissions: contents: read`) and do not broaden the gate (no
 `ruff format --check`, no mypy over `tools/`). `[tool.mypy]` in
 `pyproject.toml` pins `files` + `strict` to the same scope, so a bare local

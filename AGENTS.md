@@ -36,6 +36,8 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   corpus-touching PRs); the Hermes live-archive test is deliberately
   operator-run before a release, per EVALUATION.md. Adding another
   environment-gated skip that needs a lane means naming that lane too.
+  Local corpus acceptance (after `corpus/vendor.sh`):
+  `TOOLBENCH_CORPUS_TESTS=1 uv run pytest -q tests/test_complex_fixtures.py`.
 ## Repository integrity
 
 - Install the clone-local Lattice guard once with

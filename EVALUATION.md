@@ -34,6 +34,16 @@ One row per SPEC criterion, each tagged by how it is verified:
   The operator cutting the release owns it. (Contrast the corpus fixtures, which
   *can* be provisioned on a runner and therefore do have a lane — see
   `.github/workflows/corpus.yml`.)
+- **`TOOLBENCH_CORPUS_TESTS=1` (slow fixture acceptance, local or CI).**
+  `tests/test_complex_fixtures.py` provisions a real trial tree per defect and
+  asserts clean→GREEN / defect→RED. It needs the vendored corpus (`corpus/
+  vendor.sh`), `npm ci`, `cargo`, and a python venv, so it skips in the fast
+  suite. Locally: `corpus/vendor.sh` once, then
+  `TOOLBENCH_CORPUS_TESTS=1 uv run pytest -q tests/test_complex_fixtures.py`.
+  In CI it runs only via `.github/workflows/corpus.yml` (weekly, on demand, and
+  on PRs that touch `corpus/**`, `src/toolbench/corpus/**`, `complex.py`,
+  `complex_runner.py`, the fixture test, or the workflow itself) — not in the
+  `gate` job.
 - **lint / types / complexity** — `uv run ruff check .`;
   `uv run python -m toolbench.complexity_gate --base origin/main` (or the PR
   base SHA); `uv run mypy --strict src/toolbench tests`.
