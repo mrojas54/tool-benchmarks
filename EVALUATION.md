@@ -43,7 +43,15 @@ One row per SPEC criterion, each tagged by how it is verified:
   In CI it runs only via `.github/workflows/corpus.yml` (weekly, on demand, and
   on PRs that touch `corpus/**`, `src/toolbench/corpus/**`, `complex.py`,
   `complex_runner.py`, the fixture test, or the workflow itself) — not in the
-  `gate` job.
+  `gate` job. Path filter deliberately omits `shell_safety.py` /
+  `tests/test_shell_safety.py`: arm/read-scope audit edits are covered by the
+  hermetic suite, not by re-vendoring the corpus.
+- **Build-dependent Hermes WAL pin (not a missing lane).**
+  `tests/test_hermes.py` pins the classic `mode=ro` reject on a sidecar-less
+  WAL DB that `_connect`'s `immutable=1` fallback exists for. Some SQLite
+  builds now admit that shape, so the pin `skipTest`s rather than asserting
+  obsolete reject behaviour. That fourth default-install skip is
+  environment-shape, not an uncovered contract — do not invent a CI job for it.
 - **lint / types / complexity** — `uv run ruff check .`;
   `uv run python -m toolbench.complexity_gate --base origin/main` (or the PR
   base SHA); `uv run mypy --strict src/toolbench tests`.

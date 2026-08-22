@@ -381,7 +381,9 @@ and re-exports the public symbols historical imports expect.
   `DEFAULT_THRESHOLD = 10` (plus `--warning-delta 2`) in that module — there
   is deliberately no `[tool.ruff.lint.mccabe]` block in `pyproject.toml`,
   because `ruff check .` does not select `C901` and a `max-complexity` key
-  there would be inert (#112). A new function above 10, a function crossing
+  there would be inert (#112). `[tool.ruff.lint] select` is pinned explicitly
+  so a Ruff default expansion cannot silently grow the gate (#120); widen it
+  only after triaging findings. A new function above 10, a function crossing
   10, or a legacy hotspot that increases all fail; an increase of ≥2 that
   stays ≤10 is a warning only. `# noqa: C901` does not hide a symbol
   (`--ignore-noqa`). The `gate` job in `.github/workflows/ci.yml` uses the PR

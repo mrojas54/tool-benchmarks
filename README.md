@@ -375,8 +375,9 @@ coverage-oriented skip runs somewhere and the "somewhere" is recorded in
 test runs in the `tracing` job of `ci.yml` (shallow checkout; no complexity
 base); the corpus fixtures (`tests/test_complex_fixtures.py`) run in
 [`.github/workflows/corpus.yml`](.github/workflows/corpus.yml) — weekly, on
-demand, and on `pull_request` for corpus-touching paths (#119); and the Hermes
-live-archive test in `tests/test_hermes.py::LiveArchive` is deliberately
+demand, and on `pull_request` for corpus-touching paths (#119; the path filter
+omits `shell_safety.py` — audit-only edits stay on the hermetic gate); and the
+Hermes live-archive test in `tests/test_hermes.py::LiveArchive` is deliberately
 operator-run before a release and whenever a Hermes upgrade changes the
 `sessions`/`messages` schema, per `EVALUATION.md`. A fourth default skip — the
 sidecar-less WAL classic-reject pin in `test_hermes.py` — is build-dependent
@@ -801,6 +802,7 @@ line means the run headline may understate what the orchestration spent.
 | `toolbench` / `-m toolbench.passive` fails from `~` with a system python | The checkout's venv (with the editable install) isn't active | Use `uv run --project ~/tool-benchmarks toolbench passive ...` from any cwd; inside the repo, `uv run toolbench ...` or `uv run python -m toolbench.passive` both work. |
 | `corpus/manifest.json` disappeared after pulling the src-layout change | The manifest now ships inside the package (`src/toolbench/corpus/manifest.json`); the corpus copy is generated / gitignored | Re-run `corpus/vendor.sh` (idempotent — skips existing clones); it copies the packaged manifest back into `corpus/`. Default trial provisioning already uses the packaged pin (#78), so a missing or stale corpus copy no longer changes trial SHAs unless you pass a custom `manifest_path`. |
 | `tests/test_complex_fixtures.py` always skips locally | Gated behind `TOOLBENCH_CORPUS_TESTS` (needs vendored corpus + `npm`/`cargo`/venv) | Run `corpus/vendor.sh`, then `TOOLBENCH_CORPUS_TESTS=1 uv run pytest -q tests/test_complex_fixtures.py`. CI coverage is `.github/workflows/corpus.yml`, not the `gate` job — see [`EVALUATION.md`](EVALUATION.md). |
+| Corpus workflow did not run after editing `shell_safety.py` | Path filter lists `complex.py` / `complex_runner.py` / corpus trees / the fixture test / the workflow — not `shell_safety.py` | Expected. Audit-only changes are covered by `tests/test_shell_safety.py` in the hermetic gate; trigger corpus CI only when defect fixtures or provision paths move. |
 | Complex deps cache looks rebuilt from a newer corpus commit than the trial | Pre-#99 `ensure_deps` copied npm manifests / ran warmups at corpus `HEAD` while the trial tree stayed on the packaged SHA | Current code pins both paths to the manifest SHA (`git show` / archived warmup tree). Clear the affected `vendor-cache-<uid>/<repo>/` leaf and re-run `ensure_deps` on current `main`. |
 | Complex oracles look wrong after a packaged-manifest SHA bump (pre-#102) | Existence-based `target.exists()` skip left stale `node_modules` while trials archived the new SHA | Current code stamps `.manifest-sha` and rebuilds on drift/missing stamp (#102). Re-run `ensure_deps` on current `main`; legacy unstamped leaves rebuild once automatically. |
 | Summary cache read ↓ but creation ↑ by ~the same | Prefix-sharing moved cost between buckets (S39/S40) | Not a win. Compare read **and** creation together; read alone misleads. |

@@ -20,6 +20,9 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   substitute `unittest discover`: it misses module-level pytest tests and
   executes module-level report code. A bare `uv run mypy` also mirrors that
   scope via `[tool.mypy]` in `pyproject.toml` (does not descend into `tools/`).
+  Ruff's `[tool.ruff.lint] select` is pinned explicitly (#120) — do not rely on
+  Ruff's expanding defaults; widen the list only after triaging findings on
+  this tree (comments in `pyproject.toml` record what was adopted vs skipped).
 - Optional live dependencies (`agentsview`, Claude/Codex archives, Hermes) are
   not required for the gate; skips for absent live archives are expected. On the
   default install the hermetic suite is ~748 passing / 4 skipped; with
@@ -36,7 +39,11 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   corpus-touching PRs); the Hermes live-archive test is deliberately
   operator-run before a release, per EVALUATION.md. Adding another
   environment-gated skip that needs a lane means naming that lane too.
-  Local corpus acceptance (after `corpus/vendor.sh`):
+  The corpus path filter covers `corpus/**`, `src/toolbench/corpus/**`,
+  `complex.py`, `complex_runner.py`, the fixture test, and the workflow
+  itself — **not** `shell_safety.py` or `tests/test_shell_safety.py` (audit-only
+  edits stay on the hermetic gate). Local corpus acceptance (after
+  `corpus/vendor.sh`):
   `TOOLBENCH_CORPUS_TESTS=1 uv run pytest -q tests/test_complex_fixtures.py`.
 ## Repository integrity
 
