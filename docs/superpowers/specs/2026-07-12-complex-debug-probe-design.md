@@ -6,7 +6,7 @@ yet. Fixtures under `src/toolbench/probes/complex/`; pinned corpora under
 `corpus/` (packaged manifest at `src/toolbench/corpus/manifest.json`, copied
 by `corpus/vendor.sh`). Pre-registered predictions committed; no live trial
 matrix run yet.
-**Date:** 2026-07-12 (status refreshed 2026-08-14)
+**Date:** 2026-07-12 (status refreshed 2026-08-23)
 
 ## Implementation map (as shipped)
 
@@ -15,7 +15,7 @@ matrix run yet.
 | `src/toolbench/complex.py` | Defect loading, `LOCATED:` scoring, profile render; re-exports shell-safety symbols |
 | `src/toolbench/shell_safety.py` | Bash tokenization, path-containment, gate-escape audits (`arm_violations`, `read_escapes`, `BANNED_TOOLS`) |
 | `src/toolbench/complex_runner.py` | Hermetic worktree provision, deps cache, injectable `run_trial` |
-| `src/toolbench/probes/complex/` | Per-cell fixtures (`defect.patch`, `truth.json`, `prediction.md`, `oracle.json`, `prompt.md`) |
+| `src/toolbench/probes/complex/` | Per-cell fixtures (`defect.patch`, `truth.json`, `prediction.md`, `oracle.json`, `prompt.md`) — **8 shipped cells** across `wids` / `maltese` / `rich` (not a full cross-product) |
 | `src/toolbench/corpus/manifest.json` | Pinned SHAs + dep/warmup/provision recipes (`wids`, `maltese`, `rich`); `corpus/vendor.sh` copies this into `corpus/` |
 | `benchmarks/harbor/toolbench-complex/` | Harbor packaging for selected defects (WIDS D2 build canary; grading not verified yet) |
 
@@ -68,15 +68,20 @@ already pick that toolset on its own when left unrestricted.
 
 ## Design
 
-### 1. Corpus — two repos, crossed
+### 1. Corpus — personal repos, pinned (design intent: two crossed; shipped: three)
 
-Two of the operator's own public repos, each vendored **read-only at a pinned
-SHA** under `corpus/`. The working repos are never touched.
+**Original design intent** was two of the operator's own public repos, each
+vendored **read-only at a pinned SHA** under `corpus/`, crossed for defect
+classes. The working repos are never touched.
 
 | repo | shape | languages |
 |---|---|---|
 | `wids-nyc-reading-group-assistant` | `web/` 148 TS/TSX, `migrations/` 20 SQL, `scripts/` 13 Py | TS, SQL, Python |
 | `maltese-agent` | 3 Rust crates (`falcon-detective`, `falcon-mcp`, `falcon-agent`) + TS | Rust, TS |
+
+**As shipped**, the packaged manifest also vendors `rich` (a third corpus
+entry) and the fixture tree holds **eight** selected cells — not a full
+2×5 (or 3×5) cross. See [Run size](#run-size) for the inventory.
 
 Using the operator's own repos attacks the training-data confound: a vendored
 third-party package (flask, rich) is likely memorized, and a model that already
@@ -241,14 +246,34 @@ norm is *visibly incomplete, never quietly wrong*.
 
 ## Run size
 
-Matrix is 2 repos × 5 defects × 4 arms.
+**Design intent (historical):** matrix of 2 repos × 5 defects × 4 arms.
 
-- **Pilot: 1 trial = 40 sessions.** Purpose is to prove the harness — isolation
-  holds, the oracle fires, tokens are attributable, serena's prechecks pass. **It
-  is not an answer.** Path variance means N=1 is never an answer.
+**As shipped (fixtures on disk):** eight selected cells under
+`src/toolbench/probes/complex/` — not a full cross-product:
+
+| Fixture dir | Repo |
+|---|---|
+| `wids-D2-string-keyed-dispatch` | wids |
+| `wids-D3-call-chain-lambda` | wids |
+| `wids-D5-cross-language-rpc` | wids |
+| `maltese-D2-string-dispatch` | maltese |
+| `maltese-D3-call-chain` | maltese |
+| `maltese-D4-stale-import` | maltese |
+| `maltese-D5-cross-lang-string` | maltese |
+| `rich-D1-render-collision` | rich |
+
+Arms remain four (native / bash / serena / unrestricted) in the design; live
+trial matrix has not been run yet. Harbor packaging currently covers WIDS D2
+as a build canary only.
+
+- **Pilot: 1 trial = 40 sessions** (against the original full-matrix plan).
+  Purpose is to prove the harness — isolation holds, the oracle fires, tokens
+  are attributable, serena's prechecks pass. **It is not an answer.** Path
+  variance means N=1 is never an answer.
 - **Real run: trial depth set from the pilot's observed variance**, not guessed
-  now. At 5 trials this is 200 sessions; that number should be chosen with the
-  variance in hand.
+  now. At 5 trials this is 200 sessions under the historical full matrix; that
+  number should be chosen with the variance in hand, and scaled to the shipped
+  eight-cell inventory when a live matrix is scheduled.
 
 ## Risks
 
