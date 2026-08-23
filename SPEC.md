@@ -64,9 +64,14 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 - **S10 — index-source policy.** `--index-source auto` tries AgentsView
   first and falls back to raw scanning (recording the reason) if the CLI is
   missing or exits nonzero; `agentsview` is strict and errors clearly;
-  `raw` uses the filesystem only. The fallback is not limited to what a single
-  `--limit 1` health probe can see: a daemon that answers the probe and then
-  breaks during the pagination that follows -- a nonzero exit, a hang
+  `raw` uses the filesystem only. Every `agentsview` subprocess is bounded by
+  `AGENTSVIEW_TIMEOUT_S` (60s in `sources.py`); a hang raises `AgentsViewTimeout`
+  (TB-32). Operators override that ceiling with `--agentsview-timeout SECONDS`
+  (TB-39; `0` = unbounded / `timeout=None`). The Summary names the ceiling only
+  when it truncated the corpus (≥1 `export_timeout` skip) or the run was
+  unbounded — a clean bounded run stays silent. The fallback is not limited to
+  what a single `--limit 1` health probe can see: a daemon that answers the probe
+  and then breaks during the pagination that follows -- a nonzero exit, a hang
   (`AgentsViewTimeout`, TB-32), or a schema-invalid listing payload
   (`MalformedAgentsViewResponse` / `ValueError`: invalid JSON, non-object
   payload, `sessions` not a list, row missing required `id`/`agent`/`project`,
@@ -77,7 +82,8 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   two (TB-38; TB-22's identity/fingerprint precedent is why nothing is spliced).
   The `auto` health probe validates that same listing contract, so a zero-exit
   but schema-invalid `--limit 1` response falls back at the probe rather than
-  entering pagination. A
+  entering pagination. Mid-scan, a hung per-session `export` skips that session
+  as `EXPORT_TIMEOUT` and continues. A
   source that vanishes outright mid-discovery (`FileNotFoundError` — the
   binary itself disappears) keeps its narrower, pre-existing handling: a named
   `MISSING_SOURCE` skip and an unavailable census, no raw rescan, since a
@@ -88,18 +94,21 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 - **S34 — skips carry a typed reason, not stringified prose.** Every skipped
   session is a `SkipRecord(session_id, agent, reason: SkipReason, detail)`, where
   `SkipReason` is a `StrEnum` — `MISSING_SOURCE` / `UNKNOWN_SCHEMA` /
-  `NON_TRANSCRIPT` / `DECODE_ERROR` / `EXPORT_FAILED`. The reason is decided where
-  the evidence lives, not by regex on the report: `AgentsViewLoader.lines` raises a
-  distinct `MissingSourceExport` (a flat `RuntimeError` sibling of
-  `NonTranscriptExport`, **not** a subclass — a gone file and a binary file are
-  different diagnoses) when export stderr matches `source file not found`; every
-  other non-zero export stays a plain `RuntimeError` → `EXPORT_FAILED`.
-  `classify_skip` maps each caught exception type to its `SkipReason` one frame
-  after the raise, before the type information is lost; `skip_record_for` stamps it
-  with the ref's identity; `tally_skips` answers "how many sessions have no parser?"
-  as `tally[UNKNOWN_SCHEMA]` with no prose parsing. Mirrors `UsageProvenance` (S29):
-  type the absence rather than stringify it. `detail` preserves the original message
-  for `--verbose`/sidecar output but is never parsed to recover `reason` (TB-23).
+  `NON_TRANSCRIPT` / `DECODE_ERROR` / `EXPORT_FAILED` / `EXPORT_TIMEOUT`. The
+  reason is decided where the evidence lives, not by regex on the report:
+  `AgentsViewLoader.lines` raises a distinct `MissingSourceExport` (a flat
+  `RuntimeError` sibling of `NonTranscriptExport`, **not** a subclass — a gone
+  file and a binary file are different diagnoses) when export stderr matches
+  `source file not found`; every other non-zero export stays a plain
+  `RuntimeError` → `EXPORT_FAILED`; a hung call raises `AgentsViewTimeout` →
+  `EXPORT_TIMEOUT` (`export_timeout` in the histogram). `classify_skip` maps each
+  caught exception type to its `SkipReason` one frame after the raise, before the
+  type information is lost; `skip_record_for` stamps it with the ref's identity;
+  `tally_skips` answers "how many sessions have no parser?" as
+  `tally[UNKNOWN_SCHEMA]` with no prose parsing. Mirrors `UsageProvenance` (S29):
+  type the absence rather than stringify it. `detail` preserves the original
+  message for `--verbose`/sidecar output but is never parsed to recover `reason`
+  (TB-23).
 
 ## Passive analyzer — `src/toolbench/passive.py` (+ `reducer.py` / `report.py` / `freeze.py`)
 
@@ -112,8 +121,10 @@ and re-exports the public symbols historical imports expect.
   reducers and report counters live globally (`Reducer` in `reducer.py`).
 - **S12 — CLI.** Flags: `--agent`, `--all | --project`, `--since`,
   `--date-from`, `--date-to`, `--out`, `--limit`, `--exclude-subagents`,
-  `--index-source`, `--verbose`, `--freeze`, `--run-manifest`, `--tickets`;
-  default scope `--agent all --all`.
+  `--index-source`, `--agentsview-timeout`, `--verbose`, `--freeze`,
+  `--run-manifest`, `--tickets`; default scope `--agent all --all`.
+  `--agentsview-timeout` defaults to `AGENTSVIEW_TIMEOUT_S` (60.0); `0` means
+  unbounded; negatives are rejected at parse (TB-39).
 - **S13 — subagents.** Included by default; `--exclude-subagents` drops refs
   with `SessionRef.is_subagent` set at discovery. Raw discovery attributes
   project as the first path segment under the session root and sets the flag

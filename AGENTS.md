@@ -94,6 +94,13 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   vanish. Treat cross-agent ratios as comparable only when no uneven-sampling
   warning is emitted. Attribution must use observed truncation/skip signals;
   flag negative remainders as drift.
+- Every `agentsview` subprocess is bounded by `AGENTSVIEW_TIMEOUT_S` (60s);
+  override with `--agentsview-timeout SECONDS` (`0` = unbounded). A mid-scan
+  hang skips that session as `export_timeout` (`AgentsViewTimeout` →
+  `EXPORT_TIMEOUT`); under `--index-source auto`, a hang at the probe or
+  mid-listing falls back to raw. The Summary names the ceiling only when it
+  truncated the corpus or the run was unbounded (TB-39) — see README
+  `--agentsview-timeout`.
 - Freeze replay (manifest v2, TB-37) restores the freeze-time census as a
   **historical** denominator only when `census_includes_subagents` is present
   and matches the replay's `--exclude-subagents` choice. A v1 manifest, a v2
