@@ -16,7 +16,9 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   `logfire` from `dev`.
 - Before a PR, run `uv run ruff check .`,
   `uv run python -m toolbench.complexity_gate --base origin/main`,
-  `uv run mypy --strict src/toolbench tests`, and `uv run pytest -q`. Do not
+  `uv run mypy --strict src/toolbench tests`, and `uv run pytest -q`. Optional
+  complexity_gate flags: `--root` (default cwd), `--threshold`,
+  `--warning-delta`, `--ruff` (Ruff executable). Do not
   substitute `unittest discover`: it misses module-level pytest tests and
   executes module-level report code. A bare `uv run mypy` also mirrors that
   scope via `[tool.mypy]` in `pyproject.toml` (does not descend into `tools/`).
@@ -58,8 +60,9 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   `--reclaimable-only` narrows it to `SAFE` trees that are idle ≥`IDLE_DAYS`
   (7); a live upstream is a standing `CLAIMED` exemption that never expires.
   `--hook` is a mutually exclusive SessionStart mode (registered in tracked
-  `.claude/settings.json`): silent unless something is reclaimable, always
-  exit 0, never deletes. Reclaim with the procedure below.
+  `.claude/settings.json`): speaks only for `source` ∈ `{startup, resume}`
+  (silent on `compact`/`clear`/`fork`), silent unless something is reclaimable,
+  always exit 0, never deletes. Reclaim with the procedure below.
 - Reclaim a stale worktree with `git worktree remove <path>` **then**
   `git branch -d <branch>` — the order is required, since git refuses to delete
   a branch a linked worktree holds checked out. Select candidates with

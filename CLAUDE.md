@@ -26,4 +26,7 @@ copies — read the linked file for the current truth. Operational rules live in
 - [`benchmarks/harbor/toolbench-complex/README.md`](benchmarks/harbor/toolbench-complex/README.md)
   — Harbor packaging for selected complex probes (WIDS D2).
 - [`.claude/skills/laminar/SKILL.md`](.claude/skills/laminar/SKILL.md)
-  — optional Laminar tracing guidance (`tracing` extra + `TOOLBENCH_TRACING=1`).
+  — generic Laminar SDK / CLI guidance. Toolbench's opt-in contract
+  (`tracing` extra + `TOOLBENCH_TRACING=1` + console `argv is None`) lives in
+  [`README.md`](README.md) (Optional Laminar tracing) and SPEC S20 — not in
+  the skill.
