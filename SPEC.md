@@ -291,8 +291,13 @@ and re-exports the public symbols historical imports expect.
   invariant. `unattributed` is the usage on non-run branches **within candidate
   sessions** (those with >=1 entry on a run branch) — the straddle spillover;
   scoped corpus-wide it would be dominated by unrelated `main` work. A manifest
-  branch matching zero entries is reported, never a silent zero (S23/S38). The run
-  section renders read + creation together, normalized per ticket, as a Summary
+  branch matching zero entries is reported, never a silent zero (S23/S38). An
+  empty or missing `branches` list is `MalformedRunManifest` (exit 1) — a run
+  with no branch set would attribute nothing. Optional manifest `worktrees` is
+  accepted and stored but unused for attribution (branches-only; TB-28 rejected
+  cwd-based membership). The run section renders read + creation together,
+  normalized per ticket (`--tickets N` when set, else `len(manifest.tickets)`;
+  `--tickets` alone is a no-op; `--tickets 0` is rejected at parse), as a Summary
   caveat — never a ranking column (S19). `.lattice/orchestration/agents.md` cannot
   serve as the manifest: it discards its Branch column on run completion (TB-27;
   builds on the session-grain sums of S39/TB-26).
@@ -392,7 +397,8 @@ and re-exports the public symbols historical imports expect.
   `DEFAULT_THRESHOLD = 10` (plus `--warning-delta 2`) in that module — there
   is deliberately no `[tool.ruff.lint.mccabe]` block in `pyproject.toml`,
   because `ruff check .` does not select `C901` and a `max-complexity` key
-  there would be inert (#112). `[tool.ruff.lint] select` is pinned explicitly
+  there would be inert (#112). Optional CLI flags: `--root` (default cwd),
+  `--ruff` (Ruff executable path). `[tool.ruff.lint] select` is pinned explicitly
   so a Ruff default expansion cannot silently grow the gate (#120); widen it
   only after triaging findings. A new function above 10, a function crossing
   10, or a legacy hotspot that increases all fail; an increase of ≥2 that

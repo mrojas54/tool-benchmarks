@@ -133,7 +133,9 @@ rather than silently absent (S38 / TB-24).
 - **`complexity_gate.py`** — regression-aware cyclomatic-complexity gate
   (S22 / PR #95). Compares Ruff `C901` for changed `src/` and `tests/` Python
   files against a Git `--base` by `(path, qualified name)`. Not a console
-  subcommand — invoke as `uv run python -m toolbench.complexity_gate`. See
+  subcommand — invoke as `uv run python -m toolbench.complexity_gate`. Public
+  flags: required `--base`; optional `--root` (default cwd), `--threshold`,
+  `--warning-delta`, `--ruff` (Ruff executable path). See
   [Quality gate](#quality-gate).
 - **`worktrees.py`** — linked git worktree inventory with a reclaim verdict per
   tree (S42). Reports only — never removes a tree, deletes a branch, or touches
@@ -187,9 +189,10 @@ rather than silently absent (S38 / TB-24).
   directory at the freeze path) to exit 1 with `fatal freeze error` (S23 /
   PR #87).
 - **`run_manifest.py`** — JSON reader for `--run-manifest` (S40). Defines a
-  run's branch set (`branches` required; empty/missing is refused). Not
-  `.lattice/orchestration/agents.md` — that file drops its Branch column when
-  the run finishes.
+  run's branch set (`branches` required; empty/missing is refused). Optional
+  `worktrees` is accepted and stored but unused for attribution (branches-only).
+  Not `.lattice/orchestration/agents.md` — that file drops its Branch column
+  when the run finishes.
 - **`probe.py`** — scores matched tool-vs-Bash probe pairs from a dedicated
   session JSONL and emits a context-token + usage comparison table under
   `reports/`. Joins via `ClaudeParser(keep_raw_input=True, track_turns=True)`
@@ -481,6 +484,8 @@ uv run python -m toolbench.probe --allow-seeded   # baseline table only; measure
 
 # Per-run cache-token metrics (S40) — --run-manifest groups per-entry usage
 # by gitBranch, folded into the passive analyzer itself (no separate module).
+# Per-ticket divisor: --tickets N when set, else len(manifest.tickets).
+# --tickets without --run-manifest is a no-op; --tickets 0 is rejected.
 # Prefer from repo root via -m; from ~ use the path form in
 # .claude/skills/cache-token-metrics/SKILL.md (module resolve fails outside
 # the checkout).
@@ -521,8 +526,9 @@ uv sync --extra tracing
 ```
 
 `setup` writes the project link to `.lmnr/project.json` and the project API key
-to `.env`; both are gitignored. Never commit or print that key. `.env.example`
-documents only the variable name.
+to `.env`; both are gitignored. Never commit or print that key. The env var is
+`LMNR_PROJECT_API_KEY` (named in `.env.example`; keep the real value only in
+gitignored `.env`).
 
 Run a representative traced command:
 
@@ -755,8 +761,11 @@ With `--run-manifest`, the Summary also emits a **Run cache tokens** block
   - matched no entries: feat/missing-branch
 ```
 
-Attribution is **per entry** by `gitBranch`, not per session. `unattributed`
-is spillover inside candidate sessions (sessions with ≥1 entry on a run
+Attribution is **per entry** by `gitBranch`, not per session. A manifest
+`worktrees` list (if present) is ignored for folding. The per-ticket line
+divides by `--tickets N` when that flag is set; otherwise by
+`len(manifest.tickets)` (`RunManifest.ticket_count`). `unattributed` is
+spillover inside candidate sessions (sessions with ≥1 entry on a run
 branch) — not corpus-wide `main`. `detached-HEAD` is usage stamped
 `gitBranch="HEAD"` (a detached checkout): it cannot match any manifest
 branch, so it is **named and never folded into the run total** (TB-28).
@@ -849,7 +858,9 @@ working tree. Change the budget in `complexity_gate.py`, not in `pyproject.toml`
 Exit code is 1 only when there are errors; warnings still exit 0 and print
 GitHub Actions annotations (`::error` / `::warning`). Override locally with
 `--threshold` / `--warning-delta` if you need to reproduce a narrower check —
-CI uses the defaults.
+CI uses the defaults. Optional `--root` points the comparison at a checkout
+other than cwd; `--ruff` selects the Ruff executable (default `ruff` on
+`PATH`).
 
 The Ruff rule set is also pinned explicitly in `pyproject.toml` rather than
 inherited from Ruff's defaults (#120). Ruff 0.16 expanded its default set from
