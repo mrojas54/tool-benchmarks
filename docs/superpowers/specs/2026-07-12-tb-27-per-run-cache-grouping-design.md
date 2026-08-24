@@ -115,9 +115,11 @@ format is invented, and the stdlib-only posture (S20) holds.
 
 The orchestrator emits this **at dispatch**, while the branch data is still live.
 That is the direct fix for `agents.md` discarding it. `tickets` supplies the
-per-ticket normalization denominator. `worktrees` is an optional
-**scan-narrowing hint only, never a correctness input** — the root-checkout
-delegator proves `cwd` cannot be trusted to define membership.
+per-ticket normalization denominator when `--tickets` is omitted. `worktrees` is
+an optional field that is **accepted and stored, then ignored** — Lattice TB-28
+rejected consuming it as a scan-narrowing hint, because the root-checkout
+delegator proves `cwd` cannot be trusted to define membership. Attribution is
+branches-only (`gitBranch` ∈ `branches`).
 
 **`ClaudeParser`.** Gains one additive field, `usage_by_branch`, bucketing
 per-message `usage` by that entry's `gitBranch`. Computed in the existing single
@@ -158,8 +160,11 @@ it.**
 - **A manifest branch matching zero entries is reported, not silently zero.**
   That is the signature of a typo'd, renamed, or never-pushed branch; left
   silent it reads as "this ticket cost nothing."
-- **Empty run set** → clear message, exit 0 (S23).
-- **`--tickets 0`** keeps the existing `ValueError` (already covered).
+- **Empty / missing `branches`** → `MalformedRunManifest`, passive exits 1
+  (same hard-stop family as a bad freeze path). A run with no branch set would
+  attribute nothing and print a confident zero — refuse rather than emit that.
+- **`--tickets 0`** is rejected at argparse (`ArgumentTypeError`); `--tickets`
+  without `--run-manifest` is a no-op.
 
 ## Testing (S40 eval row)
 
