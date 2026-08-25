@@ -327,7 +327,8 @@ threshold rather than pass it. Verdict-bearing git failures raise
 `WorktreeProbeFailed` on the terminal path; `--hook` swallows every failure and
 exits 0 (a broken SessionStart reporter must not tax every session). `--hook`
 and `--reclaimable-only` are mutually exclusive output modes. The hook speaks
-only on `startup` / `resume` (`compact` is gated so long sessions do not re-nag).
+only on `startup` / `resume` (`HOOK_SOURCES`); `compact` / `clear` / `fork` stay
+silent so long sessions and clear/fork transitions do not re-nag.
 
 ## Status
 
@@ -409,9 +410,12 @@ Source-of-truth documents:
 - [`benchmarks/harbor/toolbench-complex/README.md`](benchmarks/harbor/toolbench-complex/README.md)
   — Harbor packaging for selected complex probes (WIDS D2 canary).
 - [`.claude/skills/cache-token-metrics/SKILL.md`](.claude/skills/cache-token-metrics/SKILL.md)
-  — operator recipe for per-run cache-token diffs (S39).
+  — operator recipe for per-run cache-token diffs via `--run-manifest` / `--tickets`
+  (S40; session-grain totals alone are S39).
 - [`.claude/skills/laminar/SKILL.md`](.claude/skills/laminar/SKILL.md)
-  — Laminar instrumentation / CLI / SQL guidance for the optional `tracing` extra.
+  — generic Laminar instrumentation / CLI / SQL guidance. Toolbench's opt-in
+  contract (`tracing` extra + `TOOLBENCH_TRACING=1` + `LMNR_PROJECT_API_KEY`)
+  lives in [Optional Laminar tracing](#optional-laminar-tracing) / S20.
 
 ## Agents / targets
 
@@ -804,6 +808,8 @@ line means the run headline may understate what the orchestration spent.
 | `--freeze` replay still says fractions unavailable | Manifest has no usable `census` (v1, freeze-time census failure, legacy v2 without population metadata, or replay changed `--exclude-subagents`) | Expected. Use the same subagent filter as the freeze; rewrite a legacy freeze on current `main` if you want historical fractions. |
 | `--freeze` exits 1 with `fatal freeze error` / traceback used to escape | Path is a directory, unreadable, non-UTF-8, or invalid JSON; or the first-write could not create the file | Point `--freeze` at a JSON *file* path (create parent dirs if needed). Same contract as a bad `--run-manifest` (S23 / PR #87). |
 | `--freeze` replay always analyzes zero sessions after a "successful" first write | First write happened while filters excluded every session (`count: 0`); write-once then permanently pins the empty set | Delete or intentionally rewrite the manifest after widening `--since` / `--project` / other filters. Check the first-write Summary session count before reusing the path. |
+| `--limit 0` (or a negative `--limit`) still analyzes one session | `--limit` is a plain `int`; truncation is checked *after* each append, so `len(refs) >= 0` (or `>=` a negative) trips only after the first ref | Pass a positive limit, or omit `--limit`. `--tickets` rejects non-positive values; `--limit` does not. |
+| SessionStart hook never finishes listing reclaimable trees on a busy machine | Tracked `.claude/settings.json` caps the hook at `timeout: 10`, while each linked tree may spend up to `GIT_TIMEOUT_S` (60s) on status / idle / size probes | Silence can be a budget miss, not "nothing reclaimable". Run `uv run toolbench worktrees` (or `--reclaimable-only`) outside SessionStart. |
 | Complexity gate fails a function you only moved / renamed | Identity is `(path, qualified name)`; a rename looks like a new function | Reduce it under 10, or land the move with a real simplification. `# noqa: C901` will not hide it. |
 | Complexity gate is silent on a hotspot you expected to fail | Only `src/` and `tests/` `*.py` changed vs `--base` are measured; files outside that scope, or unchanged files, are ignored | Diff against the intended base (`origin/main` locally; CI uses the PR base / pre-push SHA). Confirm the path is under `src/` or `tests/`. |
 | Local complexity gate cannot find `--base` | Shallow clone or missing remote-tracking ref | `git fetch origin main` (or deepen the clone). The `gate` job in `ci.yml` sets `fetch-depth: 0` for the same reason; the `tracing` job stays shallow. |

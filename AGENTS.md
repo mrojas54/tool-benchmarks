@@ -11,9 +11,10 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   repository root via `uv run`; use `uv sync` when explicit provisioning is
   needed. Runtime deps stay empty (stdlib-only by default); the optional
   `tracing` extra adds Laminar (`lmnr`) without changing the default install.
-  Console tracing also requires `TOOLBENCH_TRACING=1` (#104). The `dev` group
-  holds only the gate tools (`ruff` / `mypy` / `pytest`); `#104` removed
-  `logfire` from `dev`.
+  Console tracing also requires `TOOLBENCH_TRACING=1` (#104) and a present
+  `LMNR_PROJECT_API_KEY` (named in `.env.example`; see README Optional Laminar
+  tracing). The `dev` group holds only the gate tools (`ruff` / `mypy` /
+  `pytest`); `#104` removed `logfire` from `dev`.
 - Before a PR, run `uv run ruff check .`,
   `uv run python -m toolbench.complexity_gate --base origin/main`,
   `uv run mypy --strict src/toolbench tests`, and `uv run pytest -q`. Optional
