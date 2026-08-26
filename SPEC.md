@@ -204,9 +204,18 @@ and re-exports the public symbols historical imports expect.
   (<V> vanished since freeze)`, with their ids listed under `--verbose` via the S35
   skip detail. Over an unchanged corpus a replay is byte-identical (the fingerprint
   line included); when the tail has moved, the vanished count names the mechanism
-  rather than letting the delta pass as code (TB-22). Write-once also pins an
-  empty discovery: if filters exclude every session on the first write, later
-  replays analyze nothing until the operator deletes or rewrites the manifest.
+  rather than letting the delta pass as code (TB-22). Because write-once plus
+  `Path.is_file()` replay would make an empty first write pin the empty set
+  forever — every later run replaying nothing and still exiting 0 — a first write
+  whose discovery matched **zero** refs is **refused**: no manifest is created and
+  the run exits 1 with `fatal freeze error: discovery matched zero sessions;
+  refusing to write an empty freeze manifest to <path>`, naming the archive's
+  session count when it is non-empty so an over-narrow filter is distinguishable
+  from a genuinely empty archive (`24c4637`). The guard is on what will be
+  **scanned**, not on what discovery returned: `--exclude-subagents` drops its refs
+  after the write, so a selection matching only subagent sessions is refused too
+  (`discovery matched only subagent sessions`, exit 1, no file) rather than pinning
+  a non-empty manifest that replays to zero sessions forever.
   - **TB-37 — manifest format v2 persists the freeze-time census.** `MANIFEST_VERSION`
     bumped `toolbench-freeze-1` -> `toolbench-freeze-2`. A freeze pins the REF LIST,
     not the archive it was drawn from, so TB-22/TB-33 shipped replay with a

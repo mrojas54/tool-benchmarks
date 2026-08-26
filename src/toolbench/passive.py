@@ -629,19 +629,15 @@ def _resolve_corpus(
             print(f"toolbench.passive: fatal source error: {exc}", file=sys.stderr)
             return None
         if freeze_path is not None:
-            if not refs:
-                detail = (
-                    f"toolbench.passive: fatal freeze error: discovery matched zero "
-                    f"sessions; refusing to write an empty freeze manifest to "
-                    f"{freeze_path}."
-                )
-                if census.archive_total > 0:
-                    detail += (
-                        f" The archive reports {census.archive_total} session(s) -- "
-                        "the selection filters likely excluded them all."
-                    )
-                else:
-                    detail += " Widen the selection or drop --freeze."
+            # The guard is on what will actually be SCANNED, not on what was discovered.
+            # `--exclude-subagents` drops its refs in `main`, AFTER this write, so a
+            # selection matching only subagent sessions leaves `refs` non-empty here
+            # while the scan sees zero -- pinning a manifest that replays to nothing
+            # forever, at exit 0, in the same words a genuinely empty corpus uses. Same
+            # silent-wrong-answer failure as the zero-ref case, through a second door.
+            effective_refs = filter_subagents(refs) if args.exclude_subagents else refs
+            if not effective_refs:
+                detail = _empty_freeze_refusal(freeze_path, refs, census)
                 print(detail, file=sys.stderr)
                 return None
             if not _write_freeze(freeze_path, refs, census, args):
@@ -654,6 +650,39 @@ def _resolve_corpus(
         limit_truncated,
         frozen_census_note,
     )
+
+
+def _empty_freeze_refusal(
+    freeze_path: str, refs: list[SessionRef], census: AgentCensus
+) -> str:
+    """Why the freeze write was refused, naming which of the two causes applies.
+
+    The remedy differs, so the message must: nothing matched at all (widen the
+    selection) versus everything that matched was a subagent that
+    `--exclude-subagents` will drop before the scan (drop the flag). Reporting the
+    second as the first would send the operator to widen filters that are already
+    wide enough.
+    """
+    head = "toolbench.passive: fatal freeze error: discovery matched "
+    if refs:
+        return (
+            head + f"only subagent sessions ({len(refs)}), and `--exclude-subagents` "
+            f"drops every one before the scan; refusing to write a freeze manifest to "
+            f"{freeze_path} that would replay to zero sessions. Drop "
+            "--exclude-subagents, or widen the selection to reach parent sessions."
+        )
+    detail = (
+        head + f"zero sessions; refusing to write an empty freeze manifest to "
+        f"{freeze_path}."
+    )
+    if census.archive_total > 0:
+        detail += (
+            f" The archive reports {census.archive_total} session(s) -- "
+            "the selection filters likely excluded them all."
+        )
+    else:
+        detail += " Widen the selection or drop --freeze."
+    return detail
 
 
 @dataclass(frozen=True)

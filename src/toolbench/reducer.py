@@ -154,27 +154,22 @@ class Reducer:
         agent_stats = self.agents.setdefault(agent, AgentStats())
         agent_stats.sessions += 1
 
-        # S32/S39: session-grain, incremented once per session here -- never inside
-        # the per-call loop below, which would fabricate a per-call denominator.
-        # Measured when either cache field is non-None (Claude stamps both;
-        # hermes stamps read only).
-        if (
-            result.session_cache_read_tokens is not None
-            or result.session_cache_creation_tokens is not None
-        ):
-            agent_stats.sessions_with_cache_data += 1
-            read = result.session_cache_read_tokens or 0
-            creation = result.session_cache_creation_tokens or 0
-            agent_stats.cache_read_tokens_total += read
-            agent_stats.cache_creation_tokens_total += creation
-            if read > 0 or creation > 0:
-                agent_stats.sessions_with_cache_hit += 1
+        _absorb_session_cache(agent_stats, result)
 
         # S40: entry-grain run attribution. Kept out of the per-call loop -- cache
         # tokens are billed per message, not per tool call.
         if self.run is not None:
             self._absorb_run(result)
 
+        self._absorb_calls(agent, agent_stats, result)
+
+    def _absorb_calls(self, agent: str, agent_stats: AgentStats, result: ParseResult) -> None:
+        """Fold one session's per-call counters.
+
+        Split out of `absorb` so the session-grain counters above can never be reached
+        from inside a per-call loop, which would fabricate a per-call denominator
+        (S32/S39).
+        """
         prev_name: str | None = None
         prev_bad = False
         for call in result.calls:
@@ -269,6 +264,27 @@ class Reducer:
                 # Straddle spillover: work done in the same session on another branch.
                 self.run_stats.unattributed_read += usage.read
                 self.run_stats.unattributed_creation += usage.creation
+
+
+def _absorb_session_cache(agent_stats: AgentStats, result: ParseResult) -> None:
+    """S32/S39 session-grain cache counters, incremented once per session.
+
+    Never called from inside the per-call loop, which would fabricate a per-call
+    denominator. Measured when EITHER cache field is non-None (Claude stamps both;
+    hermes stamps read only), so a measured-zero is distinguishable from unmeasured.
+    """
+    if (
+        result.session_cache_read_tokens is None
+        and result.session_cache_creation_tokens is None
+    ):
+        return
+    agent_stats.sessions_with_cache_data += 1
+    read = result.session_cache_read_tokens or 0
+    creation = result.session_cache_creation_tokens or 0
+    agent_stats.cache_read_tokens_total += read
+    agent_stats.cache_creation_tokens_total += creation
+    if read > 0 or creation > 0:
+        agent_stats.sessions_with_cache_hit += 1
 
 
 def _spent_anything(usage: BranchUsage) -> bool:

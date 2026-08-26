@@ -196,6 +196,138 @@ def _apportionment(
     return lines
 
 
+def _zero_session_notes(
+    reducer: Reducer,
+    census: AgentCensus,
+    skips: list[SkipRecord],
+) -> list[str]:
+    """Why each `sessions == 0` row is zero, told apart by its own signal (TB-33 Finding 2).
+
+    An agent nobody looked at and an agent whose every sampled session failed to parse both
+    land at zero. Calling the second one "not reached" says we never looked, when in fact we
+    looked and everything we opened broke -- so the two get separate notes, keyed on whether
+    the agent owns any `SkipRecord`.
+    """
+    # Per-agent, straight off the raw records -- `tally_skips` would collapse these to
+    # dict[SkipReason, int] and destroy exactly the agent identity this needs, so it is
+    # deliberately not used here.
+    skipped_by_agent = Counter(s.agent for s in skips)
+    zero_session = sorted(
+        agent
+        for agent, total in census.totals.items()
+        if total > 0 and reducer.agents.get(agent, AgentStats()).sessions == 0
+    )
+    never_looked = [a for a in zero_session if not skipped_by_agent[a]]
+    all_skipped = [a for a in zero_session if skipped_by_agent[a]]
+
+    notes: list[str] = []
+    if never_looked:
+        named = ", ".join(f"{a} ({census.totals[a]} sessions)" for a in never_looked)
+        notes.append(
+            f"- Present in the archive, not reached by this window: {named}. Their rows are "
+            "zeros because we did not look, not because they did no work."
+        )
+    if all_skipped:
+        # `all_skipped` is non-empty only when `skips` is, and `render_report` renders the
+        # tally `if skips:` -- so this pointer always resolves to something on the page.
+        named = ", ".join(
+            f"{a} ({skipped_by_agent[a]} skipped of {census.totals[a]} in archive)"
+            for a in all_skipped
+        )
+        notes.append(
+            f"- Reached, but every session sampled from them was skipped: {named}. Their rows "
+            "are zeros because everything this window opened failed to parse or export, NOT "
+            'because we did not look -- see the "Skipped by reason" tally below.'
+        )
+    return notes
+
+
+def _spread_cause_note(
+    preamble: str,
+    skips: list[SkipRecord],
+    limit: int | None,
+    limit_truncated: bool | None,
+) -> str:
+    """Name the causes of an uneven spread, each ONLY on its own observed signal.
+
+    `limit_truncated` -- OBSERVED at discovery, not read off the flag -- for truncation, a
+    non-empty `skips` for attrition. Four cases plus the unobservable one, and the report
+    earns every word of each (TB-33 Finding 4).
+
+    `limit is not None` is NOT that signal (roborev #98/#101). It says a flag was passed,
+    not that it cut anything: `--limit 9000` over an 8778-session archive truncates nothing,
+    and blaming it would be the same inference-from-absence this module keeps deleting, one
+    level up.
+    """
+    n = len(skips)
+    were = f"{n} session{'s' if n != 1 else ''} {'were' if n != 1 else 'was'} skipped"
+    tally = 'see the Summary\'s "Skipped by reason" tally below'
+    # Why truncation is off the table, when it is -- said out loud, so the reader can
+    # see the signal rather than a silence where a cause should be.
+    no_truncation = (
+        "no `--limit` was applied"
+        if limit is None
+        else f"`--limit {limit}` was applied but truncated nothing (the corpus was "
+        "smaller than the limit)"
+    )
+    if limit_truncated is None:
+        # Discovery ASKED whether the limit cut the listing short and the source could
+        # not answer (roborev #103). A check that failed is not a check that said no, so
+        # neither "the limit bit" nor `no_truncation` is available -- and this branch
+        # exists precisely so the `elif skips:` and `else:` arms below, both of which
+        # assert `no_truncation`, can never be reached on an unobserved signal.
+        attrition = (
+            f"{were.capitalize()} this run ({tally}), so attrition is one live cause; "
+            "whether the limit is a second, this run cannot say."
+            if skips
+            else "No sessions were skipped this run, which rules attrition out -- but "
+            "the one remaining cause this report can name is exactly the one it could "
+            "not check."
+        )
+        return (
+            preamble + f" Whether `--limit {limit}` cut the listing short could not be "
+            f"observed: the check for a session beyond the limit failed. {attrition} "
+            "Re-run without `--limit` for a table that needs no such check."
+        )
+    if limit_truncated and not skips:
+        # Attrition ruled out by the empty skip list, truncation confirmed by a ref the
+        # limit left behind. Both halves observed, so the remedy is real: drop the limit.
+        return (
+            preamble + f" No sessions were skipped this run, which rules out skip "
+            f"attrition, and `--limit {limit}` cut the listing short: the spread comes "
+            "from that limit truncating the corpus unevenly across agents. Re-run "
+            "without `--limit` for a like-for-like table."
+        )
+    if limit_truncated:
+        # Both signals fire. Name both, promise neither remedy alone -- dropping the
+        # limit would not budge the attrition half.
+        return (
+            preamble + f" Both causes are live: `--limit {limit}` cut the listing short "
+            f"AND {were} this run ({tally}). Re-running without `--limit` is not "
+            "guaranteed to give a like-for-like table, since the attrition would "
+            "survive it."
+        )
+    if skips:
+        # Truncation ruled out by its own signal rather than assumed away -- either no
+        # limit was passed, or one was and it never bit. Attrition is what is left.
+        return (
+            preamble + f" {no_truncation.capitalize()}, which rules out limit truncation, "
+            f"and {were} this run: the spread comes from per-agent skip attrition "
+            f"({tally})."
+        )
+    # Neither signal fired, so neither named cause is available -- and the honest
+    # move is to say the spread is real rather than pin it on the nearest flag.
+    # This is the case the old one-armed branch got wrong: it reached here with an
+    # empty skip list and told an `--all` run to "re-run without `--limit`".
+    return (
+        preamble + f" Neither of the causes this report can name explains it: "
+        f"{no_truncation} and no sessions were skipped. The spread is in the "
+        "window itself -- the sessions it reached are a different fraction of each "
+        "agent's archive (a `--since` cutoff, say, or drift between discovery and "
+        "the census). There is no flag to drop; the unevenness is real."
+    )
+
+
 def _sampling_notes(
     reducer: Reducer,
     census: AgentCensus,
@@ -224,36 +356,7 @@ def _sampling_notes(
             "may rest on a different fraction of its agent's archive; this run cannot say."
         ]
 
-    notes: list[str] = []
-    # Per-agent, straight off the raw records -- `tally_skips` would collapse these to
-    # dict[SkipReason, int] and destroy exactly the agent identity this needs, so it is
-    # deliberately not used here.
-    skipped_by_agent = Counter(s.agent for s in skips)
-    zero_session = sorted(
-        agent
-        for agent, total in census.totals.items()
-        if total > 0 and reducer.agents.get(agent, AgentStats()).sessions == 0
-    )
-    never_looked = [a for a in zero_session if not skipped_by_agent[a]]
-    all_skipped = [a for a in zero_session if skipped_by_agent[a]]
-    if never_looked:
-        named = ", ".join(f"{a} ({census.totals[a]} sessions)" for a in never_looked)
-        notes.append(
-            f"- Present in the archive, not reached by this window: {named}. Their rows are "
-            "zeros because we did not look, not because they did no work."
-        )
-    if all_skipped:
-        # `all_skipped` is non-empty only when `skips` is, and `render_report` renders the
-        # tally `if skips:` -- so this pointer always resolves to something on the page.
-        named = ", ".join(
-            f"{a} ({skipped_by_agent[a]} skipped of {census.totals[a]} in archive)"
-            for a in all_skipped
-        )
-        notes.append(
-            f"- Reached, but every session sampled from them was skipped: {named}. Their rows "
-            "are zeros because everything this window opened failed to parse or export, NOT "
-            'because we did not look -- see the "Skipped by reason" tally below.'
-        )
+    notes: list[str] = _zero_session_notes(reducer, census, skips)
 
     spread = _sampling_spread(reducer, census)
     if spread is not None and spread >= SPREAD_THRESHOLD:
@@ -263,82 +366,7 @@ def _sampling_notes(
             "(calls/session, tokens/call, error rate) mixes sampling depth into the "
             "comparison and is not comparable."
         )
-        # Each cause is named ONLY on its own signal: `limit_truncated` -- OBSERVED at
-        # discovery, not read off the flag -- for truncation, a non-empty `skips` for
-        # attrition. Four cases, and the report earns every word of each (TB-33 Finding 4).
-        #
-        # `limit is not None` is NOT that signal (roborev #98/#101). It says a flag was
-        # passed, not that it cut anything: `--limit 9000` over an 8778-session archive
-        # truncates nothing, and blaming it would be the same inference-from-absence this
-        # function keeps deleting, one level up.
-        n = len(skips)
-        were = f"{n} session{'s' if n != 1 else ''} {'were' if n != 1 else 'was'} skipped"
-        tally = 'see the Summary\'s "Skipped by reason" tally below'
-        # Why truncation is off the table, when it is -- said out loud, so the reader can
-        # see the signal rather than a silence where a cause should be.
-        no_truncation = (
-            "no `--limit` was applied"
-            if limit is None
-            else f"`--limit {limit}` was applied but truncated nothing (the corpus was "
-            "smaller than the limit)"
-        )
-        if limit_truncated is None:
-            # Discovery ASKED whether the limit cut the listing short and the source could
-            # not answer (roborev #103). A check that failed is not a check that said no, so
-            # neither "the limit bit" nor `no_truncation` is available -- and this branch
-            # exists precisely so the `elif skips:` and `else:` arms below, both of which
-            # assert `no_truncation`, can never be reached on an unobserved signal.
-            attrition = (
-                f"{were.capitalize()} this run ({tally}), so attrition is one live cause; "
-                "whether the limit is a second, this run cannot say."
-                if skips
-                else "No sessions were skipped this run, which rules attrition out -- but "
-                "the one remaining cause this report can name is exactly the one it could "
-                "not check."
-            )
-            notes.append(
-                preamble + f" Whether `--limit {limit}` cut the listing short could not be "
-                f"observed: the check for a session beyond the limit failed. {attrition} "
-                "Re-run without `--limit` for a table that needs no such check."
-            )
-        elif limit_truncated and not skips:
-            # Attrition ruled out by the empty skip list, truncation confirmed by a ref the
-            # limit left behind. Both halves observed, so the remedy is real: drop the limit.
-            notes.append(
-                preamble + f" No sessions were skipped this run, which rules out skip "
-                f"attrition, and `--limit {limit}` cut the listing short: the spread comes "
-                "from that limit truncating the corpus unevenly across agents. Re-run "
-                "without `--limit` for a like-for-like table."
-            )
-        elif limit_truncated:
-            # Both signals fire. Name both, promise neither remedy alone -- dropping the
-            # limit would not budge the attrition half.
-            notes.append(
-                preamble + f" Both causes are live: `--limit {limit}` cut the listing short "
-                f"AND {were} this run ({tally}). Re-running without `--limit` is not "
-                "guaranteed to give a like-for-like table, since the attrition would "
-                "survive it."
-            )
-        elif skips:
-            # Truncation ruled out by its own signal rather than assumed away -- either no
-            # limit was passed, or one was and it never bit. Attrition is what is left.
-            notes.append(
-                preamble + f" {no_truncation.capitalize()}, which rules out limit truncation, "
-                f"and {were} this run: the spread comes from per-agent skip attrition "
-                f"({tally})."
-            )
-        else:
-            # Neither signal fired, so neither named cause is available -- and the honest
-            # move is to say the spread is real rather than pin it on the nearest flag.
-            # This is the case the old one-armed branch got wrong: it reached here with an
-            # empty skip list and told an `--all` run to "re-run without `--limit`".
-            notes.append(
-                preamble + f" Neither of the causes this report can name explains it: "
-                f"{no_truncation} and no sessions were skipped. The spread is in the "
-                "window itself -- the sessions it reached are a different fraction of each "
-                "agent's archive (a `--since` cutoff, say, or drift between discovery and "
-                "the census). There is no flag to drop; the unevenness is real."
-            )
+        notes.append(_spread_cause_note(preamble, skips, limit, limit_truncated))
         # Naming the causes is not splitting the spread between them (TB-35). `None` is the
         # typed ABSENCE of per-agent ref counts -- a caller that did not record them gets no
         # apportionment rather than one reconstructed from reached+skipped, which would bill
@@ -620,6 +648,130 @@ def _render_inefficiency_callouts(reducer: Reducer) -> list[str]:
     return out
 
 
+def _summary_sampling_lines(
+    reducer: Reducer,
+    census: AgentCensus,
+    skips: list[SkipRecord],
+) -> list[str]:
+    """Per-agent `scanned of archive` recap, split the same way the sampling notes split.
+
+    The Summary was still making the claim they stopped making (roborev #98/#101).
+    `scanned == 0` has two stories, and keying the tail on the zero alone told only one of
+    them -- so a report could say "reached, but every session was skipped" beside the table
+    and "not reached by this window" in the Summary, about the same agent. A reader who
+    scrolls believes the second. One report, one story: an agent with skips WAS reached
+    (TB-33 Finding 2).
+    """
+    if census.unavailable_reason is not None or not census.totals:
+        return []
+    out = ["- Sampling (scanned of each agent's own archive):"]
+    summary_skips = Counter(s.agent for s in skips)
+    for agent in sorted(census.totals):
+        agent_total = census.totals[agent]
+        scanned_agent = reducer.agents.get(agent, AgentStats()).sessions
+        pct = f"{scanned_agent / agent_total * 100:.1f}%" if agent_total else "n/a"
+        if scanned_agent == 0 and summary_skips[agent]:
+            tail = f" — reached, but all {summary_skips[agent]} sampled sessions were skipped"
+        elif scanned_agent == 0:
+            tail = " — not reached by this window"
+        else:
+            tail = ""
+        out.append(f"  - {agent}: {scanned_agent} of {agent_total} ({pct}){tail}")
+    return out
+
+
+def _summary_run_lines(reducer: Reducer, run_tickets: int | None) -> list[str]:
+    """S40 per-run cache cost, plus the three lines that keep its total honest.
+
+    Caveat only -- never ranked, never folded into an inefficiency ratio (S19). Read and
+    creation always together (S39).
+    """
+    if reducer.run is None:
+        return []
+    run_stats = reducer.run_stats
+    out = [
+        f"- Run cache tokens (run {reducer.run.run}): "
+        f"read={run_stats.read} creation={run_stats.creation} "
+        f"({run_stats.candidate_sessions} candidate session"
+        f"{'' if run_stats.candidate_sessions == 1 else 's'}; S40 caveat, not ranked)"
+    ]
+    tickets = run_tickets if run_tickets is not None else reducer.run.ticket_count
+    if tickets > 0:
+        norm = run_stats.per_ticket(tickets)
+        out.append(
+            f"  - per ticket ({tickets}): "
+            f"read={norm['cache_read']:.1f} creation={norm['cache_creation']:.1f}"
+        )
+    if run_stats.unattributed_read or run_stats.unattributed_creation:
+        # Straddle spillover: same-session work on branches outside the run. A
+        # large value means the run total is a narrow slice of what was spent.
+        out.append(
+            f"  - unattributed: read={run_stats.unattributed_read} "
+            f"creation={run_stats.unattributed_creation} "
+            f"(same-session work off the run's branches)"
+        )
+    if run_stats.detached_sessions:
+        # TB-28: usage from DETACHED checkouts (gitBranch="HEAD"). Unattributable
+        # by construction -- "HEAD" matches no manifest branch -- so it is neither
+        # counted in the run nor discardable: a detached delegator and unrelated
+        # detached work look identical. Name it so the run total is never read as
+        # complete when it may not be (S23/S38).
+        # input/output are shown HERE though the run headline is cache-only (S40):
+        # an uncached detached turn has zero cache and real input/output, and a
+        # bare "read=0 creation=0" would read as "nothing to see" -- a lie by
+        # omission on the one line whose whole job is to disclose what was missed.
+        out.append(
+            f"  - detached-HEAD (unattributable): "
+            f"read={run_stats.detached_read} "
+            f"creation={run_stats.detached_creation} "
+            f"input={run_stats.detached_input} "
+            f"output={run_stats.detached_output} "
+            f"({run_stats.detached_sessions} session"
+            f"{'' if run_stats.detached_sessions == 1 else 's'}; "
+            f"may include run delegators -- run total may be low)"
+        )
+    missing = run_stats.missing_branches(reducer.run)
+    if missing:
+        out.append(f"  - matched no entries: {', '.join(missing)}")
+    return out
+
+
+def _summary_join_lines(reducer: Reducer) -> list[str]:
+    """Join accounting, plus the S39 session-grain cache caveat when anything measured it."""
+    out = [
+        f"- Tool calls joined: {reducer.calls_joined}",
+        f"- Malformed lines: {reducer.malformed_total}",
+    ]
+    cache_read_total = sum(s.cache_read_tokens_total for s in reducer.agents.values())
+    cache_creation_total = sum(s.cache_creation_tokens_total for s in reducer.agents.values())
+    measured_cache_sessions = sum(s.sessions_with_cache_data for s in reducer.agents.values())
+    if measured_cache_sessions > 0:
+        # S39: read + creation together — a prefix-sharing change trades one for the
+        # other, so a read delta alone misleads. Caveat only; never ranks.
+        out.append(
+            f"- Session-grain cache tokens: read={cache_read_total} "
+            f"creation={cache_creation_total} "
+            f"({measured_cache_sessions} measured sessions; S39 caveat, not ranked)"
+        )
+    return out
+
+
+def _summary_unjoinable_lines(reducer: Reducer) -> list[str]:
+    """Records a parser saw but structurally could not join (TB-24).
+
+    Named here so codex's ~4% web-search undercount is never a silent zero. Attributed by
+    agent/kind (TB-23's typed-bucket ethos), sorted for a stable diff. Absent entirely when
+    there is nothing to report.
+    """
+    if not reducer.unjoinable:
+        return []
+    unjoinable_total = sum(reducer.unjoinable.values())
+    out = [f"- Unjoinable tool records (seen, not joined): {unjoinable_total}"]
+    for (agent_name, kind), count in sorted(reducer.unjoinable.items()):
+        out.append(f"  - {agent_name}/{kind}: {count}")
+    return out
+
+
 def _render_summary(
     reducer: Reducer,
     *,
@@ -649,28 +801,7 @@ def _render_summary(
     out.append(
         f"- Sessions discovered: {scanned + skipped} / scanned: {scanned} / skipped: {skipped}"
     )
-    if census.unavailable_reason is None and census.totals:
-        out.append("- Sampling (scanned of each agent's own archive):")
-        # The same split the sampling notes make, because the Summary was still making the
-        # claim they stopped making (roborev #98/#101). `scanned == 0` has two stories, and
-        # keying the tail on the zero alone told only one of them -- so a report could say
-        # "reached, but every session was skipped" beside the table and "not reached by this
-        # window" in the Summary, about the same agent. A reader who scrolls believes the
-        # second. One report, one story: an agent with skips WAS reached (TB-33 Finding 2).
-        summary_skips = Counter(s.agent for s in skips)
-        for agent in sorted(census.totals):
-            agent_total = census.totals[agent]
-            scanned_agent = reducer.agents.get(agent, AgentStats()).sessions
-            pct = f"{scanned_agent / agent_total * 100:.1f}%" if agent_total else "n/a"
-            if scanned_agent == 0 and summary_skips[agent]:
-                tail = (
-                    f" — reached, but all {summary_skips[agent]} sampled sessions were skipped"
-                )
-            elif scanned_agent == 0:
-                tail = " — not reached by this window"
-            else:
-                tail = ""
-            out.append(f"  - {agent}: {scanned_agent} of {agent_total} ({pct}){tail}")
+    out.extend(_summary_sampling_lines(reducer, census, skips))
     if fingerprint is not None:
         # Identity of the set that produced the numbers above: two reports whose
         # fingerprints match are diffable; a delta between them is code, not the
@@ -687,76 +818,9 @@ def _render_summary(
         out.append("- Skipped by reason:")
         for reason, count in _reasons_by_count(skips):
             out.append(f"  - {reason.value}: {count}")
-    out.append(f"- Tool calls joined: {reducer.calls_joined}")
-    out.append(f"- Malformed lines: {reducer.malformed_total}")
-    cache_read_total = sum(s.cache_read_tokens_total for s in reducer.agents.values())
-    cache_creation_total = sum(s.cache_creation_tokens_total for s in reducer.agents.values())
-    measured_cache_sessions = sum(s.sessions_with_cache_data for s in reducer.agents.values())
-    if measured_cache_sessions > 0:
-        # S39: read + creation together — a prefix-sharing change trades one for the
-        # other, so a read delta alone misleads. Caveat only; never ranks.
-        out.append(
-            f"- Session-grain cache tokens: read={cache_read_total} "
-            f"creation={cache_creation_total} "
-            f"({measured_cache_sessions} measured sessions; S39 caveat, not ranked)"
-        )
-    if reducer.run is not None:
-        # S40: per-run cache cost. Caveat only -- never ranked, never folded into an
-        # inefficiency ratio (S19). Read and creation always together (S39).
-        run_stats = reducer.run_stats
-        out.append(
-            f"- Run cache tokens (run {reducer.run.run}): "
-            f"read={run_stats.read} creation={run_stats.creation} "
-            f"({run_stats.candidate_sessions} candidate session"
-            f"{'' if run_stats.candidate_sessions == 1 else 's'}; S40 caveat, not ranked)"
-        )
-        tickets = run_tickets if run_tickets is not None else reducer.run.ticket_count
-        if tickets > 0:
-            norm = run_stats.per_ticket(tickets)
-            out.append(
-                f"  - per ticket ({tickets}): "
-                f"read={norm['cache_read']:.1f} creation={norm['cache_creation']:.1f}"
-            )
-        if run_stats.unattributed_read or run_stats.unattributed_creation:
-            # Straddle spillover: same-session work on branches outside the run. A
-            # large value means the run total is a narrow slice of what was spent.
-            out.append(
-                f"  - unattributed: read={run_stats.unattributed_read} "
-                f"creation={run_stats.unattributed_creation} "
-                f"(same-session work off the run's branches)"
-            )
-        if run_stats.detached_sessions:
-            # TB-28: usage from DETACHED checkouts (gitBranch="HEAD"). Unattributable
-            # by construction -- "HEAD" matches no manifest branch -- so it is neither
-            # counted in the run nor discardable: a detached delegator and unrelated
-            # detached work look identical. Name it so the run total is never read as
-            # complete when it may not be (S23/S38).
-            # input/output are shown HERE though the run headline is cache-only (S40):
-            # an uncached detached turn has zero cache and real input/output, and a
-            # bare "read=0 creation=0" would read as "nothing to see" -- a lie by
-            # omission on the one line whose whole job is to disclose what was missed.
-            out.append(
-                f"  - detached-HEAD (unattributable): "
-                f"read={run_stats.detached_read} "
-                f"creation={run_stats.detached_creation} "
-                f"input={run_stats.detached_input} "
-                f"output={run_stats.detached_output} "
-                f"({run_stats.detached_sessions} session"
-                f"{'' if run_stats.detached_sessions == 1 else 's'}; "
-                f"may include run delegators -- run total may be low)"
-            )
-        missing = run_stats.missing_branches(reducer.run)
-        if missing:
-            out.append(f"  - matched no entries: {', '.join(missing)}")
-    if reducer.unjoinable:
-        # Records a parser saw but structurally could not join (TB-24): named here so
-        # codex's ~4% web-search undercount is never a silent zero. Attributed by
-        # agent/kind (TB-23's typed-bucket ethos), sorted for a stable diff. Absent
-        # entirely when there is nothing to report.
-        unjoinable_total = sum(reducer.unjoinable.values())
-        out.append(f"- Unjoinable tool records (seen, not joined): {unjoinable_total}")
-        for (agent_name, kind), count in sorted(reducer.unjoinable.items()):
-            out.append(f"  - {agent_name}/{kind}: {count}")
+    out.extend(_summary_join_lines(reducer))
+    out.extend(_summary_run_lines(reducer, run_tickets))
+    out.extend(_summary_unjoinable_lines(reducer))
     # Earned, not asserted (TB-31). This line used to render straight from the CLI flag,
     # so it printed "Subagents included: no" on the AgentsView path -- which never listed
     # a subagent and therefore could not have excluded one. Reporting the count actually

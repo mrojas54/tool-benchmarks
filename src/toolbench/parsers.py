@@ -242,6 +242,54 @@ class TranscriptParser(ABC):
     ) -> ParseResult: ...
 
 
+def _join_results(
+    entry: dict[str, object],
+    content: object,
+    pending: dict[str, _PendingCall],
+    *,
+    agent: str,
+    source: str,
+    project: str,
+) -> list[ToolCall]:
+    """Match this entry's `tool_result` blocks against pending calls and finish them.
+
+    A `None` block stands for the top-level `toolUseID` shape, which carries the join
+    key on the entry rather than in a content block. Results whose id was never pending
+    are dropped: a result with no `tool_use` is not a call this session made.
+    """
+    result_blocks: list[dict[str, object] | None] = []
+    if isinstance(content, list):
+        result_blocks = [
+            block
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "tool_result"
+        ]
+    if not result_blocks and "toolUseID" in entry:
+        result_blocks = [None]
+
+    calls: list[ToolCall] = []
+    for result_block in result_blocks:
+        result_id = _result_id(entry, result_block)
+        if result_id is None or result_id not in pending:
+            continue
+        payload, payload_source = _result_payload(entry, result_block)
+        pending_call = pending.pop(result_id)
+        error = None
+        if isinstance(result_block, dict) and result_block.get("is_error"):
+            error = "tool_error"
+        calls.append(
+            pending_call.finish(
+                agent=agent,
+                source=source,
+                project=project,
+                output_chars=result_len(payload),
+                error=error,
+                result_source=payload_source,
+            )
+        )
+    return calls
+
+
 def _result_id(entry: dict[str, object], block: dict[str, object] | None) -> str | None:
     """Join key (S1): block-local `tool_use_id` first, else top-level `toolUseID`."""
     if block is not None:
@@ -299,6 +347,48 @@ class ClaudeParser(TranscriptParser):
             else UsageProvenance.ABSENT_UNEXPECTED
         )
 
+    def _enqueue_tool_uses(
+        self,
+        pending: dict[str, _PendingCall],
+        content: object,
+        message: object,
+        *,
+        session_id: str,
+        ts: str,
+        turn_key: str | None,
+        keep_raw_input: bool,
+        track_turns: bool,
+    ) -> None:
+        """Enqueue this entry's `tool_use` blocks against their ids, awaiting a result."""
+        if not isinstance(content, list):
+            return
+        for tool_use_block in content:
+            if not isinstance(tool_use_block, dict):
+                continue
+            if tool_use_block.get("type") != "tool_use":
+                continue
+            if track_turns and turn_key is None:
+                # User-side or non-assistant content: probe mode skips.
+                continue
+            tool_use_id = tool_use_block.get("id")
+            name = tool_use_block.get("name")
+            if not isinstance(tool_use_id, str) or not isinstance(name, str):
+                continue
+            usage = message.get("usage") if isinstance(message, dict) else None
+            model = message.get("model") if isinstance(message, dict) else None
+            raw_input = json.dumps(tool_use_block.get("input")) if keep_raw_input else None
+            pending[tool_use_id] = _PendingCall(
+                name=name,
+                input_chars=result_len(tool_use_block.get("input")),
+                session_id=session_id,
+                ts=ts,
+                usage=usage if isinstance(usage, dict) else None,
+                usage_provenance=self._provenance(usage),
+                model=model if isinstance(model, str) else None,
+                raw_input=raw_input,
+                turn_key=turn_key,
+            )
+
     def parse(
         self,
         lines: Iterable[str],
@@ -345,65 +435,21 @@ class ClaudeParser(TranscriptParser):
 
             turn_key = _track_turn(turns, entry, message, content, track_turns=track_turns)
 
-            if isinstance(content, list):
-                for tool_use_block in content:
-                    if not isinstance(tool_use_block, dict):
-                        continue
-                    if tool_use_block.get("type") != "tool_use":
-                        continue
-                    if track_turns and turn_key is None:
-                        # User-side or non-assistant content: probe mode skips.
-                        continue
-                    tool_use_id = tool_use_block.get("id")
-                    name = tool_use_block.get("name")
-                    if not isinstance(tool_use_id, str) or not isinstance(name, str):
-                        continue
-                    usage = message.get("usage") if isinstance(message, dict) else None
-                    model = message.get("model") if isinstance(message, dict) else None
-                    raw_input = (
-                        json.dumps(tool_use_block.get("input")) if keep_raw_input else None
-                    )
-                    pending[tool_use_id] = _PendingCall(
-                        name=name,
-                        input_chars=result_len(tool_use_block.get("input")),
-                        session_id=session_id_str,
-                        ts=ts_str,
-                        usage=usage if isinstance(usage, dict) else None,
-                        usage_provenance=self._provenance(usage),
-                        model=model if isinstance(model, str) else None,
-                        raw_input=raw_input,
-                        turn_key=turn_key,
-                    )
-
-            result_blocks: list[dict[str, object] | None] = []
-            if isinstance(content, list):
-                result_blocks = [
-                    block
-                    for block in content
-                    if isinstance(block, dict) and block.get("type") == "tool_result"
-                ]
-            if not result_blocks and "toolUseID" in entry:
-                result_blocks = [None]
-
-            for result_block in result_blocks:
-                result_id = _result_id(entry, result_block)
-                if result_id is None or result_id not in pending:
-                    continue
-                payload, payload_source = _result_payload(entry, result_block)
-                pending_call = pending.pop(result_id)
-                error = None
-                if isinstance(result_block, dict) and result_block.get("is_error"):
-                    error = "tool_error"
-                calls.append(
-                    pending_call.finish(
-                        agent=agent,
-                        source=source,
-                        project=project,
-                        output_chars=result_len(payload),
-                        error=error,
-                        result_source=payload_source,
-                    )
+            self._enqueue_tool_uses(
+                pending,
+                content,
+                message,
+                session_id=session_id_str,
+                ts=ts_str,
+                turn_key=turn_key,
+                keep_raw_input=keep_raw_input,
+                track_turns=track_turns,
+            )
+            calls.extend(
+                _join_results(
+                    entry, content, pending, agent=agent, source=source, project=project
                 )
+            )
 
         calls.extend(
             _drain_pending(pending, agent=agent, source=source, project=project)
@@ -501,6 +547,67 @@ class CodexParser(TranscriptParser):
             entry.get("payload"), dict
         )
 
+    def _absorb_response_item(
+        self,
+        payload: dict[str, object],
+        pending: dict[str, _PendingCall],
+        unjoinable: dict[str, int],
+        *,
+        session_id: str,
+        ts: str,
+        model: str | None,
+        agent: str,
+        source: str,
+        project: str,
+    ) -> list[ToolCall]:
+        """Enqueue a call shape or finish a pending one, keyed on `payload.call_id`.
+
+        Returns the calls this record completed -- at most one, and none for a record
+        that opens a call or carries no usable join key.
+        """
+        payload_type = payload.get("type")
+
+        if isinstance(payload_type, str) and payload_type in self.UNJOINABLE_TYPES:
+            # A real tool call with no `call_id` and no paired output. Count it
+            # by kind before the join guard below (which would silently drop it)
+            # so the Summary can name the gap rather than report a silent zero.
+            unjoinable[payload_type] = unjoinable.get(payload_type, 0) + 1
+            return []
+
+        call_id = payload.get("call_id")
+        if not isinstance(call_id, str):
+            return []
+
+        if payload_type in self.CALL_SHAPES:
+            input_field, fixed_name = self.CALL_SHAPES[payload_type]
+            name = fixed_name if fixed_name is not None else payload.get("name")
+            if not isinstance(name, str):
+                return []
+            pending[call_id] = _PendingCall(
+                name=name,
+                input_chars=result_len(payload.get(input_field)),
+                session_id=session_id,
+                ts=ts,
+                usage=None,
+                usage_provenance=UsageProvenance.ABSENT_BY_SCHEMA,
+                model=model,
+            )
+            return []
+
+        if payload_type in self.OUTPUT_FIELDS and call_id in pending:
+            output_field = self.OUTPUT_FIELDS[payload_type]
+            pending_call = pending.pop(call_id)
+            return [
+                pending_call.finish(
+                    agent=agent,
+                    source=source,
+                    project=project,
+                    output_chars=result_len(payload.get(output_field)),
+                    result_source="payload",
+                )
+            ]
+        return []
+
     def parse(
         self, lines: Iterable[str], *, agent: str, source: str, project: str
     ) -> ParseResult:
@@ -546,46 +653,19 @@ class CodexParser(TranscriptParser):
                 continue
 
             ts = entry.get("timestamp")
-            ts_str = ts if isinstance(ts, str) else ""
-            payload_type = payload.get("type")
-
-            if isinstance(payload_type, str) and payload_type in self.UNJOINABLE_TYPES:
-                # A real tool call with no `call_id` and no paired output. Count it
-                # by kind before the join guard below (which would silently drop it)
-                # so the Summary can name the gap rather than report a silent zero.
-                unjoinable[payload_type] = unjoinable.get(payload_type, 0) + 1
-                continue
-
-            call_id = payload.get("call_id")
-            if not isinstance(call_id, str):
-                continue
-
-            if payload_type in self.CALL_SHAPES:
-                input_field, fixed_name = self.CALL_SHAPES[payload_type]
-                name = fixed_name if fixed_name is not None else payload.get("name")
-                if not isinstance(name, str):
-                    continue
-                pending[call_id] = _PendingCall(
-                    name=name,
-                    input_chars=result_len(payload.get(input_field)),
+            calls.extend(
+                self._absorb_response_item(
+                    payload,
+                    pending,
+                    unjoinable,
                     session_id=session_id,
-                    ts=ts_str,
-                    usage=None,
-                    usage_provenance=UsageProvenance.ABSENT_BY_SCHEMA,
+                    ts=ts if isinstance(ts, str) else "",
                     model=model,
+                    agent=agent,
+                    source=source,
+                    project=project,
                 )
-            elif payload_type in self.OUTPUT_FIELDS and call_id in pending:
-                output_field = self.OUTPUT_FIELDS[payload_type]
-                pending_call = pending.pop(call_id)
-                calls.append(
-                    pending_call.finish(
-                        agent=agent,
-                        source=source,
-                        project=project,
-                        output_chars=result_len(payload.get(output_field)),
-                        result_source="payload",
-                    )
-                )
+            )
 
         calls.extend(
             _drain_pending(pending, agent=agent, source=source, project=project)
