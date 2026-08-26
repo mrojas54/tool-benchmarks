@@ -30,10 +30,9 @@ raw roots + AgentsView exports
   observability only; `TOOLBENCH_TRACING=1` is the operator opt-in (#104).
 - **Project:** uv-managed; `pyproject.toml` + `uv.lock`; runtime deps empty;
   optional `[project.optional-dependencies] tracing`. The `dev` group holds
-  gate tools (`ruff`/`mypy`/`pytest`) plus optional parallel-run tooling
-  (`logfire`). `[tool.mypy]` pins `files` + `strict` so a bare local `mypy`
-  mirrors the CI gate (`src/toolbench` + `tests`) and does not type-check
-  `tools/`.
+  only the gate tools (`ruff`/`mypy`/`pytest`); `#104` removed `logfire`.
+  `[tool.mypy]` pins `files` + `strict` so a bare local `mypy` mirrors the CI
+  gate (`src/toolbench` + `tests`) and does not type-check `tools/`.
 - **Parser seam (decided):** callers open lines and use `ClaudeParser.parse`
   or `registry.pick_adapter` → `SessionAdapter.parse`. Path-based
   `parse_session` was retired (CQ 1.3). Probe reuses the same pass via
@@ -94,6 +93,8 @@ parallel (T2, T3), then the two consumers (T4, T5), then docs + gate (T6).
 | **T22 — pin `ensure_deps` to manifest SHA** (PR #99) | `complex_runner.ensure_deps` reads npm `package.json` / `package-lock.json` via `git show <sha>:…` and runs warmup steps inside a short-lived `git archive` of the packaged manifest SHA — never corpus `HEAD` — so a shared clone that advances without re-vendoring cannot silently rebuild caches from a different tree than the trial export | complex probe hermeticity (design § Implementation map) | complex_runner / #78 |
 | **T23 — opt-in Laminar CLI tracing** (PR #97 / #104) | Optional `tracing` extra (`lmnr`); `observability/setup_tracing.py` initializes best-effort; `tracing.run_traced` wraps real console processes only when `cli.py` sees `argv is None` **and** `TOOLBENCH_TRACING=1`; `worktrees --hook` excluded; spans exclude argv/paths/prompts; hermetic suite stays green without the extra | S20 | T1, T6 |
 | **T24 — stamp-invalidate dep cache on SHA bump** (PR #102) | Each repo cache leaf under `vendor-cache-<uid>/<repo>/` carries `.manifest-sha`; `ensure_deps` wipes dep trees and rebuilds when the stamp is missing or differs from the packaged manifest SHA (legacy unstamped caches rebuild once) so trials and oracles cannot diverge after a pin bump | complex probe hermeticity / T22 | T22 |
+| **T25 — Harbor packaging for complex probes** (PR #105) | Selected complex cells under `benchmarks/harbor/toolbench-complex/` (WIDS D2 build canary only — not a console subcommand). Task Dockerfile clones/pins/patches/warmup; compose keeps agent network isolated from the canary | complex design / Harbor WIDS D2 | complex_runner / T22 |
+| **T26 — shared JsonLines + passive phase split** (PR #107) | `transcript.JsonLines` is the shared JSONL reader for parsers (blanks skipped; undecodable / non-object lines counted). `passive.main` phases `_plan_freeze` → `_resolve_corpus` → `_scan_refs` → render/write | S21 / parser hygiene | T1, T4 |
 
 `T1`–`T6` are the original v2 build-contract tickets (board `TB-2`–`TB-7`) and
 predate the lattice board's use as the source of truth. `T7`–`T9` are recorded

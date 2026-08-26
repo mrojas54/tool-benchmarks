@@ -27,7 +27,8 @@ checkout, so the read doesn't bill an unrelated project's cache.
    discards its Branch column once the run finishes, so reconstructing it after the fact
    isn't reliable): `{"run": "2", "tickets": ["TB-18", "TB-19"], "branches":
    ["feat/tb-18", "tb-19-pytest-gate"], "worktrees": ["~/wt/tb-19"]}` (`worktrees` is
-   optional; `branches` is not — an empty or missing list is refused as malformed rather
+   optional and currently unused for attribution — accepted/stored only;
+   `branches` is not — an empty or missing list is refused as malformed rather
    than silently attributing nothing). No run-id exists inside a transcript — the branch
    set in this manifest *is* the correlation.
 3. **Sum per session** — the passive analyzer's `ClaudeParser` stamps session-grain
@@ -36,7 +37,8 @@ checkout, so the read doesn't bill an unrelated project's cache.
    that actually touched the run's branches, not its whole total.
 4. **Aggregate + normalize** — `--run-manifest` folds every scanned session's matching
    branch buckets into one run total (reporting unattributed spillover and any manifest
-   branch that matched zero entries); `--tickets N` then normalizes it per ticket.
+   branch that matched zero entries); `--tickets N` overrides the per-ticket divisor,
+   otherwise `len(manifest.tickets)` is used (`--tickets` alone is a no-op).
 
 ```bash
 # from ~ , per run. `toolbench` is installed editable into the repo's venv (src

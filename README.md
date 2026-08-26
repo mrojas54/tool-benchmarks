@@ -133,7 +133,9 @@ rather than silently absent (S38 / TB-24).
 - **`complexity_gate.py`** — regression-aware cyclomatic-complexity gate
   (S22 / PR #95). Compares Ruff `C901` for changed `src/` and `tests/` Python
   files against a Git `--base` by `(path, qualified name)`. Not a console
-  subcommand — invoke as `uv run python -m toolbench.complexity_gate`. See
+  subcommand — invoke as `uv run python -m toolbench.complexity_gate`. Public
+  flags: required `--base`; optional `--root` (default cwd), `--threshold`,
+  `--warning-delta`, `--ruff` (Ruff executable path). See
   [Quality gate](#quality-gate).
 - **`worktrees.py`** — linked git worktree inventory with a reclaim verdict per
   tree (S42). Reports only — never removes a tree, deletes a branch, or touches
@@ -157,9 +159,10 @@ rather than silently absent (S38 / TB-24).
   Per-call usage is `ABSENT_BY_SCHEMA`; session-row `cache_read_tokens` is
   surfaced on `ParseResult` for the Agent Breakdown caveat (S32 / TB-20),
   never attributed per call.
-- **`passive.py`** — CLI and scan orchestration only: argparse, discovery /
-  `--freeze` replay via `_resolve_corpus`, per-ref parse, date-range filter,
-  typed skips. Re-exports reducer/report symbols so historical
+- **`passive.py`** — CLI and scan orchestration only. `main()` runs named
+  phases `_plan_freeze` → `_resolve_corpus` (discovery / `--freeze` replay) →
+  `_scan_refs` → render/write; also owns argparse, date-range filter, typed
+  skips, and compatibility re-exports so historical
   `from toolbench.passive import …` imports keep working.
 - **`reducer.py`** — incremental corpus aggregation (S11). Folds each
   session's `ParseResult` into per-agent / per-tool counters and discards the
@@ -186,9 +189,10 @@ rather than silently absent (S38 / TB-24).
   directory at the freeze path) to exit 1 with `fatal freeze error` (S23 /
   PR #87).
 - **`run_manifest.py`** — JSON reader for `--run-manifest` (S40). Defines a
-  run's branch set (`branches` required; empty/missing is refused). Not
-  `.lattice/orchestration/agents.md` — that file drops its Branch column when
-  the run finishes.
+  run's branch set (`branches` required; empty/missing is refused). Optional
+  `worktrees` is accepted and stored but unused for attribution (branches-only).
+  Not `.lattice/orchestration/agents.md` — that file drops its Branch column
+  when the run finishes.
 - **`probe.py`** — scores matched tool-vs-Bash probe pairs from a dedicated
   session JSONL and emits a context-token + usage comparison table under
   `reports/`. Joins via `ClaudeParser(keep_raw_input=True, track_turns=True)`
@@ -367,19 +371,26 @@ fold probe into `ClaudeParser` (`keep_raw_input` / `track_turns`), and stamp
 inefficiency tags at emit. The strict gate (`uv run ruff check .`,
 `uv run python -m toolbench.complexity_gate --base origin/main`,
 `uv run mypy --strict src/toolbench tests`, `uv run pytest -q`) is green —
-**749** tests passing, 3 skipped. Each skip runs somewhere and the "somewhere"
-is recorded in `AGENTS.md` so a skip is never mistaken for coverage: the
-optional-tracing test runs in the `tracing` job of `ci.yml`; the corpus
-fixtures (`tests/test_complex_fixtures.py`) run in
+**748** tests passing / **4** skipped on the default install, **749** / **3**
+with `--extra tracing` (the observability skip becomes a pass). Each
+coverage-oriented skip runs somewhere and the "somewhere" is recorded in
+`AGENTS.md` so a skip is never mistaken for coverage: the optional-tracing
+test runs in the `tracing` job of `ci.yml` (shallow checkout; no complexity
+base); the corpus fixtures (`tests/test_complex_fixtures.py`) run in
 [`.github/workflows/corpus.yml`](.github/workflows/corpus.yml) — weekly, on
-demand, and on `pull_request` for corpus-touching paths (#119); and the Hermes
-live-archive test in `tests/test_hermes.py::LiveArchive` is deliberately
+demand, and on `pull_request` for corpus-touching paths (#119; the path filter
+omits `shell_safety.py` — audit-only edits stay on the hermetic gate); and the
+Hermes live-archive test in `tests/test_hermes.py::LiveArchive` is deliberately
 operator-run before a release and whenever a Hermes upgrade changes the
-`sessions`/`messages` schema, per `EVALUATION.md`. `mypy --strict` covers `tests` as well as
+`sessions`/`messages` schema, per `EVALUATION.md`. A fourth default skip — the
+sidecar-less WAL classic-reject pin in `test_hermes.py` — is build-dependent
+(modern SQLite may skip it) and is not a missing CI lane. `mypy --strict`
+covers `tests` as well as
 `src/toolbench`. A bare `uv run mypy` also mirrors that scope via
 `[tool.mypy]` in `pyproject.toml` (it does not descend into `tools/`). The
-same four commands run in CI (`.github/workflows/ci.yml`) on every PR and on
-pushes to `main`.
+same four gate commands run in the `gate` job of `.github/workflows/ci.yml`
+on every PR and on pushes to `main`; the sibling `tracing` job re-runs
+pytest with `--extra tracing`.
 
 Source-of-truth documents:
 
@@ -473,6 +484,8 @@ uv run python -m toolbench.probe --allow-seeded   # baseline table only; measure
 
 # Per-run cache-token metrics (S40) — --run-manifest groups per-entry usage
 # by gitBranch, folded into the passive analyzer itself (no separate module).
+# Per-ticket divisor: --tickets N when set, else len(manifest.tickets).
+# --tickets without --run-manifest is a no-op; --tickets 0 is rejected.
 # Prefer from repo root via -m; from ~ use the path form in
 # .claude/skills/cache-token-metrics/SKILL.md (module resolve fails outside
 # the checkout).
@@ -513,8 +526,9 @@ uv sync --extra tracing
 ```
 
 `setup` writes the project link to `.lmnr/project.json` and the project API key
-to `.env`; both are gitignored. Never commit or print that key. `.env.example`
-documents only the variable name.
+to `.env`; both are gitignored. Never commit or print that key. The env var is
+`LMNR_PROJECT_API_KEY` (named in `.env.example`; keep the real value only in
+gitignored `.env`).
 
 Run a representative traced command:
 
@@ -666,6 +680,11 @@ moving, not your code (TB-22).
   file** at the path (`Path.is_file()`); a directory, unreadable / non-UTF-8 /
   invalid JSON manifest, or a write failure is a hard stop (`fatal freeze error`,
   exit 1) — not a traceback and not a silent re-discover (S23 / PR #87).
+  **Write-once includes an empty first write:** if discovery filters exclude every
+  session (e.g. an overly narrow `--since`), the manifest is still pinned with
+  `count: 0`, and later replays analyze nothing until you delete or rewrite the
+  file on purpose. Confirm the first-write Summary session count before treating
+  the path as a durable pin.
   - **Manifest v2 + freeze-time census (TB-37).** New freezes write
     `toolbench-freeze-2` and, when the freeze-time census succeeded, persist it
     under a `census` key together with its subagent-population filter. Replay then
@@ -742,8 +761,11 @@ With `--run-manifest`, the Summary also emits a **Run cache tokens** block
   - matched no entries: feat/missing-branch
 ```
 
-Attribution is **per entry** by `gitBranch`, not per session. `unattributed`
-is spillover inside candidate sessions (sessions with ≥1 entry on a run
+Attribution is **per entry** by `gitBranch`, not per session. A manifest
+`worktrees` list (if present) is ignored for folding. The per-ticket line
+divides by `--tickets N` when that flag is set; otherwise by
+`len(manifest.tickets)` (`RunManifest.ticket_count`). `unattributed` is
+spillover inside candidate sessions (sessions with ≥1 entry on a run
 branch) — not corpus-wide `main`. `detached-HEAD` is usage stamped
 `gitBranch="HEAD"` (a detached checkout): it cannot match any manifest
 branch, so it is **named and never folded into the run total** (TB-28).
@@ -781,12 +803,15 @@ line means the run headline may understate what the orchestration spent.
 | `--freeze` replay shows "Historical denominator" | Manifest v2 carried a freeze-time census (TB-37) | Expected. Fractions are archive size at freeze time, not today. Do not treat them as a live census. |
 | `--freeze` replay still says fractions unavailable | Manifest has no usable `census` (v1, freeze-time census failure, legacy v2 without population metadata, or replay changed `--exclude-subagents`) | Expected. Use the same subagent filter as the freeze; rewrite a legacy freeze on current `main` if you want historical fractions. |
 | `--freeze` exits 1 with `fatal freeze error` / traceback used to escape | Path is a directory, unreadable, non-UTF-8, or invalid JSON; or the first-write could not create the file | Point `--freeze` at a JSON *file* path (create parent dirs if needed). Same contract as a bad `--run-manifest` (S23 / PR #87). |
+| `--freeze` replay always analyzes zero sessions after a "successful" first write | First write happened while filters excluded every session (`count: 0`); write-once then permanently pins the empty set | Delete or intentionally rewrite the manifest after widening `--since` / `--project` / other filters. Check the first-write Summary session count before reusing the path. |
 | Complexity gate fails a function you only moved / renamed | Identity is `(path, qualified name)`; a rename looks like a new function | Reduce it under 10, or land the move with a real simplification. `# noqa: C901` will not hide it. |
 | Complexity gate is silent on a hotspot you expected to fail | Only `src/` and `tests/` `*.py` changed vs `--base` are measured; files outside that scope, or unchanged files, are ignored | Diff against the intended base (`origin/main` locally; CI uses the PR base / pre-push SHA). Confirm the path is under `src/` or `tests/`. |
-| Local complexity gate cannot find `--base` | Shallow clone or missing remote-tracking ref | `git fetch origin main` (or deepen the clone). CI sets `fetch-depth: 0` for the same reason. |
+| Local complexity gate cannot find `--base` | Shallow clone or missing remote-tracking ref | `git fetch origin main` (or deepen the clone). The `gate` job in `ci.yml` sets `fetch-depth: 0` for the same reason; the `tracing` job stays shallow. |
 | Agent Breakdown ratios look incomparable across agents | `--limit` truncates in whole-archive recency order (S41) | Read the `sampled` column and the uneven-sampling line. Compare across agents only when that line is absent. |
 | `toolbench` / `-m toolbench.passive` fails from `~` with a system python | The checkout's venv (with the editable install) isn't active | Use `uv run --project ~/tool-benchmarks toolbench passive ...` from any cwd; inside the repo, `uv run toolbench ...` or `uv run python -m toolbench.passive` both work. |
 | `corpus/manifest.json` disappeared after pulling the src-layout change | The manifest now ships inside the package (`src/toolbench/corpus/manifest.json`); the corpus copy is generated / gitignored | Re-run `corpus/vendor.sh` (idempotent — skips existing clones); it copies the packaged manifest back into `corpus/`. Default trial provisioning already uses the packaged pin (#78), so a missing or stale corpus copy no longer changes trial SHAs unless you pass a custom `manifest_path`. |
+| `tests/test_complex_fixtures.py` always skips locally | Gated behind `TOOLBENCH_CORPUS_TESTS` (needs vendored corpus + `npm`/`cargo`/venv) | Run `corpus/vendor.sh`, then `TOOLBENCH_CORPUS_TESTS=1 uv run pytest -q tests/test_complex_fixtures.py`. CI coverage is `.github/workflows/corpus.yml`, not the `gate` job — see [`EVALUATION.md`](EVALUATION.md). |
+| Corpus workflow did not run after editing `shell_safety.py` | Path filter lists `complex.py` / `complex_runner.py` / corpus trees / the fixture test / the workflow — not `shell_safety.py` | Expected. Audit-only changes are covered by `tests/test_shell_safety.py` in the hermetic gate; trigger corpus CI only when defect fixtures or provision paths move. |
 | Complex deps cache looks rebuilt from a newer corpus commit than the trial | Pre-#99 `ensure_deps` copied npm manifests / ran warmups at corpus `HEAD` while the trial tree stayed on the packaged SHA | Current code pins both paths to the manifest SHA (`git show` / archived warmup tree). Clear the affected `vendor-cache-<uid>/<repo>/` leaf and re-run `ensure_deps` on current `main`. |
 | Complex oracles look wrong after a packaged-manifest SHA bump (pre-#102) | Existence-based `target.exists()` skip left stale `node_modules` while trials archived the new SHA | Current code stamps `.manifest-sha` and rebuilds on drift/missing stamp (#102). Re-run `ensure_deps` on current `main`; legacy unstamped leaves rebuild once automatically. |
 | Summary cache read ↓ but creation ↑ by ~the same | Prefix-sharing moved cost between buckets (S39/S40) | Not a win. Compare read **and** creation together; read alone misleads. |
@@ -833,7 +858,9 @@ working tree. Change the budget in `complexity_gate.py`, not in `pyproject.toml`
 Exit code is 1 only when there are errors; warnings still exit 0 and print
 GitHub Actions annotations (`::error` / `::warning`). Override locally with
 `--threshold` / `--warning-delta` if you need to reproduce a narrower check —
-CI uses the defaults.
+CI uses the defaults. Optional `--root` points the comparison at a checkout
+other than cwd; `--ruff` selects the Ruff executable (default `ruff` on
+`PATH`).
 
 The Ruff rule set is also pinned explicitly in `pyproject.toml` rather than
 inherited from Ruff's defaults (#120). Ruff 0.16 expanded its default set from
@@ -854,11 +881,19 @@ The pytest command must collect every test, including module-level `test_*`
 functions that `unittest discover` silently misses (S31).
 
 GitHub Actions runs that same gate on every pull request and every push to
-`main` (`.github/workflows/ci.yml`: `uv sync --frozen --python 3.13`, then
-Ruff / complexity regression / mypy strict / pytest). PRs compare with the
-pull request's base SHA; pushes compare with the pre-push SHA. The workflow
-fetches full Git history so both commits are available. It remains least-privilege
-(`permissions: contents: read`) and does not broaden the gate (no
+`main` via the `gate` job in `.github/workflows/ci.yml` (`uv sync --frozen
+--python 3.13`, then Ruff / complexity regression / mypy strict / pytest). PRs
+compare with the pull request's base SHA; pushes compare with the pre-push
+SHA. Only `gate` fetches full Git history (`fetch-depth: 0`) so the complexity
+base resolves; the sibling `tracing` job uses a shallow checkout, installs
+`--extra tracing`, asserts `lmnr` is importable, and re-runs pytest so the
+optional-tracing skip is not the only coverage. Corpus fixture acceptance
+lives in a separate workflow
+([`.github/workflows/corpus.yml`](.github/workflows/corpus.yml): weekly, on
+demand, and on corpus-touching PRs). For the local opt-in command and the exact
+path filter, see [`EVALUATION.md`](EVALUATION.md) (`TOOLBENCH_CORPUS_TESTS=1`).
+The workflows remain least-privilege
+(`permissions: contents: read`) and do not broaden the gate (no
 `ruff format --check`, no mypy over `tools/`). `[tool.mypy]` in
 `pyproject.toml` pins `files` + `strict` to the same scope, so a bare local
 `uv run mypy` mirrors CI. Design:

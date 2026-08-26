@@ -64,9 +64,14 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 - **S10 — index-source policy.** `--index-source auto` tries AgentsView
   first and falls back to raw scanning (recording the reason) if the CLI is
   missing or exits nonzero; `agentsview` is strict and errors clearly;
-  `raw` uses the filesystem only. The fallback is not limited to what a single
-  `--limit 1` health probe can see: a daemon that answers the probe and then
-  breaks during the pagination that follows -- a nonzero exit, a hang
+  `raw` uses the filesystem only. Every `agentsview` subprocess is bounded by
+  `AGENTSVIEW_TIMEOUT_S` (60s in `sources.py`); a hang raises `AgentsViewTimeout`
+  (TB-32). Operators override that ceiling with `--agentsview-timeout SECONDS`
+  (TB-39; `0` = unbounded / `timeout=None`). The Summary names the ceiling only
+  when it truncated the corpus (≥1 `export_timeout` skip) or the run was
+  unbounded — a clean bounded run stays silent. The fallback is not limited to
+  what a single `--limit 1` health probe can see: a daemon that answers the probe
+  and then breaks during the pagination that follows -- a nonzero exit, a hang
   (`AgentsViewTimeout`, TB-32), or a schema-invalid listing payload
   (`MalformedAgentsViewResponse` / `ValueError`: invalid JSON, non-object
   payload, `sessions` not a list, row missing required `id`/`agent`/`project`,
@@ -77,7 +82,8 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   two (TB-38; TB-22's identity/fingerprint precedent is why nothing is spliced).
   The `auto` health probe validates that same listing contract, so a zero-exit
   but schema-invalid `--limit 1` response falls back at the probe rather than
-  entering pagination. A
+  entering pagination. Mid-scan, a hung per-session `export` skips that session
+  as `EXPORT_TIMEOUT` and continues. A
   source that vanishes outright mid-discovery (`FileNotFoundError` — the
   binary itself disappears) keeps its narrower, pre-existing handling: a named
   `MISSING_SOURCE` skip and an unavailable census, no raw rescan, since a
@@ -88,18 +94,21 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 - **S34 — skips carry a typed reason, not stringified prose.** Every skipped
   session is a `SkipRecord(session_id, agent, reason: SkipReason, detail)`, where
   `SkipReason` is a `StrEnum` — `MISSING_SOURCE` / `UNKNOWN_SCHEMA` /
-  `NON_TRANSCRIPT` / `DECODE_ERROR` / `EXPORT_FAILED`. The reason is decided where
-  the evidence lives, not by regex on the report: `AgentsViewLoader.lines` raises a
-  distinct `MissingSourceExport` (a flat `RuntimeError` sibling of
-  `NonTranscriptExport`, **not** a subclass — a gone file and a binary file are
-  different diagnoses) when export stderr matches `source file not found`; every
-  other non-zero export stays a plain `RuntimeError` → `EXPORT_FAILED`.
-  `classify_skip` maps each caught exception type to its `SkipReason` one frame
-  after the raise, before the type information is lost; `skip_record_for` stamps it
-  with the ref's identity; `tally_skips` answers "how many sessions have no parser?"
-  as `tally[UNKNOWN_SCHEMA]` with no prose parsing. Mirrors `UsageProvenance` (S29):
-  type the absence rather than stringify it. `detail` preserves the original message
-  for `--verbose`/sidecar output but is never parsed to recover `reason` (TB-23).
+  `NON_TRANSCRIPT` / `DECODE_ERROR` / `EXPORT_FAILED` / `EXPORT_TIMEOUT`. The
+  reason is decided where the evidence lives, not by regex on the report:
+  `AgentsViewLoader.lines` raises a distinct `MissingSourceExport` (a flat
+  `RuntimeError` sibling of `NonTranscriptExport`, **not** a subclass — a gone
+  file and a binary file are different diagnoses) when export stderr matches
+  `source file not found`; every other non-zero export stays a plain
+  `RuntimeError` → `EXPORT_FAILED`; a hung call raises `AgentsViewTimeout` →
+  `EXPORT_TIMEOUT` (`export_timeout` in the histogram). `classify_skip` maps each
+  caught exception type to its `SkipReason` one frame after the raise, before the
+  type information is lost; `skip_record_for` stamps it with the ref's identity;
+  `tally_skips` answers "how many sessions have no parser?" as
+  `tally[UNKNOWN_SCHEMA]` with no prose parsing. Mirrors `UsageProvenance` (S29):
+  type the absence rather than stringify it. `detail` preserves the original
+  message for `--verbose`/sidecar output but is never parsed to recover `reason`
+  (TB-23).
 
 ## Passive analyzer — `src/toolbench/passive.py` (+ `reducer.py` / `report.py` / `freeze.py`)
 
@@ -112,8 +121,10 @@ and re-exports the public symbols historical imports expect.
   reducers and report counters live globally (`Reducer` in `reducer.py`).
 - **S12 — CLI.** Flags: `--agent`, `--all | --project`, `--since`,
   `--date-from`, `--date-to`, `--out`, `--limit`, `--exclude-subagents`,
-  `--index-source`, `--verbose`, `--freeze`, `--run-manifest`, `--tickets`;
-  default scope `--agent all --all`.
+  `--index-source`, `--agentsview-timeout`, `--verbose`, `--freeze`,
+  `--run-manifest`, `--tickets`; default scope `--agent all --all`.
+  `--agentsview-timeout` defaults to `AGENTSVIEW_TIMEOUT_S` (60.0); `0` means
+  unbounded; negatives are rejected at parse (TB-39).
 - **S13 — subagents.** Included by default; `--exclude-subagents` drops refs
   with `SessionRef.is_subagent` set at discovery. Raw discovery attributes
   project as the first path segment under the session root and sets the flag
@@ -193,7 +204,9 @@ and re-exports the public symbols historical imports expect.
   (<V> vanished since freeze)`, with their ids listed under `--verbose` via the S35
   skip detail. Over an unchanged corpus a replay is byte-identical (the fingerprint
   line included); when the tail has moved, the vanished count names the mechanism
-  rather than letting the delta pass as code (TB-22).
+  rather than letting the delta pass as code (TB-22). Write-once also pins an
+  empty discovery: if filters exclude every session on the first write, later
+  replays analyze nothing until the operator deletes or rewrites the manifest.
   - **TB-37 — manifest format v2 persists the freeze-time census.** `MANIFEST_VERSION`
     bumped `toolbench-freeze-1` -> `toolbench-freeze-2`. A freeze pins the REF LIST,
     not the archive it was drawn from, so TB-22/TB-33 shipped replay with a
@@ -278,8 +291,13 @@ and re-exports the public symbols historical imports expect.
   invariant. `unattributed` is the usage on non-run branches **within candidate
   sessions** (those with >=1 entry on a run branch) — the straddle spillover;
   scoped corpus-wide it would be dominated by unrelated `main` work. A manifest
-  branch matching zero entries is reported, never a silent zero (S23/S38). The run
-  section renders read + creation together, normalized per ticket, as a Summary
+  branch matching zero entries is reported, never a silent zero (S23/S38). An
+  empty or missing `branches` list is `MalformedRunManifest` (exit 1) — a run
+  with no branch set would attribute nothing. Optional manifest `worktrees` is
+  accepted and stored but unused for attribution (branches-only; TB-28 rejected
+  cwd-based membership). The run section renders read + creation together,
+  normalized per ticket (`--tickets N` when set, else `len(manifest.tickets)`;
+  `--tickets` alone is a no-op; `--tickets 0` is rejected at parse), as a Summary
   caveat — never a ranking column (S19). `.lattice/orchestration/agents.md` cannot
   serve as the manifest: it discards its Branch column on run completion (TB-27;
   builds on the session-grain sums of S39/TB-26).
@@ -357,12 +375,11 @@ and re-exports the public symbols historical imports expect.
   imports nothing third-party by default; the project is uv-managed
   (`pyproject.toml` + `uv.lock`, empty runtime deps, optional `tracing` extra
   that pulls in `lmnr` for opt-in Laminar CLI observability — not required for
-  the gate or hermetic suite). The `dev` group holds `ruff`/`mypy`/`pytest`
-  plus optional `logfire` for parallel-run tooling (also not imported by the
-  shipped package). Real console processes may wrap subcommands in
-  `toolbench.tracing.run_traced` when `TOOLBENCH_TRACING=1` and the extra /
-  project key are present; programmatic `main([...])` calls and
-  `worktrees --hook` stay untraced.
+  the gate or hermetic suite). The `dev` group holds only the gate tools
+  (`ruff` / `mypy` / `pytest`); it does not include `logfire` (#104). Real
+  console processes may wrap subcommands in `toolbench.tracing.run_traced`
+  when `TOOLBENCH_TRACING=1` and the extra / project key are present;
+  programmatic `main([...])` calls and `worktrees --hook` stay untraced.
 - **S21 — entry points.** Runnable as `uv run toolbench passive` /
   `uv run toolbench probe` / `uv run toolbench worktrees` (unified console
   script via `cli.py`) or `uv run python -m toolbench.passive` /
@@ -376,13 +393,20 @@ and re-exports the public symbols historical imports expect.
   `uv run mypy --strict src/toolbench tests`, and the full pytest suite are
   green before any PR. The complexity gate (`src/toolbench/complexity_gate.py`)
   compares Ruff `C901` scores for changed `src/` and `tests/` Python files
-  against a Git baseline by `(path, qualified name)`. Threshold defaults to 10
-  (`[tool.ruff.lint.mccabe] max-complexity`): a new function above 10, a
-  function crossing 10, or a legacy hotspot that increases all fail; an
-  increase of ≥2 that stays ≤10 is a warning only. `# noqa: C901` does not
-  hide a symbol (`--ignore-noqa`). CI uses the PR base SHA (or the pre-push
-  SHA) with `fetch-depth: 0`. Renaming/moving a function changes its identity,
-  so a moved hotspot above 10 is treated as new.
+  against a Git baseline by `(path, qualified name)`. The sole budget is
+  `DEFAULT_THRESHOLD = 10` (plus `--warning-delta 2`) in that module — there
+  is deliberately no `[tool.ruff.lint.mccabe]` block in `pyproject.toml`,
+  because `ruff check .` does not select `C901` and a `max-complexity` key
+  there would be inert (#112). Optional CLI flags: `--root` (default cwd),
+  `--ruff` (Ruff executable path). `[tool.ruff.lint] select` is pinned explicitly
+  so a Ruff default expansion cannot silently grow the gate (#120); widen it
+  only after triaging findings. A new function above 10, a function crossing
+  10, or a legacy hotspot that increases all fail; an increase of ≥2 that
+  stays ≤10 is a warning only. `# noqa: C901` does not hide a symbol
+  (`--ignore-noqa`). The `gate` job in `.github/workflows/ci.yml` uses the PR
+  base SHA (or the pre-push SHA) with `fetch-depth: 0`; the sibling `tracing`
+  job is shallow and runs pytest only. Renaming/moving a function changes its
+  identity, so a moved hotspot above 10 is treated as new.
 - **S23 — error handling.** Empty session selection → clear message,
   exit 0. Missing selected raw root → exit 1 for a strict source; but
   `--agent all --index-source auto` continues with other sources and
