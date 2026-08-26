@@ -327,7 +327,8 @@ threshold rather than pass it. Verdict-bearing git failures raise
 `WorktreeProbeFailed` on the terminal path; `--hook` swallows every failure and
 exits 0 (a broken SessionStart reporter must not tax every session). `--hook`
 and `--reclaimable-only` are mutually exclusive output modes. The hook speaks
-only on `startup` / `resume` (`compact` is gated so long sessions do not re-nag).
+only on `startup` / `resume` (`HOOK_SOURCES`); `compact` / `clear` / `fork` stay
+silent so long sessions and clear/fork transitions do not re-nag.
 
 ## Status
 
@@ -409,9 +410,12 @@ Source-of-truth documents:
 - [`benchmarks/harbor/toolbench-complex/README.md`](benchmarks/harbor/toolbench-complex/README.md)
   — Harbor packaging for selected complex probes (WIDS D2 canary).
 - [`.claude/skills/cache-token-metrics/SKILL.md`](.claude/skills/cache-token-metrics/SKILL.md)
-  — operator recipe for per-run cache-token diffs (S39).
+  — operator recipe for per-run cache-token diffs via `--run-manifest` / `--tickets`
+  (S40; session-grain totals alone are S39).
 - [`.claude/skills/laminar/SKILL.md`](.claude/skills/laminar/SKILL.md)
-  — Laminar instrumentation / CLI / SQL guidance for the optional `tracing` extra.
+  — generic Laminar instrumentation / CLI / SQL guidance. Toolbench's opt-in
+  contract (`tracing` extra + `TOOLBENCH_TRACING=1` + `LMNR_PROJECT_API_KEY`)
+  lives in [Optional Laminar tracing](#optional-laminar-tracing) / S20.
 
 ## Agents / targets
 
@@ -680,11 +684,13 @@ moving, not your code (TB-22).
   file** at the path (`Path.is_file()`); a directory, unreadable / non-UTF-8 /
   invalid JSON manifest, or a write failure is a hard stop (`fatal freeze error`,
   exit 1) — not a traceback and not a silent re-discover (S23 / PR #87).
-  **Write-once includes an empty first write:** if discovery filters exclude every
-  session (e.g. an overly narrow `--since`), the manifest is still pinned with
-  `count: 0`, and later replays analyze nothing until you delete or rewrite the
-  file on purpose. Confirm the first-write Summary session count before treating
-  the path as a durable pin.
+  **Empty discovery refuses the first write (#123):** if filters exclude every
+  session (e.g. an overly narrow `--since`), `passive` exits 1 with
+  `fatal freeze error: … refusing to write an empty freeze manifest` and leaves
+  no file behind — so write-once cannot silently pin `count: 0`. Widen the
+  selection (or drop `--freeze`) and retry. An *already-empty* manifest created
+  before that guard still replays (zero matches) and names
+  `Replaying frozen corpus` on the zero-match path.
   - **Manifest v2 + freeze-time census (TB-37).** New freezes write
     `toolbench-freeze-2` and, when the freeze-time census succeeded, persist it
     under a `census` key together with its subagent-population filter. Replay then
@@ -802,8 +808,10 @@ line means the run headline may understate what the orchestration spent.
 | `--freeze` replay reports vanished sessions | Frozen refs' transcripts aged out or AgentsView `source file not found` | Expected when the sliding window deletes mid-corpus. `--verbose` names them; rewrite the manifest only when you intentionally want a new pin. |
 | `--freeze` replay shows "Historical denominator" | Manifest v2 carried a freeze-time census (TB-37) | Expected. Fractions are archive size at freeze time, not today. Do not treat them as a live census. |
 | `--freeze` replay still says fractions unavailable | Manifest has no usable `census` (v1, freeze-time census failure, legacy v2 without population metadata, or replay changed `--exclude-subagents`) | Expected. Use the same subagent filter as the freeze; rewrite a legacy freeze on current `main` if you want historical fractions. |
-| `--freeze` exits 1 with `fatal freeze error` / traceback used to escape | Path is a directory, unreadable, non-UTF-8, or invalid JSON; or the first-write could not create the file | Point `--freeze` at a JSON *file* path (create parent dirs if needed). Same contract as a bad `--run-manifest` (S23 / PR #87). |
-| `--freeze` replay always analyzes zero sessions after a "successful" first write | First write happened while filters excluded every session (`count: 0`); write-once then permanently pins the empty set | Delete or intentionally rewrite the manifest after widening `--since` / `--project` / other filters. Check the first-write Summary session count before reusing the path. |
+| `--freeze` exits 1 with `fatal freeze error` / traceback used to escape | Path is a directory, unreadable, non-UTF-8, or invalid JSON; the first-write could not create the file; **or** discovery matched zero sessions so the empty write was refused (#123) | Point `--freeze` at a JSON *file* path (create parent dirs if needed). On `refusing to write an empty freeze manifest`, widen `--since` / `--project` / other filters (or drop `--freeze`) and retry — no file was written. Same hard-stop shape as a bad `--run-manifest` (S23 / PR #87). |
+| `--freeze` replay analyzes zero sessions and names `Replaying frozen corpus` | Manifest already exists with `count: 0` (pre-#123 empty pin, or a hand-written empty file) | Delete or intentionally rewrite the manifest after widening filters. Current first writes cannot create this shape. |
+| `--limit 0` (or a negative `--limit`) still analyzes one session | `--limit` is a plain `int`; truncation is checked *after* each append, so `len(refs) >= 0` (or `>=` a negative) trips only after the first ref | Pass a positive limit, or omit `--limit`. `--tickets` rejects non-positive values; `--limit` does not. |
+| SessionStart hook never finishes listing reclaimable trees on a busy machine | Tracked `.claude/settings.json` caps the hook at `timeout: 10`, while each linked tree may spend up to `GIT_TIMEOUT_S` (60s) on status / idle / size probes | Silence can be a budget miss, not "nothing reclaimable". Run `uv run toolbench worktrees` (or `--reclaimable-only`) outside SessionStart. |
 | Complexity gate fails a function you only moved / renamed | Identity is `(path, qualified name)`; a rename looks like a new function | Reduce it under 10, or land the move with a real simplification. `# noqa: C901` will not hide it. |
 | Complexity gate is silent on a hotspot you expected to fail | Only `src/` and `tests/` `*.py` changed vs `--base` are measured; files outside that scope, or unchanged files, are ignored | Diff against the intended base (`origin/main` locally; CI uses the PR base / pre-push SHA). Confirm the path is under `src/` or `tests/`. |
 | Local complexity gate cannot find `--base` | Shallow clone or missing remote-tracking ref | `git fetch origin main` (or deepen the clone). The `gate` job in `ci.yml` sets `fetch-depth: 0` for the same reason; the `tracing` job stays shallow. |

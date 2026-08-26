@@ -11,9 +11,10 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   repository root via `uv run`; use `uv sync` when explicit provisioning is
   needed. Runtime deps stay empty (stdlib-only by default); the optional
   `tracing` extra adds Laminar (`lmnr`) without changing the default install.
-  Console tracing also requires `TOOLBENCH_TRACING=1` (#104). The `dev` group
-  holds only the gate tools (`ruff` / `mypy` / `pytest`); `#104` removed
-  `logfire` from `dev`.
+  Console tracing also requires `TOOLBENCH_TRACING=1` (#104) and a present
+  `LMNR_PROJECT_API_KEY` (named in `.env.example`; see README Optional Laminar
+  tracing). The `dev` group holds only the gate tools (`ruff` / `mypy` /
+  `pytest`); `#104` removed `logfire` from `dev`.
 - Before a PR, run `uv run ruff check .`,
   `uv run python -m toolbench.complexity_gate --base origin/main`,
   `uv run mypy --strict src/toolbench tests`, and `uv run pytest -q`. Optional
@@ -109,11 +110,11 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   and matches the replay's `--exclude-subagents` choice. A v1 manifest, a v2
   write without a census, a legacy v2 census missing that key, or a mismatched
   subagent filter each leave fractions unavailable and name the reason.
-  Unreadable / malformed / non-UTF-8 freeze paths, a directory at the path, or
-  a write failure are hard stops (`fatal freeze error`, exit 1) — not
-  tracebacks (S23 / PR #87). An empty first write (filters exclude every
-  session) still pins `count: 0`; delete or rewrite the manifest before
-  expecting later runs to rediscover.
+  Unreadable / malformed / non-UTF-8 freeze paths, a directory at the path, a
+  write failure, or a first `--freeze` whose discovery matched zero sessions
+  are hard stops (`fatal freeze error`, exit 1) — not tracebacks (S23 / PR #87;
+  empty-write refuse #123). No empty manifest is written; widen filters and
+  retry. An already-empty file still replays as a zero-match corpus.
 - `ensure_deps` / `provision_worktree` default to the **packaged** manifest
   (`src/toolbench/corpus/manifest.json`); custom corpora must pass their own
   manifest explicitly so a stale generated `corpus/manifest.json` cannot change

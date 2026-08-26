@@ -204,9 +204,12 @@ and re-exports the public symbols historical imports expect.
   (<V> vanished since freeze)`, with their ids listed under `--verbose` via the S35
   skip detail. Over an unchanged corpus a replay is byte-identical (the fingerprint
   line included); when the tail has moved, the vanished count names the mechanism
-  rather than letting the delta pass as code (TB-22). Write-once also pins an
-  empty discovery: if filters exclude every session on the first write, later
-  replays analyze nothing until the operator deletes or rewrites the manifest.
+  rather than letting the delta pass as code (TB-22). An empty discovery on the
+  first write is refused (#123): `passive` exits 1 with
+  `fatal freeze error: … refusing to write an empty freeze manifest` and does
+  not create the file, so write-once cannot silently pin `count: 0`. An
+  already-empty manifest (pre-#123 or hand-written) still replays as a
+  zero-match corpus and names the freeze provenance on that path.
   - **TB-37 — manifest format v2 persists the freeze-time census.** `MANIFEST_VERSION`
     bumped `toolbench-freeze-1` -> `toolbench-freeze-2`. A freeze pins the REF LIST,
     not the archive it was drawn from, so TB-22/TB-33 shipped replay with a
@@ -378,7 +381,7 @@ and re-exports the public symbols historical imports expect.
   the gate or hermetic suite). The `dev` group holds only the gate tools
   (`ruff` / `mypy` / `pytest`); it does not include `logfire` (#104). Real
   console processes may wrap subcommands in `toolbench.tracing.run_traced`
-  when `TOOLBENCH_TRACING=1` and the extra / project key are present;
+  when `TOOLBENCH_TRACING=1` and the extra / `LMNR_PROJECT_API_KEY` are present;
   programmatic `main([...])` calls and `worktrees --hook` stay untraced.
 - **S21 — entry points.** Runnable as `uv run toolbench passive` /
   `uv run toolbench probe` / `uv run toolbench worktrees` (unified console
@@ -413,12 +416,14 @@ and re-exports the public symbols historical imports expect.
   reports skipped roots. Per-session parse failures (`OSError`,
   `RuntimeError` including `NonTranscriptExport`, and `UnicodeDecodeError`)
   demote that session into skipped roots and continue the corpus scan —
-  one bad export must not abort the run. Bad *manifest* paths are hard stops
+  one bad export must not abort the run.   Bad *manifest* paths / empty first freezes are hard stops
   (exit 1 with a clear stderr message, no traceback): a malformed /
   non-UTF-8 / unreadable `--freeze` or `--run-manifest` file, a `--freeze`
-  path that exists but is not a regular file (e.g. a directory), or an
+  path that exists but is not a regular file (e.g. a directory), an
   `OSError` while writing a new freeze manifest (`MalformedFreezeManifest`
-  from `freeze.py`; same shape as `MalformedRunManifest`).
+  from `freeze.py`; same shape as `MalformedRunManifest`), or a first
+  `--freeze` write whose discovery matched zero sessions (refuses the empty
+  pin; #123).
 
 ## Worktree reclaim — `src/toolbench/worktrees.py`
 
