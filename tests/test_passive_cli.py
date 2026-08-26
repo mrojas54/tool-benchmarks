@@ -1084,6 +1084,37 @@ class CorpusFreezeMainTests(unittest.TestCase):
             self.assertIn("empty freeze manifest", err.getvalue())
             self.assertFalse(Path(manifest).exists())
 
+    def test_refuses_to_write_subagent_only_freeze_with_exclude_subagents(self) -> None:
+        """`--exclude-subagents` must not pin a non-empty manifest that scans zero sessions.
+
+        Discovery still yields subagent refs, so the pre-filter empty guard from
+        57f13b5 passes while every ref is dropped before scanning -- replay then
+        analyzes nothing forever with exit 0.
+        """
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "projects"
+            project = root / "proj"
+            subagents = project / "session-parent" / "subagents"
+            subagents.mkdir(parents=True)
+            shutil.copy(FIXTURES / "sample.jsonl", subagents / "child.jsonl")
+            manifest = str(Path(tmp) / "freeze.json")
+            argv = [
+                "--index-source",
+                "raw",
+                "--all",
+                "--freeze",
+                manifest,
+                "--exclude-subagents",
+            ]
+            err = io.StringIO()
+            with redirect_stderr(err):
+                code = main(argv, root=str(root))
+            self.assertEqual(code, 1)
+            self.assertIn("fatal freeze error", err.getvalue())
+            self.assertIn("empty freeze manifest", err.getvalue())
+            self.assertIn("subagent sessions", err.getvalue())
+            self.assertFalse(Path(manifest).exists())
+
     def test_replay_empty_freeze_names_provenance_on_zero_match(self) -> None:
         """Replaying an already-empty freeze must say so on the zero-match path."""
         with TemporaryDirectory() as tmp:

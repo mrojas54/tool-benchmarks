@@ -629,19 +629,28 @@ def _resolve_corpus(
             print(f"toolbench.passive: fatal source error: {exc}", file=sys.stderr)
             return None
         if freeze_path is not None:
-            if not refs:
-                detail = (
-                    f"toolbench.passive: fatal freeze error: discovery matched zero "
-                    f"sessions; refusing to write an empty freeze manifest to "
-                    f"{freeze_path}."
-                )
-                if census.archive_total > 0:
-                    detail += (
-                        f" The archive reports {census.archive_total} session(s) -- "
-                        "the selection filters likely excluded them all."
+            effective_refs = filter_subagents(refs) if args.exclude_subagents else refs
+            if not effective_refs:
+                if not refs:
+                    detail = (
+                        f"toolbench.passive: fatal freeze error: discovery matched zero "
+                        f"sessions; refusing to write an empty freeze manifest to "
+                        f"{freeze_path}."
                     )
+                    if census.archive_total > 0:
+                        detail += (
+                            f" The archive reports {census.archive_total} session(s) -- "
+                            "the selection filters likely excluded them all."
+                        )
+                    else:
+                        detail += " Widen the selection or drop --freeze."
                 else:
-                    detail += " Widen the selection or drop --freeze."
+                    detail = (
+                        f"toolbench.passive: fatal freeze error: discovery matched only "
+                        f"subagent sessions; refusing to write an empty freeze manifest "
+                        f"to {freeze_path}."
+                    )
+                    detail += " Drop --exclude-subagents or widen the selection."
                 print(detail, file=sys.stderr)
                 return None
             if not _write_freeze(freeze_path, refs, census, args):
