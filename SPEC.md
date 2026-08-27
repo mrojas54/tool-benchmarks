@@ -416,7 +416,7 @@ and re-exports the public symbols historical imports expect.
   reports skipped roots. Per-session parse failures (`OSError`,
   `RuntimeError` including `NonTranscriptExport`, and `UnicodeDecodeError`)
   demote that session into skipped roots and continue the corpus scan —
-  one bad export must not abort the run.   Bad *manifest* paths / empty first freezes are hard stops
+  one bad export must not abort the run. Bad *manifest* paths / empty first freezes are hard stops
   (exit 1 with a clear stderr message, no traceback): a malformed /
   non-UTF-8 / unreadable `--freeze` or `--run-manifest` file, a `--freeze`
   path that exists but is not a regular file (e.g. a directory), an
