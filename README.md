@@ -411,9 +411,12 @@ Source-of-truth documents:
 - [`benchmarks/harbor/toolbench-complex/README.md`](benchmarks/harbor/toolbench-complex/README.md)
   — Harbor packaging for selected complex probes (WIDS D2 canary).
 - [`.claude/skills/cache-token-metrics/SKILL.md`](.claude/skills/cache-token-metrics/SKILL.md)
-  — operator recipe for per-run cache-token diffs (S39).
+  — operator recipe for per-run cache-token diffs via `--run-manifest` / `--tickets`
+  (S40; session-grain totals alone are S39).
 - [`.claude/skills/laminar/SKILL.md`](.claude/skills/laminar/SKILL.md)
-  — Laminar instrumentation / CLI / SQL guidance for the optional `tracing` extra.
+  — generic Laminar instrumentation / CLI / SQL guidance. Toolbench's opt-in
+  contract (`tracing` extra + `TOOLBENCH_TRACING=1` + `LMNR_PROJECT_API_KEY`)
+  lives in [Optional Laminar tracing](#optional-laminar-tracing) / S20.
 
 ## Agents / targets
 
@@ -811,6 +814,8 @@ line means the run headline may understate what the orchestration spent.
 | `--freeze` exits 1 with `fatal freeze error` / traceback used to escape | Path is a directory, unreadable, non-UTF-8, or invalid JSON; or the first-write could not create the file | Point `--freeze` at a JSON *file* path (create parent dirs if needed). Same contract as a bad `--run-manifest` (S23 / PR #87). |
 | `--freeze` exits 1 with `discovery matched zero sessions; refusing to write an empty freeze manifest` | Selection filters excluded every session. Writing would have pinned the empty set: write-once plus `replaying = path.is_file()` means every later run replays that manifest instead of discovering, so the run would analyze nothing and still exit 0 (`24c4637`) | Expected, and **no manifest is written** — the path is safe to reuse. Widen `--since` / `--project` / other filters and re-run. When the archive is non-empty the message names its session count, so an over-narrow filter is distinguishable from a genuinely empty archive. |
 | `--freeze` exits 1 with `discovery matched only subagent sessions` | Every discovered ref is a subagent and `--exclude-subagents` drops them all *after* the freeze write, so the manifest would be non-empty yet replay to zero sessions forever at exit 0 — the zero-ref guard above cannot see this, because it tests what discovery returned, not what the scan will keep | Expected, and **no manifest is written**. Drop `--exclude-subagents`, or widen the selection to reach parent sessions. The message names the subagent count so an over-narrow selection is distinguishable from an archive that genuinely holds only children. |
+| `--limit 0` (or a negative `--limit`) still analyzes one session | `--limit` is a plain `int`; truncation is checked *after* each append, so `len(refs) >= 0` (or `>=` a negative) trips only after the first ref | Pass a positive limit, or omit `--limit`. `--tickets` rejects non-positive values; `--limit` does not. |
+| SessionStart hook never finishes listing reclaimable trees on a busy machine | Tracked `.claude/settings.json` caps the hook at `timeout: 10`, while each linked tree may spend up to `GIT_TIMEOUT_S` (60s) on status / idle / size probes | Silence can be a budget miss, not "nothing reclaimable". Run `uv run toolbench worktrees` (or `--reclaimable-only`) outside SessionStart. |
 | Complexity gate fails a function you only moved / renamed | Identity is `(path, qualified name)`; a rename looks like a new function | Reduce it under 10, or land the move with a real simplification. `# noqa: C901` will not hide it. |
 | Complexity gate is silent on a hotspot you expected to fail | Only `src/` and `tests/` `*.py` changed vs `--base` are measured; files outside that scope, or unchanged files, are ignored | Diff against the intended base (`origin/main` locally; CI uses the PR base / pre-push SHA). Confirm the path is under `src/` or `tests/`. |
 | Local complexity gate cannot find `--base` | Shallow clone or missing remote-tracking ref | `git fetch origin main` (or deepen the clone). The `gate` job in `ci.yml` sets `fetch-depth: 0` for the same reason; the `tracing` job stays shallow. |
