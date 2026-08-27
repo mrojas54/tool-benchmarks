@@ -207,15 +207,16 @@ and re-exports the public symbols historical imports expect.
   rather than letting the delta pass as code (TB-22). Because write-once plus
   `Path.is_file()` replay would make an empty first write pin the empty set
   forever — every later run replaying nothing and still exiting 0 — a first write
-  whose discovery matched **zero** refs is **refused**: no manifest is created and
-  the run exits 1 with `fatal freeze error: discovery matched zero sessions;
-  refusing to write an empty freeze manifest to <path>`, naming the archive's
-  session count when it is non-empty so an over-narrow filter is distinguishable
-  from a genuinely empty archive (`24c4637`). The guard is on what will be
-  **scanned**, not on what discovery returned: `--exclude-subagents` drops its refs
-  after the write, so a selection matching only subagent sessions is refused too
-  (`discovery matched only subagent sessions`, exit 1, no file) rather than pinning
-  a non-empty manifest that replays to zero sessions forever.
+  whose **post-`--exclude-subagents` scan set** is empty is **refused**: no
+  manifest is created and the run exits 1. Discovery matched **zero** refs yields
+  `fatal freeze error: discovery matched zero sessions; refusing to write an
+  empty freeze manifest to <path>`, naming the archive's session count when it is
+  non-empty so an over-narrow filter is distinguishable from a genuinely empty
+  archive (`24c4637`). The same guard applies the scan's subagent filter *before*
+  writing (#132), so a selection matching only subagent sessions under
+  `--exclude-subagents` is refused too (`discovery matched only subagent
+  sessions`, exit 1, no file) rather than pinning a non-empty manifest that
+  replays to zero sessions forever.
   - **TB-37 — manifest format v2 persists the freeze-time census.** `MANIFEST_VERSION`
     bumped `toolbench-freeze-1` -> `toolbench-freeze-2`. A freeze pins the REF LIST,
     not the archive it was drawn from, so TB-22/TB-33 shipped replay with a
@@ -412,7 +413,12 @@ and re-exports the public symbols historical imports expect.
   only after triaging findings. A new function above 10, a function crossing
   10, or a legacy hotspot that increases all fail; an increase of ≥2 that
   stays ≤10 is a warning only. `# noqa: C901` does not hide a symbol
-  (`--ignore-noqa`). The `gate` job in `.github/workflows/ci.yml` uses the PR
+  (`--ignore-noqa`). The base-relative gate fails only on regressions, so an
+  already-over-threshold function can linger indefinitely across green PRs; the
+  hermetic suite therefore pins the absolute set empty via
+  `test_no_first_party_function_exceeds_the_threshold` (#132) — a new function
+  above 10 fails `pytest` even when the base is clean. The `gate` job in
+  `.github/workflows/ci.yml` uses the PR
   base SHA (or the pre-push SHA) with `fetch-depth: 0`; the sibling `tracing`
   job is shallow and runs pytest only. Renaming/moving a function changes its
   identity, so a moved hotspot above 10 is treated as new.
