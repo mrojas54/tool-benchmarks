@@ -387,7 +387,7 @@ and re-exports the public symbols historical imports expect.
   the gate or hermetic suite). The `dev` group holds only the gate tools
   (`ruff` / `mypy` / `pytest`); it does not include `logfire` (#104). Real
   console processes may wrap subcommands in `toolbench.tracing.run_traced`
-  when `TOOLBENCH_TRACING=1` and the extra / project key are present;
+  when `TOOLBENCH_TRACING=1` and the extra / `LMNR_PROJECT_API_KEY` are present;
   programmatic `main([...])` calls and `worktrees --hook` stay untraced.
 - **S21 — entry points.** Runnable as `uv run toolbench passive` /
   `uv run toolbench probe` / `uv run toolbench worktrees` (unified console
@@ -422,12 +422,15 @@ and re-exports the public symbols historical imports expect.
   reports skipped roots. Per-session parse failures (`OSError`,
   `RuntimeError` including `NonTranscriptExport`, and `UnicodeDecodeError`)
   demote that session into skipped roots and continue the corpus scan —
-  one bad export must not abort the run. Bad *manifest* paths are hard stops
-  (exit 1 with a clear stderr message, no traceback): a malformed /
-  non-UTF-8 / unreadable `--freeze` or `--run-manifest` file, a `--freeze`
-  path that exists but is not a regular file (e.g. a directory), or an
-  `OSError` while writing a new freeze manifest (`MalformedFreezeManifest`
-  from `freeze.py`; same shape as `MalformedRunManifest`).
+  one bad export must not abort the run. Bad *manifest* paths — and a first
+  `--freeze` write that would pin nothing — are hard stops (exit 1 with a clear
+  stderr message, no traceback): a malformed / non-UTF-8 / unreadable
+  `--freeze` or `--run-manifest` file, a `--freeze` path that exists but is not
+  a regular file (e.g. a directory), an `OSError` while writing a new freeze
+  manifest (`MalformedFreezeManifest` from `freeze.py`; same shape as
+  `MalformedRunManifest`), or a first `--freeze` write whose scan set is empty
+  — discovery matched zero sessions, or matched only subagent sessions under
+  `--exclude-subagents` (S37).
 
 ## Worktree reclaim — `src/toolbench/worktrees.py`
 

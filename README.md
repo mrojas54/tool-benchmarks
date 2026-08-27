@@ -327,7 +327,9 @@ threshold rather than pass it. Verdict-bearing git failures raise
 `WorktreeProbeFailed` on the terminal path; `--hook` swallows every failure and
 exits 0 (a broken SessionStart reporter must not tax every session). `--hook`
 and `--reclaimable-only` are mutually exclusive output modes. The hook speaks
-only on `startup` / `resume` (`compact` is gated so long sessions do not re-nag).
+only on `startup` / `resume` (`HOOK_SOURCES`); every other source — `compact`,
+`clear`, `fork` — stays silent, so long sessions and clear/fork transitions do
+not re-nag.
 
 ## Status
 
@@ -680,11 +682,15 @@ moving, not your code (TB-22).
   file** at the path (`Path.is_file()`); a directory, unreadable / non-UTF-8 /
   invalid JSON manifest, or a write failure is a hard stop (`fatal freeze error`,
   exit 1) — not a traceback and not a silent re-discover (S23 / PR #87).
-  **Write-once includes an empty first write:** if discovery filters exclude every
-  session (e.g. an overly narrow `--since`), the manifest is still pinned with
-  `count: 0`, and later replays analyze nothing until you delete or rewrite the
-  file on purpose. Confirm the first-write Summary session count before treating
-  the path as a durable pin.
+  **Write-once refuses a pin that would replay to nothing.** Because replay
+  bypasses discovery, a manifest pinning an empty scan would answer "no sessions"
+  forever at exit 0 — indistinguishable from a corpus that really is empty. So the
+  first write is refused, with no file created and exit 1, in both cases where that
+  could happen: discovery matched **zero** sessions (e.g. an overly narrow
+  `--since`), or it matched **only subagent sessions** while `--exclude-subagents`
+  is set, which drops every ref after the write. The message names which case
+  applies — the first is fixed by widening filters, the second by dropping the
+  flag. An already-empty manifest on disk still replays as a zero-match corpus.
   - **Manifest v2 + freeze-time census (TB-37).** New freezes write
     `toolbench-freeze-2` and, when the freeze-time census succeeded, persist it
     under a `census` key together with its subagent-population filter. Replay then
