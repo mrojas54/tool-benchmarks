@@ -173,48 +173,58 @@ def read_escapes(calls: list[ToolCall], trial_root: Path) -> tuple[str, ...]:
     escapes: set[str] = set()
     for call in calls:
         if call.name == "Bash":
-            command = _bash_command(call)
-            if command is None:
-                # Unreadable Bash is already a gate violation via `arm_violations`;
-                # it carries no legible path, so it adds no read-scope signal here.
-                continue
-            for token in _bash_tokens(command):
-                if _bash_token_escapes(token, root):
-                    escapes.add(f"ReadEscape:Bash:{token}")
-            continue
-        if call.name.startswith(_SERENA_TOOL_PREFIX):
-            logical = call.name[len(_SERENA_TOOL_PREFIX) :]
+            escapes |= _bash_read_escapes(call, root)
         else:
-            logical = call.name
-        spec = _READ_PATH_ARG.get(logical)
-        if spec is None:
-            continue
-        key, default = spec
-        payload = _tool_input(call)
-        if payload is None:
-            continue
-        candidates: list[object] = [payload.get(key, default)]
-        if logical == "Glob":
-            # Glob's `path` defaults to "." (in-tree) but its `pattern` is the arg
-            # that actually reaches the filesystem: a glob pattern is a path with
-            # metacharacters, so an escaping literal prefix (`../corpus/**/*.ts`, an
-            # absolute pattern) reads outside the tree while `path` stays ".". The
-            # pattern is read RELATIVE TO `path`, so it must be resolved there before
-            # the containment check -- otherwise a legit `path="web/src",
-            # pattern="../*.ts"` (which stays inside the tree) is falsely voided.
-            pattern = payload.get("pattern")
-            if isinstance(pattern, str):
-                base = payload.get("path", ".")
-                base_str = base if isinstance(base, str) else "."
-                candidates.append(
-                    os.path.join(_expand_home(base_str), _expand_home(pattern))
-                )
-        for raw in candidates:
-            if not isinstance(raw, str):
-                continue
-            if _path_escapes(_expand_home(raw), root):
-                escapes.add(f"ReadEscape:{call.name}:{raw}")
+            escapes |= _structured_read_escapes(call, root)
     return tuple(sorted(escapes))
+
+
+def _bash_read_escapes(call: ToolCall, root: str) -> set[str]:
+    """Token-by-token tripwire over a full-shell Bash command -- not a shell parse."""
+    command = _bash_command(call)
+    if command is None:
+        # Unreadable Bash is already a gate violation via `arm_violations`;
+        # it carries no legible path, so it adds no read-scope signal here.
+        return set()
+    return {
+        f"ReadEscape:Bash:{token}"
+        for token in _bash_tokens(command)
+        if _bash_token_escapes(token, root)
+    }
+
+
+def _structured_read_escapes(call: ToolCall, root: str) -> set[str]:
+    """Resolve a structured read tool's explicit path argument and test containment."""
+    if call.name.startswith(_SERENA_TOOL_PREFIX):
+        logical = call.name[len(_SERENA_TOOL_PREFIX) :]
+    else:
+        logical = call.name
+    spec = _READ_PATH_ARG.get(logical)
+    if spec is None:
+        return set()
+    key, default = spec
+    payload = _tool_input(call)
+    if payload is None:
+        return set()
+    candidates: list[object] = [payload.get(key, default)]
+    if logical == "Glob":
+        # Glob's `path` defaults to "." (in-tree) but its `pattern` is the arg
+        # that actually reaches the filesystem: a glob pattern is a path with
+        # metacharacters, so an escaping literal prefix (`../corpus/**/*.ts`, an
+        # absolute pattern) reads outside the tree while `path` stays ".". The
+        # pattern is read RELATIVE TO `path`, so it must be resolved there before
+        # the containment check -- otherwise a legit `path="web/src",
+        # pattern="../*.ts"` (which stays inside the tree) is falsely voided.
+        pattern = payload.get("pattern")
+        if isinstance(pattern, str):
+            base = payload.get("path", ".")
+            base_str = base if isinstance(base, str) else "."
+            candidates.append(os.path.join(_expand_home(base_str), _expand_home(pattern)))
+    return {
+        f"ReadEscape:{call.name}:{raw}"
+        for raw in candidates
+        if isinstance(raw, str) and _path_escapes(_expand_home(raw), root)
+    }
 
 
 def _gate_prefixes(arm: ArmSpec) -> tuple[str, ...]:

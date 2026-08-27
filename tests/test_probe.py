@@ -1,8 +1,9 @@
 import json
 import tempfile
 import unittest
+from collections.abc import Iterator
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from toolbench import probe
 from toolbench.probe import (
@@ -20,6 +21,35 @@ from toolbench.probe import (
 
 FIXTURES = Path(__file__).parent / "fixtures"
 REPO_ROOT = Path(__file__).parent.parent
+
+
+def _mcp_tool_use_blocks() -> Iterator[tuple[Path, dict[str, Any]]]:
+    """Every `mcp__*` tool_use block across the JSONL fixtures, with its file.
+
+    Undecodable and non-object lines are skipped rather than counted: malformed-line
+    fixtures exist on purpose, and this walk is a lint over fixture CONTENT, not a
+    parser under test.
+    """
+    for path in sorted(FIXTURES.glob("*.jsonl")):
+        for raw in path.read_text().splitlines():
+            if not raw.strip():
+                continue
+            try:
+                entry = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(entry, dict):
+                continue
+            message = entry.get("message")
+            content = message.get("content") if isinstance(message, dict) else None
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "tool_use":
+                    continue
+                if not block.get("name", "").startswith("mcp__"):
+                    continue
+                yield path, block
 
 
 class ProbeSpecTests(unittest.TestCase):
@@ -267,33 +297,14 @@ class ToolArmSchemaTests(unittest.TestCase):
 
     def test_fixtures_never_invent_a_serena_parameter(self) -> None:
         offenders: list[str] = []
-        for path in sorted(FIXTURES.glob("*.jsonl")):
-            for raw in path.read_text().splitlines():
-                if not raw.strip():
-                    continue
-                try:
-                    entry = json.loads(raw)
-                except json.JSONDecodeError:
-                    continue  # malformed-line fixtures exist on purpose
-                if not isinstance(entry, dict):
-                    continue
-                message = entry.get("message")
-                content = message.get("content") if isinstance(message, dict) else None
-                if not isinstance(content, list):
-                    continue
-                for block in content:
-                    if not isinstance(block, dict) or block.get("type") != "tool_use":
-                        continue
-                    name = block.get("name", "")
-                    if not name.startswith("mcp__"):
-                        continue
-                    bare = name.rsplit("__", 1)[-1]
-                    allowed = self.ALLOWED.get(bare)
-                    if allowed is None:
-                        continue
-                    extra = set(block.get("input", {})) - allowed
-                    if extra:
-                        offenders.append(f"{path.name}:{block['id']} {bare} has {sorted(extra)}")
+        for path, block in _mcp_tool_use_blocks():
+            bare = block.get("name", "").rsplit("__", 1)[-1]
+            allowed = self.ALLOWED.get(bare)
+            if allowed is None:
+                continue
+            extra = set(block.get("input", {})) - allowed
+            if extra:
+                offenders.append(f"{path.name}:{block['id']} {bare} has {sorted(extra)}")
         self.assertEqual(offenders, [], "fixture uses a parameter serena does not accept")
 
     def test_every_spec_has_a_corpus_target(self) -> None:

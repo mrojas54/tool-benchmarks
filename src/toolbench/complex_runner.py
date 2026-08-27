@@ -208,26 +208,12 @@ def _mkdir_private(path: Path) -> None:
     path.mkdir(mode=0o700, exist_ok=True)
 
 
-def _assert_deps_base_safe(deps_base: Path, corpus_root: Path) -> None:
-    """Refuse a cache that leaks corpus source or that this user does not own.
+def _assert_no_shared_ancestor(cache: Path, corpus: Path, anchor: Path) -> None:
+    """`/` is the ONLY ancestor the cache and the corpus may share.
 
-    Called before any dep is built or symlinked. Rejects the literal cache leaf
-    before resolving either path, including dangling symlinks. Resolution still
-    catches a symlinked ancestor pointing back under the corpus as the real path
-    it is rather than the path it advertises.
+    Walking the cache's own ancestry (not the corpus's) is what catches a cache nested
+    under the corpus as well as the two merely sharing `$HOME` or `/tmp`.
     """
-    if deps_base.is_symlink():
-        raise UnsafeDepsCache(
-            f"dependency cache {deps_base.absolute()} is a symlink: refusing to "
-            "follow a replaceable cache base for dependency writes or trial reads"
-        )
-    cache = deps_base.resolve()
-    corpus = corpus_root.resolve()
-    anchor = Path(cache.anchor)
-
-    # The invariant: `/` is the ONLY ancestor the two may share. Walking the
-    # cache's own ancestry (not the corpus's) is what catches a cache nested
-    # under the corpus as well as the two merely sharing `$HOME` or `/tmp`.
     for ancestor in (cache, *cache.parents):
         if ancestor == anchor:
             continue
@@ -240,19 +226,24 @@ def _assert_deps_base_safe(deps_base: Path, corpus_root: Path) -> None:
                 f"the corpus checkout at the filesystem root."
             )
 
-    # A private leaf under a parent others can write is still swappable: they cannot
-    # read into it, but they can rename it away and leave their own in its place
-    # after the checks below pass -- defeating the ownership check rather than
-    # tripping it. Two conditions make a writable ancestor tolerable, and BOTH are
-    # needed:
-    #   - sticky: in a sticky dir, only an entry's owner may rename or delete it.
-    #   - owned by us or root: sticky exempts the DIRECTORY'S owner too, so a sticky
-    #     dir owned by an attacker can still be swapped.
-    # Together these admit exactly the real defaults -- Linux's root-owned 1777 /tmp
-    # and macOS's per-user 0700 /var/folders/... -- and refuse the rest.
+
+def _assert_ancestors_unswappable(cache: Path) -> None:
+    """Refuse a private leaf sitting under a parent another uid could swap.
+
+    They cannot read into it, but they can rename it away and leave their own in its
+    place after the leaf checks pass -- defeating the ownership check rather than
+    tripping it. Two conditions make a writable ancestor tolerable, and BOTH are needed:
+
+      - sticky: in a sticky dir, only an entry's owner may rename or delete it.
+      - owned by us or root: sticky exempts the DIRECTORY'S owner too, so a sticky
+        dir owned by an attacker can still be swapped.
+
+    Together these admit exactly the real defaults -- Linux's root-owned 1777 /tmp and
+    macOS's per-user 0700 /var/folders/... -- and refuse the rest.
+    """
     for ancestor in cache.parents:
         if not ancestor.exists():
-            continue  # created privately by _mkdir_private below
+            continue  # created privately by _mkdir_private in the caller
         st_ancestor = ancestor.stat()
         if not st_ancestor.st_mode & 0o022:
             continue
@@ -271,18 +262,13 @@ def _assert_deps_base_safe(deps_base: Path, corpus_root: Path) -> None:
                 f"cache after it is validated."
             )
 
-    if not cache.exists():
-        try:
-            _mkdir_private(deps_base)
-        except FileExistsError as exc:
-            raise UnsafeDepsCache(
-                f"dependency cache {deps_base.absolute()} changed while it was "
-                "being validated; refusing to follow it"
-            ) from exc
 
-    # Validate whatever is now there -- created or pre-existing alike. Checking the
-    # dir we just made is not redundant: it is what catches a hostile umask, or
-    # another uid winning a race to create the path first.
+def _assert_leaf_private(deps_base: Path, cache: Path) -> None:
+    """Validate whatever is now at the leaf -- created or pre-existing alike.
+
+    Checking the dir we just made is not redundant: it is what catches a hostile umask,
+    or another uid winning a race to create the path first.
+    """
     try:
         st = deps_base.lstat()
     except FileNotFoundError as exc:
@@ -311,6 +297,41 @@ def _assert_deps_base_safe(deps_base: Path, corpus_root: Path) -> None:
             f"(mode {st.st_mode & 0o777:03o}); another uid could plant a "
             f"node_modules or venv that the oracles then execute. Expected 700."
         )
+
+
+def _assert_deps_base_safe(deps_base: Path, corpus_root: Path) -> None:
+    """Refuse a cache that leaks corpus source or that this user does not own.
+
+    Called before any dep is built or symlinked. Rejects the literal cache leaf
+    before resolving either path, including dangling symlinks. Resolution still
+    catches a symlinked ancestor pointing back under the corpus as the real path
+    it is rather than the path it advertises.
+
+    Three checks, in order, each with its own helper: the two paths may share only the
+    filesystem root; no ancestor may let another uid swap the leaf; and the leaf itself
+    must be a directory this user privately owns.
+    """
+    if deps_base.is_symlink():
+        raise UnsafeDepsCache(
+            f"dependency cache {deps_base.absolute()} is a symlink: refusing to "
+            "follow a replaceable cache base for dependency writes or trial reads"
+        )
+    cache = deps_base.resolve()
+    corpus = corpus_root.resolve()
+
+    _assert_no_shared_ancestor(cache, corpus, Path(cache.anchor))
+    _assert_ancestors_unswappable(cache)
+
+    if not cache.exists():
+        try:
+            _mkdir_private(deps_base)
+        except FileExistsError as exc:
+            raise UnsafeDepsCache(
+                f"dependency cache {deps_base.absolute()} changed while it was "
+                "being validated; refusing to follow it"
+            ) from exc
+
+    _assert_leaf_private(deps_base, cache)
 
 
 def _deps_root(deps_base: Path, repo: str) -> Path:
@@ -581,8 +602,25 @@ def provision_worktree(
             "Remove it first."
         )
     dest.mkdir(parents=True, exist_ok=True)
-    # Export the pinned tree into `dest` as plain files: the archive carries no
-    # history and no object store, so nothing pre-defect is reachable afterward.
+    _export_pinned_tree(repo_path, sha, dest)
+    _apply_fixture(fixture_root, defect, dest, apply_defect=apply_defect)
+
+    # Symlinked before the commit so the links are part of the single initial add
+    # and `git status` stays clean. The targets live in the out-of-tree dep cache
+    # (`deps_base`), whose ancestry holds no corpus source -- committing the link
+    # exposes nothing, and following it upward reaches only other dependencies.
+    _link_deps(manifest[defect.repo], deps_base, defect.repo, dest)
+
+    _commit_initial_state(dest, branch, f"{defect.repo} @ {sha}")
+    return dest
+
+
+def _export_pinned_tree(repo_path: Path, sha: str, dest: Path) -> None:
+    """Export the pinned tree into `dest` as plain files.
+
+    The archive carries no history and no object store, so nothing pre-defect is
+    reachable afterward -- which is the whole isolation mechanism (C1).
+    """
     archive = subprocess.run(
         ["git", "-C", str(repo_path), "archive", sha],
         check=True,
@@ -595,6 +633,15 @@ def provision_worktree(
         capture_output=True,
     )
 
+
+def _apply_fixture(
+    fixture_root: Path,
+    defect: DefectSpec,
+    dest: Path,
+    *,
+    apply_defect: bool,
+) -> None:
+    """Apply the defect patch (unless provisioning the clean tree) and write PROMPT.md."""
     fixture_dir = _find_fixture_dir(fixture_root, defect)
     if apply_defect:
         patch_path = (fixture_dir / "defect.patch").resolve()
@@ -605,20 +652,17 @@ def provision_worktree(
             capture_output=True,
             text=True,
         )
-
     prompt_text = (fixture_dir / "prompt.md").read_text(encoding="utf-8")
     (dest / "PROMPT.md").write_text(prompt_text, encoding="utf-8")
 
-    # Symlinked before the commit so the links are part of the single initial add
-    # and `git status` stays clean. The targets live in the out-of-tree dep cache
-    # (`deps_base`), whose ancestry holds no corpus source -- committing the link
-    # exposes nothing, and following it upward reaches only other dependencies.
-    _link_deps(manifest[defect.repo], deps_base, defect.repo, dest)
 
-    # A fresh repo whose single commit IS the defect state. Identity is set on the
-    # commit invocation so provisioning needs no global git config. PROMPT.md is
-    # deliberately committed too, so `git status` stays clean rather than showing
-    # an untracked file that would itself invite `git status` (C1 in miniature).
+def _commit_initial_state(dest: Path, branch: str, message: str) -> None:
+    """A fresh repo whose single commit IS the defect state.
+
+    Identity is set on the commit invocation so provisioning needs no global git config.
+    PROMPT.md is deliberately committed too, so `git status` stays clean rather than
+    showing an untracked file that would itself invite `git status` (C1 in miniature).
+    """
     subprocess.run(
         ["git", "init", "-q", "-b", branch, str(dest)],
         check=True,
@@ -638,11 +682,10 @@ def provision_worktree(
             "commit",
             "-q",
             "-m",
-            f"{defect.repo} @ {sha}",
+            message,
         ],
         cwd=dest,
         check=True,
         capture_output=True,
         text=True,
     )
-    return dest

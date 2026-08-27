@@ -1,4 +1,10 @@
-"""Initialize optional, privacy-preserving tracing."""
+"""Initialize optional, privacy-preserving tracing.
+
+Tested by `tests/test_observability.py`, not a `test_setup_tracing.py`: coverage is
+named for the PACKAGE (`observability/`), not this module. Stated here because the
+`test_<module>.py` convention holds everywhere else in the suite, so its absence
+otherwise reads as a coverage gap rather than a naming one.
+"""
 
 from __future__ import annotations
 

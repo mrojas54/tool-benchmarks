@@ -327,8 +327,9 @@ threshold rather than pass it. Verdict-bearing git failures raise
 `WorktreeProbeFailed` on the terminal path; `--hook` swallows every failure and
 exits 0 (a broken SessionStart reporter must not tax every session). `--hook`
 and `--reclaimable-only` are mutually exclusive output modes. The hook speaks
-only on `startup` / `resume` (`HOOK_SOURCES`); `compact` / `clear` / `fork` stay
-silent so long sessions and clear/fork transitions do not re-nag.
+only on `startup` / `resume` (`HOOK_SOURCES`); every other source — `compact`,
+`clear`, `fork` — stays silent, so long sessions and clear/fork transitions do
+not re-nag.
 
 ## Status
 
@@ -684,11 +685,15 @@ moving, not your code (TB-22).
   file** at the path (`Path.is_file()`); a directory, unreadable / non-UTF-8 /
   invalid JSON manifest, or a write failure is a hard stop (`fatal freeze error`,
   exit 1) — not a traceback and not a silent re-discover (S23 / PR #87).
-  **Write-once includes an empty first write:** if discovery filters exclude every
-  session (e.g. an overly narrow `--since`), the manifest is still pinned with
-  `count: 0`, and later replays analyze nothing until you delete or rewrite the
-  file on purpose. Confirm the first-write Summary session count before treating
-  the path as a durable pin.
+  **Write-once refuses a pin that would replay to nothing.** Because replay
+  bypasses discovery, a manifest pinning an empty scan would answer "no sessions"
+  forever at exit 0 — indistinguishable from a corpus that really is empty. So the
+  first write is refused, with no file created and exit 1, in both cases where that
+  could happen: discovery matched **zero** sessions (e.g. an overly narrow
+  `--since`), or it matched **only subagent sessions** while `--exclude-subagents`
+  is set, which drops every ref after the write. The message names which case
+  applies — the first is fixed by widening filters, the second by dropping the
+  flag. An already-empty manifest on disk still replays as a zero-match corpus.
   - **Manifest v2 + freeze-time census (TB-37).** New freezes write
     `toolbench-freeze-2` and, when the freeze-time census succeeded, persist it
     under a `census` key together with its subagent-population filter. Replay then
@@ -807,7 +812,8 @@ line means the run headline may understate what the orchestration spent.
 | `--freeze` replay shows "Historical denominator" | Manifest v2 carried a freeze-time census (TB-37) | Expected. Fractions are archive size at freeze time, not today. Do not treat them as a live census. |
 | `--freeze` replay still says fractions unavailable | Manifest has no usable `census` (v1, freeze-time census failure, legacy v2 without population metadata, or replay changed `--exclude-subagents`) | Expected. Use the same subagent filter as the freeze; rewrite a legacy freeze on current `main` if you want historical fractions. |
 | `--freeze` exits 1 with `fatal freeze error` / traceback used to escape | Path is a directory, unreadable, non-UTF-8, or invalid JSON; or the first-write could not create the file | Point `--freeze` at a JSON *file* path (create parent dirs if needed). Same contract as a bad `--run-manifest` (S23 / PR #87). |
-| `--freeze` replay always analyzes zero sessions after a "successful" first write | First write happened while filters excluded every session (`count: 0`); write-once then permanently pins the empty set | Delete or intentionally rewrite the manifest after widening `--since` / `--project` / other filters. Check the first-write Summary session count before reusing the path. |
+| `--freeze` exits 1 with `discovery matched zero sessions; refusing to write an empty freeze manifest` | Selection filters excluded every session. Writing would have pinned the empty set: write-once plus `replaying = path.is_file()` means every later run replays that manifest instead of discovering, so the run would analyze nothing and still exit 0 (`24c4637`) | Expected, and **no manifest is written** — the path is safe to reuse. Widen `--since` / `--project` / other filters and re-run. When the archive is non-empty the message names its session count, so an over-narrow filter is distinguishable from a genuinely empty archive. |
+| `--freeze` exits 1 with `discovery matched only subagent sessions` | Every discovered ref is a subagent and `--exclude-subagents` drops them all *after* the freeze write, so the manifest would be non-empty yet replay to zero sessions forever at exit 0 — the zero-ref guard above cannot see this, because it tests what discovery returned, not what the scan will keep | Expected, and **no manifest is written**. Drop `--exclude-subagents`, or widen the selection to reach parent sessions. The message names the subagent count so an over-narrow selection is distinguishable from an archive that genuinely holds only children. |
 | `--limit 0` (or a negative `--limit`) still analyzes one session | `--limit` is a plain `int`; truncation is checked *after* each append, so `len(refs) >= 0` (or `>=` a negative) trips only after the first ref | Pass a positive limit, or omit `--limit`. `--tickets` rejects non-positive values; `--limit` does not. |
 | SessionStart hook never finishes listing reclaimable trees on a busy machine | Tracked `.claude/settings.json` caps the hook at `timeout: 10`, while each linked tree may spend up to `GIT_TIMEOUT_S` (60s) on status / idle / size probes | Silence can be a budget miss, not "nothing reclaimable". Run `uv run toolbench worktrees` (or `--reclaimable-only`) outside SessionStart. |
 | Complexity gate fails a function you only moved / renamed | Identity is `(path, qualified name)`; a rename looks like a new function | Reduce it under 10, or land the move with a real simplification. `# noqa: C901` will not hide it. |

@@ -65,10 +65,23 @@ def detect_parser(
     the window are skipped and NOT counted -- malformed accounting is the parser's
     job (S5), and counting here would charge a session twice.
     """
-    # Deliberately not `transcript.JsonLines`: the sniff has to keep every RAW
-    # line to replay it via `chain(buffered, lines)`, and the reader yields only
-    # decoded objects. The window `break` also sits between the blank check and
-    # the decode. Sharing the helper here would cost the replay, not just style.
+    # Deliberately not `transcript.JsonLines`, for two reasons -- the second measured,
+    # because this keeps getting re-filed as duplication worth removing:
+    #
+    #   1. The sniff has to keep every RAW line to replay it via `chain(buffered,
+    #      lines)`; the reader yields only decoded objects, so the replay is impossible
+    #      through it.
+    #   2. It would silently unbound the read. `JsonLines` counts an undecodable line
+    #      as malformed and skips it WITHOUT yielding, so a window counted over its
+    #      output never advances on garbage. Measured over a 1,000,000-line
+    #      undecodable blob: this loop raises `UnknownSchema` after 101 lines, while a
+    #      `JsonLines`-driven window reads all 1,000,000 and yields nothing. The
+    #      `window` here bounds TOTAL non-blank lines, which is the property
+    #      `test_detect_is_bounded_and_does_not_read_past_the_window` pins.
+    #
+    # `seen` therefore counts non-blank lines, decodable or not -- deliberately, since
+    # bounding the read is the point. Sharing the helper here would cost the replay and
+    # the bound, not just style.
     buffered: list[str] = []
     seen = 0
     for raw_line in lines:
@@ -93,7 +106,7 @@ def detect_parser(
             return claimed[0](), chain(buffered, lines)
 
     raise UnknownSchema(
-        f"no registered parser claimed any of the first {seen} decodable lines"
+        f"no registered parser claimed any of the first {seen} non-blank lines"
     )
 
 

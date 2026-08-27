@@ -290,6 +290,30 @@ def _list_argv(
     return argv
 
 
+def _validate_listing_row(index: int, row: object) -> None:
+    """Require `id` / `agent` / `project` on one listing row.
+
+    `project` must be a string but MAY be empty: AgentsView emits `""` for global and
+    archive sessions, and a non-empty requirement dropped Reasonix and every other
+    projectless session as malformed (pre-#80). `id` / `agent` stay non-empty.
+    """
+    if not isinstance(row, dict):
+        raise MalformedAgentsViewResponse(
+            f"agentsview session list row {index} must be a JSON object"
+        )
+    for field in ("id", "agent", "project"):
+        if field not in row:
+            raise MalformedAgentsViewResponse(
+                f"agentsview session list row {index} is missing required field `{field}`"
+            )
+        value = row[field]
+        if not isinstance(value, str) or (field != "project" and not value):
+            raise MalformedAgentsViewResponse(
+                f"agentsview session list row {index} field `{field}` "
+                f"must be {'a string' if field == 'project' else 'a non-empty string'}"
+            )
+
+
 def _decode_agentsview_list_payload(
     stdout: str, *, require_total: bool = False
 ) -> dict[str, Any]:
@@ -311,21 +335,7 @@ def _decode_agentsview_list_payload(
             "agentsview session list payload field `sessions` must be a list"
         )
     for index, row in enumerate(raw_sessions):
-        if not isinstance(row, dict):
-            raise MalformedAgentsViewResponse(
-                f"agentsview session list row {index} must be a JSON object"
-            )
-        for field in ("id", "agent", "project"):
-            if field not in row:
-                raise MalformedAgentsViewResponse(
-                    f"agentsview session list row {index} is missing required field `{field}`"
-                )
-            value = row[field]
-            if not isinstance(value, str) or (field != "project" and not value):
-                raise MalformedAgentsViewResponse(
-                    f"agentsview session list row {index} field `{field}` "
-                    f"must be {'a string' if field == 'project' else 'a non-empty string'}"
-                )
+        _validate_listing_row(index, row)
 
     raw_cursor = raw.get("next_cursor")
     if raw_cursor is not None and not isinstance(raw_cursor, str):

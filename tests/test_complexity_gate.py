@@ -235,3 +235,44 @@ def test_project_config_and_ci_enforce_the_regression_gate() -> None:
     assert "github.event.pull_request.base.sha" in workflow
     assert "github.event.before" in workflow
     assert "fetch-depth: 0" in workflow
+
+
+def test_no_first_party_function_exceeds_the_threshold() -> None:
+    """The grandfather set is empty, and this is what keeps it that way.
+
+    `evaluate_repository` fails only on REGRESSIONS against a base, so a function
+    already over threshold stays over it indefinitely -- which is how nine of them
+    accumulated across five assessments while every gate lane stayed green. Measured
+    over the gate's own scope (`src/` and `tests/`, per `_changed_python_paths`) that
+    set is now zero.
+
+    Asserting it here turns "grandfathered" into "can only shrink": a new function
+    over `DEFAULT_THRESHOLD` now fails the hermetic suite, not merely a PR whose base
+    happened to be clean. This is the tracked allowlist, in the only form that cannot
+    silently grow -- an empty one.
+    """
+    ruff = shutil.which("ruff")
+    assert ruff is not None
+
+    repo_root = Path(__file__).parent.parent
+    paths = tuple(
+        sorted(
+            str(path.relative_to(repo_root))
+            for directory in ("src", "tests")
+            for path in (repo_root / directory).rglob("*.py")
+        )
+    )
+    assert paths, "found no first-party sources to measure"
+
+    over_threshold = {
+        f"{symbol.path}:{symbol.qualname}": measured.complexity
+        for symbol, measured in collect_complexities(
+            repo_root, paths, ruff_executable=ruff
+        ).items()
+        if measured.complexity > DEFAULT_THRESHOLD
+    }
+
+    assert over_threshold == {}, (
+        f"functions over complexity {DEFAULT_THRESHOLD}: {over_threshold}. "
+        "Reduce it, or the base-relative gate will grandfather it indefinitely."
+    )
