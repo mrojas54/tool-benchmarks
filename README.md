@@ -135,7 +135,10 @@ rather than silently absent (S38 / TB-24).
   files against a Git `--base` by `(path, qualified name)`. Not a console
   subcommand — invoke as `uv run python -m toolbench.complexity_gate`. Public
   flags: required `--base`; optional `--root` (default cwd), `--threshold`,
-  `--warning-delta`, `--ruff` (Ruff executable path). See
+  `--warning-delta`, `--ruff` (Ruff executable path). The base-relative gate
+  fails only on regressions; the hermetic suite pins the absolute over-threshold
+  set empty (`test_no_first_party_function_exceeds_the_threshold`, #132) so
+  grandfathered debt cannot silently grow. See
   [Quality gate](#quality-gate).
 - **`worktrees.py`** — linked git worktree inventory with a reclaim verdict per
   tree (S42). Reports only — never removes a tree, deletes a branch, or touches
@@ -373,7 +376,7 @@ fold probe into `ClaudeParser` (`keep_raw_input` / `track_turns`), and stamp
 inefficiency tags at emit. The strict gate (`uv run ruff check .`,
 `uv run python -m toolbench.complexity_gate --base origin/main`,
 `uv run mypy --strict src/toolbench tests`, `uv run pytest -q`) is green —
-**748** tests passing / **4** skipped on the default install, **749** / **3**
+**753** tests passing / **4** skipped on the default install, **754** / **3**
 with `--extra tracing` (the observability skip becomes a pass). Each
 coverage-oriented skip runs somewhere and the "somewhere" is recorded in
 `AGENTS.md` so a skip is never mistaken for coverage: the optional-tracing
@@ -688,12 +691,13 @@ moving, not your code (TB-22).
   **Write-once refuses a pin that would replay to nothing.** Because replay
   bypasses discovery, a manifest pinning an empty scan would answer "no sessions"
   forever at exit 0 — indistinguishable from a corpus that really is empty. So the
-  first write is refused, with no file created and exit 1, in both cases where that
-  could happen: discovery matched **zero** sessions (e.g. an overly narrow
-  `--since`), or it matched **only subagent sessions** while `--exclude-subagents`
-  is set, which drops every ref after the write. The message names which case
-  applies — the first is fixed by widening filters, the second by dropping the
-  flag. An already-empty manifest on disk still replays as a zero-match corpus.
+  first write is refused, with no file created and exit 1, whenever the
+  **post-`--exclude-subagents` scan set** is empty: discovery matched **zero**
+  sessions (e.g. an overly narrow `--since`), or it matched **only subagent
+  sessions** while `--exclude-subagents` is set. The guard applies the same filter
+  the scan will use *before* writing (#132); the message names which case applies —
+  the first is fixed by widening filters, the second by dropping the flag. An
+  already-empty manifest on disk still replays as a zero-match corpus.
   - **Manifest v2 + freeze-time census (TB-37).** New freezes write
     `toolbench-freeze-2` and, when the freeze-time census succeeded, persist it
     under a `census` key together with its subagent-population filter. Replay then
@@ -813,11 +817,11 @@ line means the run headline may understate what the orchestration spent.
 | `--freeze` replay still says fractions unavailable | Manifest has no usable `census` (v1, freeze-time census failure, legacy v2 without population metadata, or replay changed `--exclude-subagents`) | Expected. Use the same subagent filter as the freeze; rewrite a legacy freeze on current `main` if you want historical fractions. |
 | `--freeze` exits 1 with `fatal freeze error` / traceback used to escape | Path is a directory, unreadable, non-UTF-8, or invalid JSON; or the first-write could not create the file | Point `--freeze` at a JSON *file* path (create parent dirs if needed). Same contract as a bad `--run-manifest` (S23 / PR #87). |
 | `--freeze` exits 1 with `discovery matched zero sessions; refusing to write an empty freeze manifest` | Selection filters excluded every session. Writing would have pinned the empty set: write-once plus `replaying = path.is_file()` means every later run replays that manifest instead of discovering, so the run would analyze nothing and still exit 0 (`24c4637`) | Expected, and **no manifest is written** — the path is safe to reuse. Widen `--since` / `--project` / other filters and re-run. When the archive is non-empty the message names its session count, so an over-narrow filter is distinguishable from a genuinely empty archive. |
-| `--freeze` exits 1 with `discovery matched only subagent sessions` | Every discovered ref is a subagent and `--exclude-subagents` drops them all *after* the freeze write, so the manifest would be non-empty yet replay to zero sessions forever at exit 0 — the zero-ref guard above cannot see this, because it tests what discovery returned, not what the scan will keep | Expected, and **no manifest is written**. Drop `--exclude-subagents`, or widen the selection to reach parent sessions. The message names the subagent count so an over-narrow selection is distinguishable from an archive that genuinely holds only children. |
+| `--freeze` exits 1 with `discovery matched only subagent sessions` | Every discovered ref is a subagent; with `--exclude-subagents` the post-filter scan set is empty. The write guard measures that set *before* writing (#132), so it refuses rather than pinning a non-empty manifest that would replay to zero forever at exit 0 | Expected, and **no manifest is written**. Drop `--exclude-subagents`, or widen the selection to reach parent sessions. The message names the subagent count so an over-narrow selection is distinguishable from an archive that genuinely holds only children. |
 | `--limit 0` (or a negative `--limit`) still analyzes one session | `--limit` is a plain `int`; truncation is checked *after* each append, so `len(refs) >= 0` (or `>=` a negative) trips only after the first ref | Pass a positive limit, or omit `--limit`. `--tickets` rejects non-positive values; `--limit` does not. |
 | SessionStart hook never finishes listing reclaimable trees on a busy machine | Tracked `.claude/settings.json` caps the hook at `timeout: 10`, while each linked tree may spend up to `GIT_TIMEOUT_S` (60s) on status / idle / size probes | Silence can be a budget miss, not "nothing reclaimable". Run `uv run toolbench worktrees` (or `--reclaimable-only`) outside SessionStart. |
 | Complexity gate fails a function you only moved / renamed | Identity is `(path, qualified name)`; a rename looks like a new function | Reduce it under 10, or land the move with a real simplification. `# noqa: C901` will not hide it. |
-| Complexity gate is silent on a hotspot you expected to fail | Only `src/` and `tests/` `*.py` changed vs `--base` are measured; files outside that scope, or unchanged files, are ignored | Diff against the intended base (`origin/main` locally; CI uses the PR base / pre-push SHA). Confirm the path is under `src/` or `tests/`. |
+| Complexity gate is silent on a hotspot you expected to fail | Only `src/` and `tests/` `*.py` *changed* vs `--base` are measured by the regression gate; files outside that scope, or unchanged files, are ignored. Absolute over-threshold debt is pinned empty by the hermetic suite (#132) instead | Diff against the intended base (`origin/main` locally; CI uses the PR base / pre-push SHA). Confirm the path is under `src/` or `tests/`. If `pytest` fails `test_no_first_party_function_exceeds_the_threshold`, reduce the named function — the base-relative gate alone would have grandfathered it. |
 | Local complexity gate cannot find `--base` | Shallow clone or missing remote-tracking ref | `git fetch origin main` (or deepen the clone). The `gate` job in `ci.yml` sets `fetch-depth: 0` for the same reason; the `tracing` job stays shallow. |
 | Agent Breakdown ratios look incomparable across agents | `--limit` truncates in whole-archive recency order (S41) | Read the `sampled` column and the uneven-sampling line. Compare across agents only when that line is absent. |
 | `toolbench` / `-m toolbench.passive` fails from `~` with a system python | The checkout's venv (with the editable install) isn't active | Use `uv run --project ~/tool-benchmarks toolbench passive ...` from any cwd; inside the repo, `uv run toolbench ...` or `uv run python -m toolbench.passive` both work. |
@@ -861,8 +865,11 @@ with `--isolated` so the base snapshot is measured under the same config as the
 working tree. Change the budget in `complexity_gate.py`, not in `pyproject.toml`:
 
 - a new function above 10 or an existing function crossing 10 fails;
-- an already-baselined function above 10 passes when unchanged or reduced, but
-  fails if it gets worse;
+- an already-baselined function above 10 passes the *base-relative* gate when
+  unchanged or reduced, but fails if it gets worse;
+- the hermetic suite also pins the absolute set empty
+  (`test_no_first_party_function_exceeds_the_threshold`, #132) — so a hotspot
+  the regression gate would grandfather still fails `pytest` until it is reduced;
 - an increase of 2 or more that remains at or below 10 emits a review warning;
 - `# noqa: C901` does not hide a function from the regression comparison
   (`ruff check --ignore-noqa`).

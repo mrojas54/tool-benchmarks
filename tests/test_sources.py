@@ -1015,7 +1015,7 @@ class AgentsViewTimeoutTests(unittest.TestCase):
         gap one layer up: `toolbench.passive._discover_refs` now catches both
         exceptions when `index_source == "auto"`, discards whatever partial listing
         this attempt collected, and rescans wholesale from raw -- see
-        `tests/test_passive_cli.py::MidListingAutoFallbackTests` for the direct,
+        `tests/test_passive.py::MidListingAutoFallbackTests` for the direct,
         end-to-end pin of that recovery. This test's job is narrower and unchanged:
         confirm `iter_sessions` still hands `_discover_refs` something to catch.
         """

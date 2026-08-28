@@ -18,6 +18,8 @@ scope so a bare local `mypy` mirrors CI (and does not type-check `tools/`). The
 assessment tool remains local-only under `~/tech-debt-work/` (not in this
 repo). The "one job" layout below is the original design snapshot; live CI is
 the two-job `gate` + `tracing` split plus the separate corpus workflow.
+Hermetic pytest also pins the absolute over-threshold set empty (#132) so the
+base-relative complexity gate cannot silently grandfather new hotspots.
 
 ## Problem
 

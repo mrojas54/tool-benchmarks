@@ -19,7 +19,9 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   `uv run python -m toolbench.complexity_gate --base origin/main`,
   `uv run mypy --strict src/toolbench tests`, and `uv run pytest -q`. Optional
   complexity_gate flags: `--root` (default cwd), `--threshold`,
-  `--warning-delta`, `--ruff` (Ruff executable). Do not
+  `--warning-delta`, `--ruff` (Ruff executable). The base-relative gate fails
+  only on regressions; the hermetic suite pins the absolute over-threshold set
+  empty (`test_no_first_party_function_exceeds_the_threshold`, #132). Do not
   substitute `unittest discover`: it misses module-level pytest tests and
   executes module-level report code. A bare `uv run mypy` also mirrors that
   scope via `[tool.mypy]` in `pyproject.toml` (does not descend into `tools/`).
@@ -28,8 +30,8 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   this tree (comments in `pyproject.toml` record what was adopted vs skipped).
 - Optional live dependencies (`agentsview`, Claude/Codex archives, Hermes) are
   not required for the gate; skips for absent live archives are expected. On the
-  default install the hermetic suite is ~748 passing / 4 skipped; with
-  `uv sync --extra tracing` it is ~749 / 3 (the observability skip becomes a
+  default install the hermetic suite is ~753 passing / 4 skipped; with
+  `uv sync --extra tracing` it is ~754 / 3 (the observability skip becomes a
   pass). The four default skips: optional-tracing (`lmnr` missing), corpus
   fixtures (`TOOLBENCH_CORPUS_TESTS`), Hermes live-archive (`TOOLBENCH_LIVE`),
   and the sidecar-less WAL classic-reject pin in `test_hermes.py` when this
@@ -114,11 +116,12 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   a write failure are hard stops (`fatal freeze error`, exit 1) — not
   tracebacks (S23 / PR #87). A first write is **refused** when nothing would be
   scanned, so write-once can never pin a set that replays to zero: discovery
-  matching zero sessions, and — because `--exclude-subagents` drops its refs
-  after the write — a selection matching only subagent sessions. Both exit 1
-  and create no file; the message names which case applies, since one is fixed
-  by widening filters and the other by dropping the flag. An already-empty
-  manifest on disk still replays as a zero-match corpus.
+  matching zero sessions, or a selection matching only subagent sessions under
+  `--exclude-subagents`. The guard measures the post-filter scan set *before*
+  writing (#132); both cases exit 1 and create no file. The message names which
+  case applies, since one is fixed by widening filters and the other by dropping
+  the flag. An already-empty manifest on disk still replays as a zero-match
+  corpus.
 - `ensure_deps` / `provision_worktree` default to the **packaged** manifest
   (`src/toolbench/corpus/manifest.json`); custom corpora must pass their own
   manifest explicitly so a stale generated `corpus/manifest.json` cannot change

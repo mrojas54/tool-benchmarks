@@ -3,7 +3,7 @@
 Everything after the subcommand reaches the sub-CLI verbatim. These tests pin
 the pass-through, the exit-code normalization (probe.main returns None), and
 the argparse-style failure codes, in the suite's in-process main(argv) style
-(tests/test_passive_cli.py)."""
+(tests/test_passive.py)."""
 
 import builtins
 import importlib
