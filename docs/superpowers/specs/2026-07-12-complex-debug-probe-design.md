@@ -13,7 +13,7 @@ matrix run yet.
 | Module / path | Responsibility |
 |---|---|
 | `src/toolbench/complex.py` | Defect loading, `LOCATED:` scoring, profile render; re-exports shell-safety symbols |
-| `src/toolbench/shell_safety.py` | Bash tokenization, path-containment, gate-escape audits (`arm_violations`, `read_escapes`, `BANNED_TOOLS`) |
+| `src/toolbench/shell_safety.py` | Bash tokenization, lexical path-containment, gate-escape audits (`arm_violations`, `read_escapes`, `BANNED_TOOLS`); Glob audits `path` + `pattern` |
 | `src/toolbench/complex_runner.py` | Hermetic worktree provision, deps cache, injectable `run_trial` |
 | `src/toolbench/probes/complex/` | Per-cell fixtures (`defect.patch`, `truth.json`, `prediction.md`, `oracle.json`, `prompt.md`) — **8 shipped cells** across `wids` / `maltese` / `rich` (not a full cross-product) |
 | `src/toolbench/corpus/manifest.json` | Pinned SHAs + dep/warmup/provision recipes (`wids`, `maltese`, `rich`); `corpus/vendor.sh` copies this into `corpus/` |
@@ -199,10 +199,15 @@ Therefore:
 - The trial tree is made hermetic (standalone repo, one commit; dep cache diverges
   from the corpus checkout at the filesystem root) to close the discoverable
   leaks, AND
-- `arm_violations` is extended to a **read-scope audit**: any tool call whose
-  resolved read path lies **outside the trial tree** voids the trial. This
-  generalizes over symlink-walk, `find`, and `git diff` in one rule, and is the
-  primary enforcement — a flag is a claim, the transcript is evidence.
+- `arm_violations` plus `read_escapes` (in `shell_safety.py`) are the
+  **transcript audits**: any tool call whose resolved read path lies **outside
+  the trial tree** voids the trial, and gated `Bash(<prefix>:*)` that chains
+  past the oracle prefix is a violation too. Containment is lexical
+  (`os.path.normpath` — the temp trial may be gone at score time). Structured
+  reads (`Read`/`Grep`/`Glob`, serena) use their path arguments; `Glob` also
+  audits `pattern` resolved relative to `path`. Full-shell Bash is a token
+  tripwire, not a shell parse. Primary enforcement — a flag is a claim, the
+  transcript is evidence.
 - **Chosen posture: audit now, sandbox later.** The pilot runs tamper-EVIDENT
   (the audit voids offending trials) rather than tamper-PROOF. Whether the arms
   actually reach for outside source is itself measured in the pilot; per-trial

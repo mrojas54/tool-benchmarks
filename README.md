@@ -112,7 +112,13 @@ rather than silently absent (S38 / TB-24).
 - **`adapters.py`** — `detect_parser`, `UnknownSchema`, `AmbiguousSchema`, and
   `ComposedAdapter` (the terminal fallback). `PARSERS` currently holds
   `ClaudeParser`, `HermesTraceParser`, and `CodexParser`; Claude and HermesTrace
-  partition on `version`, Codex on top-level `type`.
+  partition on `version`, Codex on top-level `type`. The sniff is a **raw-line**
+  loop over `DETECT_WINDOW` (100) non-blank lines — deliberately **not**
+  `transcript.JsonLines`. The reader yields only decoded objects (so a sniffed
+  head could not be replayed onto the parser) and skips undecodable lines
+  without advancing a yield-based window, which would turn a bounded sniff into
+  an unbounded scan over a garbage blob (#132). Pin:
+  `test_detect_is_bounded_and_does_not_read_past_the_window`.
 - **`registry.py`** — the ordered adapter list and `pick_adapter`. Exists to
   break the `hermes.py` ↔ `adapters.py` import cycle. Adding an agent means
   adding an entry here, never editing a dispatcher.
@@ -253,7 +259,7 @@ packaged manifest there so the vendored tree stays self-describing). Design:
 | Piece | Role |
 |---|---|
 | `complex.py` | Load defects from fixtures, score a trial (`LOCATED:` + oracle), build/render a routing profile; re-exports shell-safety symbols |
-| `shell_safety.py` | Bash tokenization, path-containment, and gate-escape audits (`arm_violations`, `read_escapes`, `BANNED_TOOLS`); re-exported by `complex` |
+| `shell_safety.py` | Bash tokenization, path-containment, and gate-escape audits (`arm_violations`, `read_escapes`, `BANNED_TOOLS`); re-exported by `complex`. Containment is **lexical** (`os.path.normpath` — the trial tree may already be gone at score time). `Glob` audits both `path` and `pattern` (pattern resolved relative to `path`). Bash read-scope is a token tripwire, not a shell parse. |
 | `complex_runner.py` | Provision a hermetic worktree, shared deps cache, injectable `launch`/`oracle`, `run_trial` |
 | `src/toolbench/probes/complex/<repo>-<id>-*/` | `defect.patch`, `truth.json`, `prediction.md`, `oracle.json`, `prompt.md` |
 | `src/toolbench/corpus/manifest.json` | Pinned SHAs + dep/warmup/provision recipes for `wids`, `maltese`, `rich` |
@@ -286,8 +292,11 @@ packaged manifest there so the vendored tree stays self-describing). Design:
   and executed by oracles.
 - Arms are enforced by **transcript audit** (`arm_violations` + read-scope), not
   filesystem walls: any resolved read outside the trial tree voids the trial.
-  Bash/control arms hold a full shell; the profile discloses that their
-  read-scope audit is best-effort.
+  `arm_violations` also voids banned tools (`Task` / `Agent`) and gated
+  `Bash(<prefix>:*)` commands that chain past the oracle prefix (`;`, `&&`,
+  `$()`, …) — the flag is a claim, the transcript is evidence. Bash/control
+  arms hold a full shell; the profile discloses that their read-scope audit is
+  best-effort (indirection the token tripwire cannot see).
 
 Call the library from tests or a future CLI; do not shell a real `claude` from
 the hermetic suite — `launch` / `oracle` are injectable (S24 pattern).
@@ -828,6 +837,7 @@ line means the run headline may understate what the orchestration spent.
 | `corpus/manifest.json` disappeared after pulling the src-layout change | The manifest now ships inside the package (`src/toolbench/corpus/manifest.json`); the corpus copy is generated / gitignored | Re-run `corpus/vendor.sh` (idempotent — skips existing clones); it copies the packaged manifest back into `corpus/`. Default trial provisioning already uses the packaged pin (#78), so a missing or stale corpus copy no longer changes trial SHAs unless you pass a custom `manifest_path`. |
 | `tests/test_complex_fixtures.py` always skips locally | Gated behind `TOOLBENCH_CORPUS_TESTS` (needs vendored corpus + `npm`/`cargo`/venv) | Run `corpus/vendor.sh`, then `TOOLBENCH_CORPUS_TESTS=1 uv run pytest -q tests/test_complex_fixtures.py`. CI coverage is `.github/workflows/corpus.yml`, not the `gate` job — see [`EVALUATION.md`](EVALUATION.md). |
 | Corpus workflow did not run after editing `shell_safety.py` | Path filter lists `complex.py` / `complex_runner.py` / corpus trees / the fixture test / the workflow — not `shell_safety.py` | Expected. Audit-only changes are covered by `tests/test_shell_safety.py` in the hermetic gate; trigger corpus CI only when defect fixtures or provision paths move. |
+| Tempted to route `detect_parser` through `JsonLines` "to share one reader" | `JsonLines` cannot replay sniffed raw lines onto the parser, and a yield-based window never advances on undecodable garbage — measured over a 1,000,000-line blob the sniff would read the whole file instead of stopping at `DETECT_WINDOW` (#132) | Leave the raw-line sniff in `adapters.py`. Parsers keep using `JsonLines`; the bound pin is `test_detect_is_bounded_and_does_not_read_past_the_window`. |
 | Complex deps cache looks rebuilt from a newer corpus commit than the trial | Pre-#99 `ensure_deps` copied npm manifests / ran warmups at corpus `HEAD` while the trial tree stayed on the packaged SHA | Current code pins both paths to the manifest SHA (`git show` / archived warmup tree). Clear the affected `vendor-cache-<uid>/<repo>/` leaf and re-run `ensure_deps` on current `main`. |
 | Complex oracles look wrong after a packaged-manifest SHA bump (pre-#102) | Existence-based `target.exists()` skip left stale `node_modules` while trials archived the new SHA | Current code stamps `.manifest-sha` and rebuilds on drift/missing stamp (#102). Re-run `ensure_deps` on current `main`; legacy unstamped leaves rebuild once automatically. |
 | Summary cache read ↓ but creation ↑ by ~the same | Prefix-sharing moved cost between buckets (S39/S40) | Not a win. Compare read **and** creation together; read alone misleads. |

@@ -192,7 +192,8 @@ ls -t ~/.claude/projects/-Users-michellerojas-tool-benchmarks/*.jsonl | head -1
 ```
 
 ```
-uv run python -m toolbench.probe --session <that path>
+uv run toolbench probe --session <that path>
+# equivalent: uv run python -m toolbench.probe --session <that path>
 ```
 
 Expect ten unseeded cells and no `*` in the table. If any cell is seeded, an arm
