@@ -88,7 +88,7 @@ One row per SPEC criterion, each tagged by how it is verified:
 | S24 | fixtures + fake runner present | `autonomous` | `test` |
 | S25 | acceptance smoke completes | `operator-assisted` / `external-oracle` | `test:full` |
 | S26 | requestId-keyed isolability; prose/thinking/batch blank usage | `autonomous` | `test` (prose + pooled fixtures) |
-| S27 | schema dispatch (`detect_parser`); UnknownSchema / AmbiguousSchema | `autonomous` | `test` (`test_adapters` / `test_registry`) |
+| S27 | schema dispatch (`detect_parser` raw-line sniff over `DETECT_WINDOW`, not `JsonLines`); UnknownSchema / AmbiguousSchema | `autonomous` | `test` (`test_adapters` incl. `test_detect_is_bounded_and_does_not_read_past_the_window` / `test_registry`) |
 | S28 | no default parser; unrecognized schemas skip loudly | `autonomous` | `test` (cursor → skipped_roots; codex now parsed per S33) |
 | S29 | producer split on `version`; `UsageProvenance` stamped; four-case cache render | `autonomous` | `test` (`schema_hermes_trace.jsonl` fixture; `detect_parser` → `HermesTraceParser`; `n/a` / `n/a*` / `no` render) |
 | S30 | probe refuses trace at dispatch; `_turn_key` raises `NonIsolableTurns`; no timestamp fallback | `autonomous` | `test` (probe fixtures carry `requestId`; refusal on a stripped fixture) |

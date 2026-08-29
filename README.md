@@ -95,10 +95,11 @@ rather than silently absent (S38 / TB-24).
 - **`transcript.py`** — the schema-neutral records: `ToolCall` (with
   `UsageProvenance` and parse-time inefficiency tags), `ParseResult`
   (optional session-grain cache sums, `unjoinable`, optional `turns`), and
-  `result_len`. `JsonLines` is the shared JSONL reader (blanks skipped;
-  undecodable and non-object lines counted into `malformed` — PR #107).
-  Path-based `parse_session` is gone; open lines (with
-  `errors="replace"` for TB-10) and call `ClaudeParser.parse` or
+  `result_len`. `JsonLines` is the shared JSONL reader for **parsers**
+  (blanks skipped; undecodable and non-object lines counted into `malformed`
+  — PR #107). Schema sniffing stays a separate raw-line loop in `adapters.py`
+  (`DETECT_WINDOW`; see that bullet). Path-based `parse_session` is gone; open
+  lines (with `errors="replace"` for TB-10) and call `ClaudeParser.parse` or
   `pick_adapter(ref).parse(ref)`.
 - **`parsers.py`** — one class per schema. `ClaudeParser` joins each assistant
   `tool_use` block to its result by id, stamps inefficiency tags at emit

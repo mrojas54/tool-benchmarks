@@ -487,8 +487,13 @@ and re-exports the public symbols historical imports expect.
 
 ## Schema dispatch — `src/toolbench/adapters.py` + `src/toolbench/registry.py`
 
-- **S27 — schema dispatch.** `detect_parser` sniffs up to 100 non-empty lines
-  and returns the single parser whose `claims_line` matches. Two matches raise
+- **S27 — schema dispatch.** `detect_parser` sniffs up to `DETECT_WINDOW`
+  (100) non-blank lines as a **raw-line** loop and returns the single parser
+  whose `claims_line` matches. The sniff deliberately does **not** use
+  `transcript.JsonLines`: the reader yields only decoded objects (so a sniffed
+  head could not be replayed onto the parser) and skips undecodable lines
+  without advancing a yield-based window, which would turn a bounded sniff into
+  an unbounded scan over a garbage blob (#132). Two matches raise
   `AmbiguousSchema`; zero matches raise `UnknownSchema`. Both subclass
   `RuntimeError`, so `passive.main` demotes the session to `skipped_roots`.
   Hermes claims by source (`agent == "hermes" and path is None`) because it is a
