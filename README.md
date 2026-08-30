@@ -397,9 +397,10 @@ demand, and on `pull_request` for corpus-touching paths (#119; the path filter
 omits `shell_safety.py` — audit-only edits stay on the hermetic gate); and the
 Hermes live-archive test in `tests/test_hermes.py::LiveArchive` is deliberately
 operator-run before a release and whenever a Hermes upgrade changes the
-`sessions`/`messages` schema, per `EVALUATION.md`. A fourth default skip — the
-sidecar-less WAL classic-reject pin in `test_hermes.py` — is build-dependent
-(modern SQLite may skip it) and is not a missing CI lane. `mypy --strict`
+`sessions`/`messages` schema (`TOOLBENCH_LIVE=1 uv run pytest -q`, per
+`EVALUATION.md`). A fourth default skip — the sidecar-less WAL classic-reject
+pin in `test_hermes.py` — is build-dependent (modern SQLite may skip it) and is
+not a missing CI lane. `mypy --strict`
 covers `tests` as well as
 `src/toolbench`. A bare `uv run mypy` also mirrors that scope via
 `[tool.mypy]` in `pyproject.toml` (it does not descend into `tools/`). The
@@ -411,10 +412,10 @@ Source-of-truth documents:
 
 - [`SPEC.md`](SPEC.md) — 42 numbered acceptance criteria (S1–S42).
 - [`EVALUATION.md`](EVALUATION.md) — verification map for every criterion.
-- [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the T1–T6 tickets
-  plus post-merge TB/T rows.
+- [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the ticket
+  breakdown (T1–T27, including post-merge TB/T rows).
 - [`docs/2026-07-07-tool-benchmarks-design.md`](docs/2026-07-07-tool-benchmarks-design.md)
-  — full v2 design spec.
+  — historical v2 design snapshot (not current truth; see banner there).
 - [`protocols/active-probes.md`](protocols/active-probes.md) — probe corpus,
   arm matching (S17), isolability (S26), and the seeded `#8376` baseline table.
 - [`protocols/probe-run-sheet.md`](protocols/probe-run-sheet.md) — executable
@@ -807,6 +808,7 @@ line means the run headline may understate what the orchestration spent.
 | Callouts are bare integers (`Failures: 865`) | Pre-TB-9 report formatting | Current callouts include denominators and a top offender. |
 | `--agent hermes` yields far fewer sessions than expected | AgentsView `session list` under-counts Hermes vs `stats` (~89 vs ~789) | Known upstream limit ([#1048](https://github.com/kenn-io/agentsview/issues/1048)); discovery is intentionally not forked into the Hermes adapter (S9b). |
 | Hermes session skipped / archive not found | `$HERMES_HOME` / `~/.hermes` missing, or session only in an unread profile DB | Confirm `HERMES_HOME`; it counts under the `non_transcript` reason and `--verbose` names the session. Profile DBs under `profiles/*/state.db` are searched. |
+| `LiveArchive` always skips in local pytest | Gated behind `TOOLBENCH_LIVE` (needs a real `~/.hermes` archive; no CI lane) | Release / Hermes-schema check: `TOOLBENCH_LIVE=1 uv run pytest -q` (see `EVALUATION.md`). Do not invent a CI job for it. |
 | `Malformed lines` explodes into the hundreds of thousands | Binary export absorbed as text (would happen without the NUL sniff) | Should not occur on current code — binary payloads are rejected before parse. |
 | Empty selection message | No sessions matched filters, or all matched sessions were skipped | Check `--project` / `--since` / `--date-*`, and the `(skipped K: reason=count)` suffix on the message; the census disclosure that follows (TB-34) distinguishes a narrow window from a truly empty archive. `--verbose` names each session. |
 | `toolbench.probe` without `--session` refuses to write | Seeded-only report is blocked (`SeededReportError`) | Pass `--session PATH`, or `--allow-seeded` for the baseline table only. |
