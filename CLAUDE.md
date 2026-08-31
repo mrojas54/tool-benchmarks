@@ -25,6 +25,9 @@ copies — read the linked file for the current truth. Operational rules live in
   — the v2 design snapshot (historical).
 - [`benchmarks/harbor/toolbench-complex/README.md`](benchmarks/harbor/toolbench-complex/README.md)
   — Harbor packaging for selected complex probes (WIDS D2).
+- [`.claude/skills/cache-token-metrics/SKILL.md`](.claude/skills/cache-token-metrics/SKILL.md)
+  — operator recipe for per-run cache-token diffs via `--run-manifest` /
+  `--tickets` (S40; session-grain totals alone are S39).
 - [`.claude/skills/laminar/SKILL.md`](.claude/skills/laminar/SKILL.md)
   — generic Laminar SDK / CLI guidance. Toolbench's opt-in contract
   (`tracing` extra + `TOOLBENCH_TRACING=1` + console `argv is None`) lives in

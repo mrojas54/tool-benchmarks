@@ -307,10 +307,11 @@ and re-exports the public symbols historical imports expect.
   accepted and stored but unused for attribution (branches-only; TB-28 rejected
   cwd-based membership). The run section renders read + creation together,
   normalized per ticket (`--tickets N` when set, else `len(manifest.tickets)`;
-  `--tickets` alone is a no-op; `--tickets 0` is rejected at parse), as a Summary
-  caveat — never a ranking column (S19). `.lattice/orchestration/agents.md` cannot
-  serve as the manifest: it discards its Branch column on run completion (TB-27;
-  builds on the session-grain sums of S39/TB-26).
+  `--tickets` without `--run-manifest` is a no-op; `--tickets 0` is rejected at
+  parse), as a Summary caveat — never a ranking column (S19).
+  `.lattice/orchestration/agents.md` cannot serve as the manifest: it discards
+  its Branch column on run completion (TB-27; builds on the session-grain sums
+  of S39/TB-26).
 - **S41 — per-agent sampling disclosure.** `--limit` truncates discovery in
   **recency order across the whole archive**, not per agent, so each agent's row
   rests on a different fraction of its own history and an agent whose work is all

@@ -141,8 +141,13 @@ Aggregation is in `reducer.py`; markdown/fingerprints in `report.py`
 `freeze.py`; run-manifest I/O in `run_manifest.py`. `passive.py` owns CLI
 orchestration: `main()` runs named phases `_plan_freeze` → `_resolve_corpus`
 (replay-vs-discover) → `_scan_refs` → render/write, plus compatibility
-re-exports. `transcript.JsonLines` is the shared JSONL reader for **parsers**
-(blanks skipped; undecodable / non-object lines counted) — not for
+re-exports. `sources.py` owns multi-agent discovery, AgentsView/raw loaders, and
+`AgentCensus`; `hermes.py` owns the read-only SQLite session read (discovery
+still comes from AgentsView). `registry.py` holds the ordered adapter list and
+`pick_adapter` (breaks the `hermes.py` ↔ `adapters.py` cycle); `adapters.py`
+owns `detect_parser` / schema errors / `ComposedAdapter`.
+`transcript.JsonLines` is the shared JSONL reader for **parsers** (blanks
+skipped; undecodable / non-object lines counted) — not for
 `adapters.detect_parser`, which sniffs raw lines over `DETECT_WINDOW` so the
 head can be replayed and a garbage blob cannot unbound the read (#132). The
 complex debug probe is `complex.py` (defects, scoring, profile render) plus

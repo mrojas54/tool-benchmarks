@@ -6,7 +6,7 @@ yet. Fixtures under `src/toolbench/probes/complex/`; pinned corpora under
 `corpus/` (packaged manifest at `src/toolbench/corpus/manifest.json`, copied
 by `corpus/vendor.sh`). Pre-registered predictions committed; no live trial
 matrix run yet.
-**Date:** 2026-07-12 (status refreshed 2026-08-23)
+**Date:** 2026-07-12 (status refreshed 2026-08-31)
 
 ## Implementation map (as shipped)
 
@@ -90,10 +90,13 @@ under measurement. Recent, personal repos are far less likely to be memorized.
 The confound is reduced, not eliminated — public code may still have been seen —
 and this belongs in the report, not a footnote.
 
-**Repo is a blocking factor, not a confound — because defects are crossed, not
-nested.** Every defect class is instantiated in *both* repos. If D1 lived only in
-Rust and D2 only in TS, "serena won D1, lost D2" would be unattributable: tool or
-language? Crossing lets the repo effect be measured and subtracted.
+**Repo as a blocking factor was the design intent — a full cross of defect
+classes across repos.** If D1 lived only in Rust and D2 only in TS, "serena won
+D1, lost D2" would be unattributable: tool or language? Crossing would let the
+repo effect be measured and subtracted. **As shipped**, the eight-cell inventory
+is deliberately *not* that cross (D1 only on `rich` via `hosts_only`; D4 only on
+`maltese`; wids carries D2/D3/D5) — see [Run size](#run-size). Treat
+repo×defect attribution as confound-aware, not subtracted.
 
 ### 2. Defects — five classes, pre-registered
 

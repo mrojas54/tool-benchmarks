@@ -38,7 +38,8 @@ checkout, so the read doesn't bill an unrelated project's cache.
 4. **Aggregate + normalize** — `--run-manifest` folds every scanned session's matching
    branch buckets into one run total (reporting unattributed spillover and any manifest
    branch that matched zero entries); `--tickets N` overrides the per-ticket divisor,
-   otherwise `len(manifest.tickets)` is used (`--tickets` alone is a no-op).
+   otherwise `len(manifest.tickets)` is used (`--tickets` without `--run-manifest`
+   is a no-op; `--tickets 0` is rejected at parse).
 
 ```bash
 # from ~ , per run. `toolbench` is installed editable into the repo's venv (src
