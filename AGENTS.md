@@ -146,8 +146,10 @@ re-exports. `sources.py` owns multi-agent discovery, AgentsView/raw loaders, and
 still comes from AgentsView). `registry.py` holds the ordered adapter list and
 `pick_adapter` (breaks the `hermes.py` ↔ `adapters.py` cycle); `adapters.py`
 owns `detect_parser` / schema errors / `ComposedAdapter`.
-`transcript.JsonLines` is the shared JSONL reader for **parsers** (blanks
-skipped; undecodable / non-object lines counted) — not for
+`parsers.py` owns one class per schema (`ClaudeParser` / `CodexParser` / …);
+`probe.py` owns the active tool-vs-Bash comparison CLI (`--session` /
+`--allow-seeded`). `transcript.JsonLines` is the shared JSONL reader for
+**parsers** (blanks skipped; undecodable / non-object lines counted) — not for
 `adapters.detect_parser`, which sniffs raw lines over `DETECT_WINDOW` so the
 head can be replayed and a garbage blob cannot unbound the read (#132). The
 complex debug probe is `complex.py` (defects, scoring, profile render) plus

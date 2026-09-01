@@ -101,10 +101,11 @@ cd ~/tool-benchmarks && uv run pytest -q tests/test_parsers.py tests/test_reduce
 
 ## Engine & scope
 
-`src/toolbench/passive.py` — `ClaudeParser` (which stamps `ParseResult.session_cache_*` /
-input / output / `usage_by_branch`) feeds a `Reducer`; when `--run-manifest` names a run
-(`src/toolbench/run_manifest.py`), the reducer folds only the manifest's branches into a
-`RunStats` and, with `--tickets N`, reports per-ticket figures. Run-grain grouping is a
-dimension on the one analyzer (TB-27 / S40) — there is no separate CLI for it. (The prior
-standalone run-aggregation module that held this before `--run-manifest` landed has been
-retired; its evals are re-homed above.)
+`src/toolbench/parsers.py` — `ClaudeParser` stamps `ParseResult.session_cache_*` /
+input / output / `usage_by_branch`. `src/toolbench/passive.py` is the CLI that drives
+discovery/scan and feeds each `ParseResult` into a `Reducer`; when `--run-manifest`
+names a run (`src/toolbench/run_manifest.py`), the reducer folds only the manifest's
+branches into a `RunStats` and, with `--tickets N`, reports per-ticket figures.
+Run-grain grouping is a dimension on the one analyzer (TB-27 / S40) — there is no
+separate CLI for it. (The prior standalone run-aggregation module that held this
+before `--run-manifest` landed has been retired; its evals are re-homed above.)
