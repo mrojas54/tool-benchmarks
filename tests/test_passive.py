@@ -348,6 +348,35 @@ class MainExitContractTests(unittest.TestCase):
             self.assertTrue(out_path.exists())
             self.assertIn("## Summary", out_path.read_text())
 
+    def test_date_filter_with_scanned_sessions_renders_report_not_empty_selection(
+        self,
+    ) -> None:
+        """A window that scans sessions but joins zero calls is not 'no sessions matched'."""
+        with TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "proj"
+            proj.mkdir()
+            shutil.copy(FIXTURES / "sample.jsonl", proj / "sess-001.jsonl")
+            out_path = Path(tmp) / "report.md"
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                code = main(
+                    [
+                        "--index-source",
+                        "raw",
+                        "--date-from",
+                        "2099-01-01",
+                        "--out",
+                        str(out_path),
+                    ],
+                    root=tmp,
+                )
+            self.assertEqual(code, 0)
+            report = out_path.read_text()
+            self.assertIn("## Summary", report)
+            self.assertIn("scanned: 1", report)
+            self.assertNotIn("no sessions matched", report)
+            self.assertEqual(stdout.getvalue(), f"Report written to {out_path}\n")
+
     def test_exclude_subagents_removes_subagent_sessions(self) -> None:
         with TemporaryDirectory() as tmp:
             proj = Path(tmp) / "proj"

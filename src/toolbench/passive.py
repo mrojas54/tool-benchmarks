@@ -895,7 +895,12 @@ def main(
 
     scan = _scan_refs(refs, runner=runner, run=run, args=args, skips=skips)
 
-    if scan.reducer.calls_joined == 0:
+    # Zero joined calls is NOT the same as zero sessions matched: a narrow
+    # `--date-from`/`--date-to` window can scan sessions whose tool calls all fall
+    # outside the range, or a transcript can simply carry no tool work. Those runs
+    # must still reach `render_report` (and honor `--out`), not read as an empty
+    # archive via the discovery-only early return below (S35 / TB-34).
+    if scan.reducer.sessions_scanned == 0:
         print(
             "\n".join(
                 _no_sessions_lines(
