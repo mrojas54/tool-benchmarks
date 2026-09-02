@@ -1,7 +1,10 @@
 # Design: usage provenance and probe turn-key refusal (TB-18)
 
 **Ticket:** TB-18 — *hermes `--format trace` parses as claude but carries no usage or requestId; cache-hit signal silently fabricated*
-**Status:** shipped (PR #20, merged 2026-07-10)
+**Status:** shipped (PR #20, merged 2026-07-10). Body is the 2026-07-09 design
+snapshot — Gate counts and `python -m unittest` below are contemporaneous at ship.
+Live Quality gate: [`README.md`](../../../README.md#quality-gate)
+(`pytest -q`, src-layout mypy, complexity_gate).
 **Date:** 2026-07-09
 **Depends on:** TB-13 (schema dispatch, PR #19), TB-16 (response-pooled isolability)
 
@@ -418,8 +421,11 @@ natural source): `sessionId` present, `version: "hermes-agent"`, no `message.usa
   guard is independent of the schema check, not shadowed by it.
 - Regression: the existing 245-batch `requestId` grouping test still passes.
 
-**Gate.** `uv run ruff check .`, `uv run mypy --strict`, `uv run python -m unittest` — all green,
-counts reported. Baseline is 213 passing / 1 skipped.
+**Gate (contemporaneous at ship, 2026-07-09).** `uv run ruff check .`,
+`uv run mypy --strict`, `uv run python -m unittest` — all green, counts reported.
+Baseline then was 213 passing / 1 skipped. **Do not run that Gate today** —
+`unittest discover` under-collects (TB-19); live command is `uv run pytest -q`
+(~753 / 4 on the default install). See [`README.md` Quality gate](../../../README.md#quality-gate).
 
 ---
 

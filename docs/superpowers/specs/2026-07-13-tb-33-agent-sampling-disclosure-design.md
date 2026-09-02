@@ -1,8 +1,12 @@
 # TB-33 — Disclose per-agent sampling fractions; never drop an unreached agent
 
-**Status:** approved (2026-07-13)
+**Status:** shipped (TB-33 / follow-ons TB-34/35/37). Body below is the 2026-07-13
+design snapshot — flat-layout paths (`toolbench/…`) and the contemporaneous Gate
+line are historical. Live modules live under `src/toolbench/`; the operator Quality
+gate is in [`README.md`](../../../README.md) (includes `complexity_gate` +
+`mypy --strict src/toolbench tests` + `pytest -q`).
 **Ticket:** TB-33 (high, bug) — spawned by TB-30
-**Files:** `toolbench/sources.py`, `toolbench/report.py`, `toolbench/passive.py`, `tests/*`
+**Files (at ship):** `toolbench/sources.py`, `toolbench/report.py`, `toolbench/passive.py`, `tests/*` (now under `src/toolbench/`)
 
 ## Problem
 
@@ -245,5 +249,7 @@ Cases:
 - census inherits `--project` / `--since` (assert the scoped argv carries the filters)
 - an unlimited run renders `scanned of total` including skip attrition
 
-Gate (from `README.md`): `uv run ruff check .`, `uv run mypy --strict toolbench tests`,
-`uv run pytest -q`.
+**Gate (contemporaneous at ship, 2026-07-13):** `uv run ruff check .`,
+`uv run mypy --strict toolbench tests`, `uv run pytest -q`. **Live gate:** follow
+[`README.md` Quality gate](../../../README.md#quality-gate) — src-layout mypy paths
+plus `python -m toolbench.complexity_gate --base origin/main`.
