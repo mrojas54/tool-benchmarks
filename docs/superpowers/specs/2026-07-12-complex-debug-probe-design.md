@@ -6,14 +6,14 @@ yet. Fixtures under `src/toolbench/probes/complex/`; pinned corpora under
 `corpus/` (packaged manifest at `src/toolbench/corpus/manifest.json`, copied
 by `corpus/vendor.sh`). Pre-registered predictions committed; no live trial
 matrix run yet.
-**Date:** 2026-07-12 (status refreshed 2026-08-23)
+**Date:** 2026-07-12 (status refreshed 2026-08-31)
 
 ## Implementation map (as shipped)
 
 | Module / path | Responsibility |
 |---|---|
 | `src/toolbench/complex.py` | Defect loading, `LOCATED:` scoring, profile render; re-exports shell-safety symbols |
-| `src/toolbench/shell_safety.py` | Bash tokenization, path-containment, gate-escape audits (`arm_violations`, `read_escapes`, `BANNED_TOOLS`) |
+| `src/toolbench/shell_safety.py` | Bash tokenization, lexical path-containment, gate-escape audits (`arm_violations`, `read_escapes`, `BANNED_TOOLS`); Glob audits `path` + `pattern` |
 | `src/toolbench/complex_runner.py` | Hermetic worktree provision, deps cache, injectable `run_trial` |
 | `src/toolbench/probes/complex/` | Per-cell fixtures (`defect.patch`, `truth.json`, `prediction.md`, `oracle.json`, `prompt.md`) — **8 shipped cells** across `wids` / `maltese` / `rich` (not a full cross-product) |
 | `src/toolbench/corpus/manifest.json` | Pinned SHAs + dep/warmup/provision recipes (`wids`, `maltese`, `rich`); `corpus/vendor.sh` copies this into `corpus/` |
@@ -90,10 +90,13 @@ under measurement. Recent, personal repos are far less likely to be memorized.
 The confound is reduced, not eliminated — public code may still have been seen —
 and this belongs in the report, not a footnote.
 
-**Repo is a blocking factor, not a confound — because defects are crossed, not
-nested.** Every defect class is instantiated in *both* repos. If D1 lived only in
-Rust and D2 only in TS, "serena won D1, lost D2" would be unattributable: tool or
-language? Crossing lets the repo effect be measured and subtracted.
+**Repo as a blocking factor was the design intent — a full cross of defect
+classes across repos.** If D1 lived only in Rust and D2 only in TS, "serena won
+D1, lost D2" would be unattributable: tool or language? Crossing would let the
+repo effect be measured and subtracted. **As shipped**, the eight-cell inventory
+is deliberately *not* that cross (D1 only on `rich` via `hosts_only`; D4 only on
+`maltese`; wids carries D2/D3/D5) — see [Run size](#run-size). Treat
+repo×defect attribution as confound-aware, not subtracted.
 
 ### 2. Defects — five classes, pre-registered
 
@@ -199,10 +202,15 @@ Therefore:
 - The trial tree is made hermetic (standalone repo, one commit; dep cache diverges
   from the corpus checkout at the filesystem root) to close the discoverable
   leaks, AND
-- `arm_violations` is extended to a **read-scope audit**: any tool call whose
-  resolved read path lies **outside the trial tree** voids the trial. This
-  generalizes over symlink-walk, `find`, and `git diff` in one rule, and is the
-  primary enforcement — a flag is a claim, the transcript is evidence.
+- `arm_violations` plus `read_escapes` (in `shell_safety.py`) are the
+  **transcript audits**: any tool call whose resolved read path lies **outside
+  the trial tree** voids the trial, and gated `Bash(<prefix>:*)` that chains
+  past the oracle prefix is a violation too. Containment is lexical
+  (`os.path.normpath` — the temp trial may be gone at score time). Structured
+  reads (`Read`/`Grep`/`Glob`, serena) use their path arguments; `Glob` also
+  audits `pattern` resolved relative to `path`. Full-shell Bash is a token
+  tripwire, not a shell parse. Primary enforcement — a flag is a claim, the
+  transcript is evidence.
 - **Chosen posture: audit now, sandbox later.** The pilot runs tamper-EVIDENT
   (the audit voids offending trials) rather than tamper-PROOF. Whether the arms
   actually reach for outside source is itself measured in the pilot; per-trial

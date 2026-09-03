@@ -38,7 +38,8 @@ checkout, so the read doesn't bill an unrelated project's cache.
 4. **Aggregate + normalize** — `--run-manifest` folds every scanned session's matching
    branch buckets into one run total (reporting unattributed spillover and any manifest
    branch that matched zero entries); `--tickets N` overrides the per-ticket divisor,
-   otherwise `len(manifest.tickets)` is used (`--tickets` alone is a no-op).
+   otherwise `len(manifest.tickets)` is used (`--tickets` without `--run-manifest`
+   is a no-op; `--tickets 0` is rejected at parse).
 
 ```bash
 # from ~ , per run. `toolbench` is installed editable into the repo's venv (src
@@ -100,10 +101,11 @@ cd ~/tool-benchmarks && uv run pytest -q tests/test_parsers.py tests/test_reduce
 
 ## Engine & scope
 
-`src/toolbench/passive.py` — `ClaudeParser` (which stamps `ParseResult.session_cache_*` /
-input / output / `usage_by_branch`) feeds a `Reducer`; when `--run-manifest` names a run
-(`src/toolbench/run_manifest.py`), the reducer folds only the manifest's branches into a
-`RunStats` and, with `--tickets N`, reports per-ticket figures. Run-grain grouping is a
-dimension on the one analyzer (TB-27 / S40) — there is no separate CLI for it. (The prior
-standalone run-aggregation module that held this before `--run-manifest` landed has been
-retired; its evals are re-homed above.)
+`src/toolbench/parsers.py` — `ClaudeParser` stamps `ParseResult.session_cache_*` /
+input / output / `usage_by_branch`. `src/toolbench/passive.py` is the CLI that drives
+discovery/scan and feeds each `ParseResult` into a `Reducer`; when `--run-manifest`
+names a run (`src/toolbench/run_manifest.py`), the reducer folds only the manifest's
+branches into a `RunStats` and, with `--tickets N`, reports per-ticket figures.
+Run-grain grouping is a dimension on the one analyzer (TB-27 / S40) — there is no
+separate CLI for it. (The prior standalone run-aggregation module that held this
+before `--run-manifest` landed has been retired; its evals are re-homed above.)

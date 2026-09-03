@@ -307,10 +307,11 @@ and re-exports the public symbols historical imports expect.
   accepted and stored but unused for attribution (branches-only; TB-28 rejected
   cwd-based membership). The run section renders read + creation together,
   normalized per ticket (`--tickets N` when set, else `len(manifest.tickets)`;
-  `--tickets` alone is a no-op; `--tickets 0` is rejected at parse), as a Summary
-  caveat — never a ranking column (S19). `.lattice/orchestration/agents.md` cannot
-  serve as the manifest: it discards its Branch column on run completion (TB-27;
-  builds on the session-grain sums of S39/TB-26).
+  `--tickets` without `--run-manifest` is a no-op; `--tickets 0` is rejected at
+  parse), as a Summary caveat — never a ranking column (S19).
+  `.lattice/orchestration/agents.md` cannot serve as the manifest: it discards
+  its Branch column on run completion (TB-27; builds on the session-grain sums
+  of S39/TB-26).
 - **S41 — per-agent sampling disclosure.** `--limit` truncates discovery in
   **recency order across the whole archive**, not per agent, so each agent's row
   rests on a different fraction of its own history and an agent whose work is all
@@ -408,7 +409,9 @@ and re-exports the public symbols historical imports expect.
   is deliberately no `[tool.ruff.lint.mccabe]` block in `pyproject.toml`,
   because `ruff check .` does not select `C901` and a `max-complexity` key
   there would be inert (#112). Optional CLI flags: `--root` (default cwd),
-  `--ruff` (Ruff executable path). `[tool.ruff.lint] select` is pinned explicitly
+  `--ruff` (Ruff executable path), `--threshold` (default `DEFAULT_THRESHOLD`
+  = 10), `--warning-delta` (default `DEFAULT_WARNING_DELTA` = 2).
+  `[tool.ruff.lint] select` is pinned explicitly
   so a Ruff default expansion cannot silently grow the gate (#120); widen it
   only after triaging findings. A new function above 10, a function crossing
   10, or a legacy hotspot that increases all fail; an increase of ≥2 that
@@ -487,8 +490,13 @@ and re-exports the public symbols historical imports expect.
 
 ## Schema dispatch — `src/toolbench/adapters.py` + `src/toolbench/registry.py`
 
-- **S27 — schema dispatch.** `detect_parser` sniffs up to 100 non-empty lines
-  and returns the single parser whose `claims_line` matches. Two matches raise
+- **S27 — schema dispatch.** `detect_parser` sniffs up to `DETECT_WINDOW`
+  (100) non-blank lines as a **raw-line** loop and returns the single parser
+  whose `claims_line` matches. The sniff deliberately does **not** use
+  `transcript.JsonLines`: the reader yields only decoded objects (so a sniffed
+  head could not be replayed onto the parser) and skips undecodable lines
+  without advancing a yield-based window, which would turn a bounded sniff into
+  an unbounded scan over a garbage blob (#132). Two matches raise
   `AmbiguousSchema`; zero matches raise `UnknownSchema`. Both subclass
   `RuntimeError`, so `passive.main` demotes the session to `skipped_roots`.
   Hermes claims by source (`agent == "hermes" and path is None`) because it is a
