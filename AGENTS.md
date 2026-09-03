@@ -30,8 +30,8 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   this tree (comments in `pyproject.toml` record what was adopted vs skipped).
 - Optional live dependencies (`agentsview`, Claude/Codex archives, Hermes) are
   not required for the gate; skips for absent live archives are expected. On the
-  default install the hermetic suite is ~753 passing / 4 skipped; with
-  `uv sync --extra tracing` it is ~754 / 3 (the observability skip becomes a
+  default install the hermetic suite is ~754 passing / 4 skipped; with
+  `uv sync --extra tracing` it is ~755 / 3 (the observability skip becomes a
   pass). The four default skips: optional-tracing (`lmnr` missing), corpus
   fixtures (`TOOLBENCH_CORPUS_TESTS`), Hermes live-archive (`TOOLBENCH_LIVE`),
   and the sidecar-less WAL classic-reject pin in `test_hermes.py` when this
@@ -100,6 +100,11 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   vanish. Treat cross-agent ratios as comparable only when no uneven-sampling
   warning is emitted. Attribution must use observed truncation/skip signals;
   flag negative remainders as drift.
+- The discovery-only "no sessions matched" early return gates on
+  `sessions_scanned == 0`, not `calls_joined == 0`: a `--date-from`/`--date-to`
+  window that still scans sessions (but joins zero calls) renders the report
+  and honors `--out` (#135 / S35). TB-34 census disclosure still applies when
+  discovery reaches nothing.
 - Every `agentsview` subprocess is bounded by `AGENTSVIEW_TIMEOUT_S` (60s);
   override with `--agentsview-timeout SECONDS` (`0` = unbounded). A mid-scan
   hang skips that session as `export_timeout` (`AgentsViewTimeout` →
