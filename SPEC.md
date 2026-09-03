@@ -161,9 +161,15 @@ and re-exports the public symbols historical imports expect.
   so it also appends `_sampling_notes`' rendering of it (unreached agents, an
   agent whose every sampled session was skipped, an uneven-sampling spread, an
   unenumerated residual — TB-33's per-agent disclosure, reused rather than
-  reinvented) after the base message, never in place of it: a narrow `--since` or
-  `--date-from`/`--date-to` window must not read as indistinguishable from a truly
-  empty archive (TB-34).
+  reinvented) after the base message, never in place of it. The early return
+  gates on `sessions_scanned == 0` (discovery reached nothing, or every matched
+  ref was skipped before absorb) — e.g. a narrow `--since` mtime window — so that
+  path must not read as indistinguishable from a truly empty archive (TB-34).
+  Zero *joined calls* is a different case: a narrow `--date-from`/`--date-to`
+  window can still scan sessions whose tool calls all fall outside the range (or
+  a transcript can carry no tool work). Those runs must reach `render_report`
+  (and honor `--out`) with `scanned: M` and `Tool calls joined: 0`, not the
+  empty-selection message (#135).
 - **S36 — the Summary carries a corpus fingerprint.** The corpus is not stable
   between runs: claude-mem observer transcripts age out of a ~30-day sliding
   window *mid-scan*, so its tail deletes itself at roughly re-run cadence, and the
@@ -337,8 +343,9 @@ and re-exports the public symbols historical imports expect.
   replay that flipped `--exclude-subagents`) — or when a live census failed at
   discovery — the report carries `unavailable_reason` and marks fractions
   unavailable rather than inventing a denominator. The empty-selection path
-  reuses the same census disclosure so a narrow window is not mistaken for an
-  empty archive (TB-34 / S35).
+  (`sessions_scanned == 0`) reuses the same census disclosure so a
+  discovery-empty window is not mistaken for an empty archive (TB-34 / S35);
+  scanned sessions that join zero calls still render (#135).
 
 ## Active probes — `src/toolbench/probe.py` + `protocols/active-probes.md`
 

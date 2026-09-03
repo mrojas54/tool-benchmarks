@@ -425,7 +425,7 @@ natural source): `sessionId` present, `version: "hermes-agent"`, no `message.usa
 `uv run mypy --strict`, `uv run python -m unittest` — all green, counts reported.
 Baseline then was 213 passing / 1 skipped. **Do not run that Gate today** —
 `unittest discover` under-collects (TB-19); live command is `uv run pytest -q`
-(~753 / 4 on the default install). See [`README.md` Quality gate](../../../README.md#quality-gate).
+(~754 / 4 on the default install). See [`README.md` Quality gate](../../../README.md#quality-gate).
 
 ---
 

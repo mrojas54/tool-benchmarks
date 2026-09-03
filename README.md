@@ -372,7 +372,9 @@ detached-HEAD attribution blind spot (**TB-28**) and make
 bounds + operator ceiling (**TB-32** / **TB-39**), mid-listing `auto` fallback
 without splicing (**TB-38**), and per-agent sampling disclosure with
 apportionment (**S41** / **TB-33** / **TB-35**) — including census on the
-zero-match path (**TB-34**) and freeze-time census in manifest v2 with a
+zero-match path (**TB-34**; early return gated on `sessions_scanned == 0` so
+scanned zero-call date windows still render — **#135**) and freeze-time census
+in manifest v2 with a
 subagent-population filter guard (**TB-37**) — are shipped. The complex debug
 probe library (`complex.py` / `shell_safety.py` / `complex_runner.py`) is
 implemented as a library (fixtures under `src/toolbench/probes/complex/`; no
@@ -386,7 +388,7 @@ fold probe into `ClaudeParser` (`keep_raw_input` / `track_turns`), and stamp
 inefficiency tags at emit. The strict gate (`uv run ruff check .`,
 `uv run python -m toolbench.complexity_gate --base origin/main`,
 `uv run mypy --strict src/toolbench tests`, `uv run pytest -q`) is green —
-**753** tests passing / **4** skipped on the default install, **754** / **3**
+**754** tests passing / **4** skipped on the default install, **755** / **3**
 with `--extra tracing` (the observability skip becomes a pass). Each
 coverage-oriented skip runs somewhere and the "somewhere" is recorded in
 `AGENTS.md` so a skip is never mistaken for coverage: the optional-tracing
@@ -733,9 +735,11 @@ window can vanish at `sessions == 0`.
   and attrition (TB-35). A `--limit` that was passed but never bit is not
   truncation; a negative remainder is flagged as census/scan drift.
 - Cross-agent ratios are comparable only when no uneven-sampling line prints.
-- A zero-match early return ("no sessions matched…") still appends the census the
-  run already built (TB-34) — a narrow `--since` / `--date-*` window must not read
-  as an empty archive.
+- A zero-match early return ("no sessions matched…") fires only when
+  `sessions_scanned == 0` and still appends the census the run already built
+  (TB-34) — a discovery-empty `--since` window must not read as an empty archive.
+  A `--date-*` window that scans sessions but joins zero calls still renders the
+  report and honors `--out` (#135).
 
 The fast test suite is hermetic — it fakes the `agentsview` CLI, points
 `$HERMES_HOME` at a fixture database, and never touches `~/.claude` or
@@ -810,7 +814,8 @@ line means the run headline may understate what the orchestration spent.
 | Hermes session skipped / archive not found | `$HERMES_HOME` / `~/.hermes` missing, or session only in an unread profile DB | Confirm `HERMES_HOME`; it counts under the `non_transcript` reason and `--verbose` names the session. Profile DBs under `profiles/*/state.db` are searched. |
 | `LiveArchive` always skips in local pytest | Gated behind `TOOLBENCH_LIVE` (needs a real `~/.hermes` archive; no CI lane) | Release / Hermes-schema check: `TOOLBENCH_LIVE=1 uv run pytest -q` (see `EVALUATION.md`). Do not invent a CI job for it. |
 | `Malformed lines` explodes into the hundreds of thousands | Binary export absorbed as text (would happen without the NUL sniff) | Should not occur on current code — binary payloads are rejected before parse. |
-| Empty selection message | No sessions matched filters, or all matched sessions were skipped | Check `--project` / `--since` / `--date-*`, and the `(skipped K: reason=count)` suffix on the message; the census disclosure that follows (TB-34) distinguishes a narrow window from a truly empty archive. `--verbose` names each session. |
+| Empty selection message | `sessions_scanned == 0`: discovery matched nothing after filters, or every matched session was skipped before absorb | Check `--project` / `--since`, and the `(skipped K: reason=count)` suffix; the census disclosure that follows (TB-34) distinguishes a discovery-empty window from a truly empty archive. `--verbose` names each session. |
+| Report writes with `scanned: N` but `Tool calls joined: 0` | Sessions scanned, but every call fell outside `--date-from`/`--date-to` (or transcripts carried no tool work) | Expected after #135 — not an empty selection. Widen the date window, or read the Summary as a zero-call corpus rather than "no sessions matched". |
 | `toolbench.probe` without `--session` refuses to write | Seeded-only report is blocked (`SeededReportError`) | Pass `--session PATH`, or `--allow-seeded` for the baseline table only. |
 | Probe usage column shows `—` but context tokens are real | Arm matched, but the API response was not isolable (prose, thinking, or batched `tool_use` — S26) | Re-run from [`protocols/probe-run-sheet.md`](protocols/probe-run-sheet.md); one tool call per turn, no surrounding prose. |
 | Bash usage looks ~15–20 tokens higher than the tool arm | Sentinel + optional Bash `description` are billed into bash `output_tokens` only (TB-17) | Expected until TB-17. Compare context-token columns; treat usage as non-comparable. |
