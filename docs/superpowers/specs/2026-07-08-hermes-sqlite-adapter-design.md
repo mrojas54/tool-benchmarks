@@ -2,7 +2,12 @@
 
 Date: 2026-07-08
 Ticket: TB-11
-Status: shipped (PR #13, merged 2026-07-09)
+**Status:** shipped (PR #13, merged 2026-07-09). Body below is the 2026-07-08
+design snapshot — spike measurements and flat-layout paths are historical. Live
+module is `src/toolbench/hermes.py` (read-only SQLite; discovery still via
+AgentsView). Operator runbook for the live-archive pin:
+`TOOLBENCH_LIVE=1 uv run pytest -q` in [`README.md`](../../../README.md) /
+[`EVALUATION.md`](../../../EVALUATION.md).
 
 ## Problem
 

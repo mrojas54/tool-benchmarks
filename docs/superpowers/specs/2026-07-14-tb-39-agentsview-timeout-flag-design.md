@@ -1,5 +1,13 @@
 # TB-39 — `--agentsview-timeout`: make the TB-32 bound an operator's choice
 
+**Status:** shipped (TB-39). Body below is the design-time snapshot — flat-layout
+paths and contemporaneous wiring notes are historical. Live contract:
+[`README.md`](../../../README.md) (`--agentsview-timeout`), SPEC/EVALUATION S10/S12,
+and `src/toolbench/passive.py` / `src/toolbench/sources.py` /
+`src/toolbench/report.py`. Default remains `AGENTSVIEW_TIMEOUT_S` (60s); `0` is
+unbounded; Summary discloses the ceiling only on `export_timeout` truncation or
+an unbounded run.
+
 ## Problem
 
 TB-32 bounded every `agentsview` subprocess call at `AGENTSVIEW_TIMEOUT_S = 60.0`. The
