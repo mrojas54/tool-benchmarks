@@ -32,7 +32,9 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   not required for the gate; skips for absent live archives are expected. On the
   default install the hermetic suite is ~754 passing / 4 skipped; with
   `uv sync --extra tracing` it is ~755 / 3 (the observability skip becomes a
-  pass). The four default skips: optional-tracing (`lmnr` missing), corpus
+  pass). A leftover `lmnr` after a prior `--extra tracing` sync flips the
+  default-looking run to 755/3 — re-`uv sync` without the extra before quoting
+  754/4. The four default skips: optional-tracing (`lmnr` missing), corpus
   fixtures (`TOOLBENCH_CORPUS_TESTS`), Hermes live-archive (`TOOLBENCH_LIVE`),
   and the sidecar-less WAL classic-reject pin in `test_hermes.py` when this
   SQLite build no longer rejects that shape (build-dependent, not a missing

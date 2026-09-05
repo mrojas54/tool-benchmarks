@@ -4,7 +4,19 @@ Numbered acceptance criteria with stable IDs. Derived from
 `docs/2026-07-07-tool-benchmarks-design.md` (v2) and the v2 implementation
 plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
 
-## Parser & records — `src/toolbench/transcript.py`
+## Records — `src/toolbench/transcript.py`
+
+- **S4 — `ToolCall`.** Carries `agent, source, project, name, input_chars,
+  output_chars, tokens (=output_chars/4), input_tokens (=input_chars/4),
+  session_id, ts, usage, duration_ms, error, model`. `model` is the model
+  string of the assistant turn that emitted the `tool_use` (sibling of
+  `usage` on the transcript `message`); `None` when the source omits it.
+  Schema-neutral helpers in the same module: `ParseResult`, `result_len`,
+  and `JsonLines` (the shared JSONL reader for **parsers** — blanks skipped;
+  undecodable / non-object lines counted). Schema sniffing stays a separate
+  raw-line loop in `adapters.detect_parser` (S27).
+
+## Claude schema parse — `src/toolbench/parsers.py`
 
 - **S1 — id-join.** `ClaudeParser.parse(lines, …)` joins each assistant
   `tool_use` block to its result by id. The join key is `message.content[].id`
@@ -14,15 +26,13 @@ plan. Each ID is referenced by `EVALUATION.md` and by the BUILDPLAN tickets.
   `toolUseResult` **or** block-local `message.content[].content`. When both
   exist, block-local `content` wins, and which source was used is recorded.
 - **S3 — `result_len`.** Normalizes dict / string / MCP block-list /
-  block-local `content` payloads to a character length.
-- **S4 — `ToolCall`.** Carries `agent, source, project, name, input_chars,
-  output_chars, tokens (=output_chars/4), input_tokens (=input_chars/4),
-  session_id, ts, usage, duration_ms, error, model`. `model` is the model
-  string of the assistant turn that emitted the `tool_use` (sibling of
-  `usage` on the transcript `message`); `None` when the source omits it.
+  block-local `content` payloads to a character length (helper lives in
+  `transcript.result_len`; `ClaudeParser` / `CodexParser` /
+  `HermesTraceParser` call it).
 - **S5 — malformed non-fatal.** Malformed / partial JSON lines are counted,
   skipped, never fatal; the count is exposed for the report footer
-  (`ParseResult(calls, malformed)`).
+  (`ParseResult(calls, malformed)`). Parsers consume `transcript.JsonLines`
+  for this accounting.
 - **S6 — interrupted kept.** A `tool_use` with no matching result yields
   `output_chars=0, no_result=True`; it is kept, not dropped.
 
