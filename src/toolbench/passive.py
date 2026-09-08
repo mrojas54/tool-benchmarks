@@ -713,6 +713,24 @@ def _empty_freeze_refusal(
     return detail
 
 
+def _empty_replay_subagent_refusal(freeze_path: str, pinned: int) -> str:
+    """Why a replay refuses when `--exclude-subagents` drops every pinned ref (S37).
+
+    The write-side guard (`_empty_freeze_refusal`) measures the post-filter set before
+    pinning, but a manifest frozen without `--exclude-subagents` can still carry only
+    subagent sessions. Replaying it with `--exclude-subagents` empties the scan in
+    `main` after `_resolve_corpus`, reproducing the same silent wrong answer the write
+    guard exists to prevent: exit 0 and the discovery-empty headline.
+    """
+    return (
+        f"toolbench.passive: fatal freeze error: {freeze_path} pins {pinned} "
+        "subagent session(s), and `--exclude-subagents` drops every one before the "
+        "scan; refusing to replay a frozen corpus that would answer nothing. Drop "
+        "--exclude-subagents to replay the pinned subagents, or re-freeze with a "
+        "selection that reaches parent sessions."
+    )
+
+
 @dataclass(frozen=True)
 class _FreezePlan:
     """How `--freeze` governs this run (TB-22, S37).
@@ -903,6 +921,16 @@ def main(
 
     if args.exclude_subagents:
         refs = filter_subagents(refs)
+
+    if (
+        freeze.replaying
+        and freeze.path is not None
+        and args.exclude_subagents
+        and sessions_discovered > 0
+        and not refs
+    ):
+        print(_empty_replay_subagent_refusal(freeze.path, sessions_discovered), file=sys.stderr)
+        return 1
 
     # AFTER the filter, unlike the two provenance counts above (TB-35). The census's
     # `includes` track the POST-filter population (TB-33 Finding 1), so a pre-filter count

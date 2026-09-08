@@ -1197,6 +1197,39 @@ class CorpusFreezeMainTests(unittest.TestCase):
             self.assertNotIn("no sessions matched", out.getvalue())
             self.assertEqual(Path(manifest).read_bytes(), before)
 
+    def test_refuses_to_replay_subagent_only_freeze_with_exclude_subagents(self) -> None:
+        """A subagent-only pin frozen without the flag must not replay to zero at exit 0.
+
+        The write-side guard refuses pinning when `--exclude-subagents` would empty the
+        scan, but a manifest frozen *without* that flag can still carry only subagent
+        refs. Replaying with `--exclude-subagents` drops them all in `main` after
+        `_resolve_corpus` -- the same silent wrong answer through a third door.
+        """
+        with TemporaryDirectory() as tmp:
+            session = Path(tmp) / "projects" / "proj" / "116ef75f"
+            (session / "subagents").mkdir(parents=True)
+            shutil.copy(FIXTURES / "sample.jsonl", session / "subagents" / "child.jsonl")
+            manifest = str(Path(tmp) / "freeze.json")
+            freeze_argv = ["--index-source", "raw", "--all", "--freeze", manifest]
+            main(freeze_argv, root=str(Path(tmp) / "projects"))
+
+            replay_argv = [
+                "--index-source",
+                "raw",
+                "--all",
+                "--exclude-subagents",
+                "--freeze",
+                manifest,
+            ]
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                code = main(replay_argv, root=str(Path(tmp) / "projects"))
+            self.assertEqual(code, 1)
+            self.assertIn("fatal freeze error", err.getvalue())
+            self.assertIn("subagent session(s)", err.getvalue())
+            self.assertIn("--exclude-subagents", err.getvalue())
+            self.assertNotIn("no sessions matched", out.getvalue())
+
     def test_replay_whose_refs_all_vanished_is_disclosed_not_refused(self) -> None:
         """Counter-trap: a pin whose refs have all vanished is not an empty pin.
 
