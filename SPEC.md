@@ -203,7 +203,13 @@ and re-exports the public symbols historical imports expect.
   raises typed `MalformedFreezeManifest` for OS read failure, non-UTF-8, invalid
   JSON, non-object roots, bad `refs`, or missing required fields; `passive`
   maps that (and write-time `OSError`) to `fatal freeze error: …` on stderr and
-  exit 1 (S23 / PR #87) — same operator contract as a bad `--run-manifest`.
+  exit 1 (S23 / PR #87) — same operator contract as a bad `--run-manifest`. A
+  well-formed manifest that pins **zero** refs (`refs: []` — written before the
+  write-side guard, hand-edited, or truncated) is likewise refused on replay
+  (`refusing to replay an empty freeze manifest`, exit 1, the file left as
+  found), so an empty pin can never report "no sessions matched" at exit 0 in
+  the same words a genuinely empty archive uses; a pin whose refs have all
+  vanished since the freeze still replays and names the vanished count.
   Refs that no longer load — a raw file gone or an
   `agentsview export` that reports `source file not found`, both raising the typed
   `MissingSourceExport` — are counted as `Replaying frozen corpus: <path>
@@ -444,9 +450,10 @@ and re-exports the public symbols historical imports expect.
   `--freeze` or `--run-manifest` file, a `--freeze` path that exists but is not
   a regular file (e.g. a directory), an `OSError` while writing a new freeze
   manifest (`MalformedFreezeManifest` from `freeze.py`; same shape as
-  `MalformedRunManifest`), or a first `--freeze` write whose scan set is empty
+  `MalformedRunManifest`), a first `--freeze` write whose scan set is empty
   — discovery matched zero sessions, or matched only subagent sessions under
-  `--exclude-subagents` (S37).
+  `--exclude-subagents` — or a `--freeze` replay of a manifest that pins zero
+  refs (S37).
 
 ## Worktree reclaim — `src/toolbench/worktrees.py`
 

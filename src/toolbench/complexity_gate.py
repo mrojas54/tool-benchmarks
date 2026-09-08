@@ -101,6 +101,26 @@ def compare_complexity(
     return GateResult(tuple(errors), tuple(warnings))
 
 
+def nearest_to_threshold(
+    report: Mapping[Symbol, FunctionComplexity],
+    *,
+    threshold: int = DEFAULT_THRESHOLD,
+    count: int = 3,
+) -> tuple[FunctionComplexity, ...]:
+    """The `count` functions at or under `threshold` with the least headroom.
+
+    Highest complexity first, then by symbol so the order is stable. The absolute
+    pin (`test_no_first_party_function_exceeds_the_threshold`) is a hair trigger
+    by design: one added branch in a function sitting at exactly the budget turns
+    a green suite red for a reason the author will read as unrelated to their
+    change. Naming the functions closest to that cliff in the failure message
+    makes the margin visible at the moment it matters, without moving the gate.
+    """
+    within = [m for m in report.values() if m.complexity <= threshold]
+    within.sort(key=lambda m: (-m.complexity, m.symbol))
+    return tuple(within[:count])
+
+
 def _qualified_function_names(source: str) -> dict[tuple[int, str], str]:
     names: dict[tuple[int, str], str] = {}
 

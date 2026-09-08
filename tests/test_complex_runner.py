@@ -148,6 +148,7 @@ class ProvisionWorktreeTests(unittest.TestCase):
         _run(["git", "init", "-q"], self.repo_dir)
         _run(["git", "config", "user.email", "test@example.com"], self.repo_dir)
         _run(["git", "config", "user.name", "Test"], self.repo_dir)
+        _run(["git", "config", "commit.gpgsign", "false"], self.repo_dir)
         (self.repo_dir / "a.txt").write_text("original\n", encoding="utf-8")
         _run(["git", "add", "a.txt"], self.repo_dir)
         _run(["git", "commit", "-q", "-m", "init"], self.repo_dir)
@@ -237,6 +238,49 @@ class ProvisionWorktreeTests(unittest.TestCase):
         self.assertEqual(status, "", "a dirty tree leaks the defect via git diff/status")
         log = _run(["git", "log", "--oneline"], dest).stdout.strip().splitlines()
         self.assertEqual(len(log), 1, "the trial tree must have exactly one commit")
+
+    def test_commit_lands_under_an_operator_config_that_signs_commits(self) -> None:
+        """A global `commit.gpgsign=true` must never reach the trial commit.
+
+        `_commit_initial_state` promises provisioning needs no global git config.
+        Identity was overridden on the invocation; signing was not -- so an
+        operator's `commit.gpgsign=true` routed the throwaway commit through their
+        signing agent, and the suite blocked, failed with exit 128, or passed
+        depending only on whether that agent happened to answer. The counter-trap
+        first proves the config is live on this machine (a bare commit under it
+        fails), so a green run here is the override working and not a signer
+        quietly succeeding.
+        """
+        gitconfig = self.root / "operator-gitconfig"
+        gitconfig.write_text(
+            "[commit]\n\tgpgsign = true\n"
+            "[gpg]\n\tprogram = /nonexistent/toolbench-no-signer\n",
+            encoding="utf-8",
+        )
+        with mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(gitconfig)}):
+            bare = self.root / "bare"
+            bare.mkdir()
+            _run(["git", "init", "-q"], bare)
+            _run(["git", "config", "user.email", "test@example.com"], bare)
+            _run(["git", "config", "user.name", "Test"], bare)
+            (bare / "f.txt").write_text("x\n", encoding="utf-8")
+            _run(["git", "add", "f.txt"], bare)
+            with self.assertRaises(subprocess.CalledProcessError):
+                _run(["git", "commit", "-q", "-m", "would be signed"], bare)
+
+            dest = self.root / "wt_signing_operator"
+            provision_worktree(
+                self.defect,
+                _arm("bash"),
+                1,
+                self.corpus_root,
+                dest,
+                fixture_root=self.fixture_root,
+                manifest_path=self.manifest_path,
+            )
+        log = _run(["git", "log", "--oneline"], dest).stdout.strip().splitlines()
+        self.assertEqual(len(log), 1, "the trial commit must land unsigned")
+        self.assertEqual(_run(["git", "status", "--porcelain"], dest).stdout, "")
 
     def test_git_diff_reveals_nothing_because_the_defect_is_committed(self) -> None:
         # The direct C1 reproduction: with the old worktree+apply path this diff
@@ -342,6 +386,7 @@ class ProvisionWorktreeTests(unittest.TestCase):
         _run(["git", "init", "-q"], repo_dir)
         _run(["git", "config", "user.email", "test@example.com"], repo_dir)
         _run(["git", "config", "user.name", "Test"], repo_dir)
+        _run(["git", "config", "commit.gpgsign", "false"], repo_dir)
         (repo_dir / "a.txt").write_text("original\n", encoding="utf-8")
         _run(["git", "add", "a.txt"], repo_dir)
         _run(["git", "commit", "-q", "-m", "init"], repo_dir)
@@ -410,6 +455,7 @@ class ProvisionWorktreeTests(unittest.TestCase):
         _run(["git", "init", "-q"], repo_dir)
         _run(["git", "config", "user.email", "test@example.com"], repo_dir)
         _run(["git", "config", "user.name", "Test"], repo_dir)
+        _run(["git", "config", "commit.gpgsign", "false"], repo_dir)
 
         web_dir = repo_dir / "web"
         web_dir.mkdir()
@@ -553,6 +599,7 @@ class DepsCacheAncestryTests(unittest.TestCase):
         _run(["git", "init", "-q"], self.repo_dir)
         _run(["git", "config", "user.email", "test@example.com"], self.repo_dir)
         _run(["git", "config", "user.name", "Test"], self.repo_dir)
+        _run(["git", "config", "commit.gpgsign", "false"], self.repo_dir)
         (self.repo_dir / "web" / "app.js").write_text("x\n", encoding="utf-8")
         _run(["git", "add", "-A"], self.repo_dir)
         _run(["git", "commit", "-q", "-m", "init"], self.repo_dir)

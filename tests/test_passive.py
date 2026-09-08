@@ -1171,21 +1171,59 @@ class CorpusFreezeMainTests(unittest.TestCase):
             self.assertEqual(err.getvalue(), "")
             self.assertTrue(Path(manifest).exists())
 
-    def test_replay_empty_freeze_names_provenance_on_zero_match(self) -> None:
-        """Replaying an already-empty freeze must say so on the zero-match path."""
+    def test_refuses_to_replay_empty_freeze_manifest(self) -> None:
+        """A manifest pinning zero refs is refused on replay, as it is on write (S37).
+
+        Write-once already refuses to pin nothing, but a manifest written before
+        that guard, hand-edited, or truncated can still carry `refs: []`. Replaying
+        it analysed nothing at exit 0 -- the same exit code and the same first line
+        as a genuinely empty archive -- so a caller keying on either could not tell
+        the two apart. The manifest is left byte-for-byte in place: the run
+        refuses, it does not tidy.
+        """
         with TemporaryDirectory() as tmp:
             manifest = str(Path(tmp) / "freeze.json")
             write_manifest(manifest, [], corpus_fingerprint([]).digest)
-            out = io.StringIO()
-            with redirect_stdout(out):
+            before = Path(manifest).read_bytes()
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
                 code = main(
                     ["--index-source", "raw", "--all", "--freeze", manifest],
                     root=str(Path(tmp) / "projects"),
                 )
+            self.assertEqual(code, 1)
+            self.assertIn("fatal freeze error", err.getvalue())
+            self.assertIn("refusing to replay an empty freeze manifest", err.getvalue())
+            self.assertNotIn("no sessions matched", out.getvalue())
+            self.assertEqual(Path(manifest).read_bytes(), before)
+
+    def test_replay_whose_refs_all_vanished_is_disclosed_not_refused(self) -> None:
+        """Counter-trap: a pin whose refs have all vanished is not an empty pin.
+
+        The refs are present in the manifest; they simply no longer load. That is
+        exactly the drift a freeze exists to name (TB-22), so the replay runs, scans
+        zero, and reports the vanished count at exit 0 -- only `refs: []` is refused.
+        """
+        with TemporaryDirectory() as d:
+            manifest = str(Path(d) / "corpus.manifest")
+            refs = [
+                SessionRef("claude", "agentsview", "p", "gone-1", None),
+                SessionRef("claude", "agentsview", "p", "gone-2", None),
+            ]
+            write_manifest(manifest, refs, corpus_fingerprint(["gone-1", "gone-2"]).digest)
+            runner = FakeRunner(
+                [
+                    completed(returncode=1, stderr="fatal: source file not found: /x/gone-1.jsonl"),
+                    completed(returncode=1, stderr="fatal: source file not found: /x/gone-2.jsonl"),
+                ]
+            )
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                code = main(["--index-source", "agentsview", "--freeze", manifest], runner=runner)
             self.assertEqual(code, 0)
-            message = out.getvalue()
-            self.assertIn("no sessions matched", message)
-            self.assertIn("Replaying frozen corpus", message)
+            self.assertNotIn("refusing to replay", err.getvalue())
+            self.assertIn("no sessions matched", out.getvalue())
+            self.assertIn("(2 vanished since freeze)", out.getvalue())
 
     def test_replay_uses_frozen_refs_not_live_discovery(self) -> None:
         good = (FIXTURES / "sample.jsonl").read_text()

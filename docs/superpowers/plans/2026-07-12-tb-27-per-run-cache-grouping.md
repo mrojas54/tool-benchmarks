@@ -1,5 +1,7 @@
 # TB-27 — Per-Run Cache-Token Grouping Implementation Plan
 
+> **Paths as of 2026-07-12.** `tests/test_passive_cli.py` was later merged into `tests/test_passive.py` (PR #132); the two runnable `Run:` commands below have been retargeted, and every other reference reads with that substitution. The plan body is otherwise frozen as written.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Attribute Claude cache tokens to an orchestration *run* by summing per-entry `usage` bucketed by that entry's `gitBranch`, against a branch set supplied by a JSON run-manifest.
@@ -1070,7 +1072,7 @@ class RunManifestMainTests(unittest.TestCase):
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `uv run pytest tests/test_passive_cli.py -q -k "run_manifest or tickets"`
+Run: `uv run pytest tests/test_passive.py -q -k "run_manifest or tickets"`
 Expected: FAIL — `AttributeError: 'CliArgs' object has no attribute 'run_manifest'`
 
 - [ ] **Step 3: Write the implementation**
@@ -1150,7 +1152,7 @@ And pass the ticket override to the report call at `passive.py:360`:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `uv run pytest tests/test_passive_cli.py -q`
+Run: `uv run pytest tests/test_passive.py -q`
 Expected: PASS
 
 - [ ] **Step 5: Run the gate and commit**

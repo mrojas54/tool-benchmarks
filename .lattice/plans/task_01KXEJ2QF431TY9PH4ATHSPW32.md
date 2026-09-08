@@ -1,5 +1,7 @@
 # TB-34: calls_joined == 0 early-return discards the census: 'no sessions matched' throws away a denominator it already computed
 
+> Paths as written at run time: `tests/test_passive_cli.py` has since been merged into `tests/test_passive.py` (PR #132). Record body frozen.
+
 Pre-existing early-return, but TB-33 now gives it a disclosure to throw on the floor.
 
 WHERE: toolbench/passive.py:418-428.

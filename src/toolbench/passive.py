@@ -618,6 +618,9 @@ def _resolve_corpus(
         except MalformedFreezeManifest as exc:
             print(f"toolbench.passive: fatal freeze error: {exc}", file=sys.stderr)
             return None
+        if not manifest.refs:
+            print(_empty_replay_refusal(freeze_path), file=sys.stderr)
+            return None
         refs, fallback_reason, skips = manifest.refs, None, []
         census, frozen_census_note = _replay_census(manifest, freeze_path, args)
     else:
@@ -649,6 +652,31 @@ def _resolve_corpus(
         census,
         limit_truncated,
         frozen_census_note,
+    )
+
+
+def _empty_replay_refusal(freeze_path: str) -> str:
+    """Why a replay of a manifest pinning zero refs is refused (S37 / S23).
+
+    The write side already refuses to pin nothing (`_empty_freeze_refusal`), but a
+    manifest written before that guard, hand-edited, or truncated can still carry
+    `refs: []`, and `read_manifest` is deliberately tolerant of it -- an empty list
+    is well-formed. Replaying it scanned nothing and exited 0 with the same first
+    line a genuinely empty archive prints; the provenance line underneath told a
+    human, but nothing told a script keying on the exit status. The read side is
+    now guarded the way the write side is, and the file is left exactly as found:
+    the run refuses, it does not tidy.
+
+    A pin whose refs have all VANISHED since the freeze is not this case: those
+    refs are present, they simply no longer load, and the replay discloses the
+    vanished count (TB-22) instead of refusing.
+    """
+    return (
+        f"toolbench.passive: fatal freeze error: {freeze_path} pins zero sessions; "
+        "refusing to replay an empty freeze manifest. A replay of nothing would "
+        'answer "no sessions matched" at exit 0 in the same words a genuinely empty '
+        "archive uses. Remove the manifest and re-run --freeze to pin a fresh "
+        "selection, or drop --freeze."
     )
 
 

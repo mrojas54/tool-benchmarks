@@ -478,6 +478,12 @@ The project is [uv](https://docs.astral.sh/uv/)-managed (`pyproject.toml` +
 group installs only the gate tools (`ruff` / `mypy` / `pytest`); the shipped
 package stays stdlib-only by default. Requires Python ≥3.13.
 
+The project installs from this checkout only. The distribution name `toolbench`
+is already taken on PyPI by an unrelated package (at a higher version), so
+`pip install toolbench` does **not** fetch this project; if publishing is ever
+contemplated, pick a distinct distribution name and keep the `toolbench` import
+package and console script.
+
 ```sh
 # Bootstrap (once per checkout; also runs implicitly under `uv run`)
 uv sync
@@ -709,8 +715,14 @@ moving, not your code (TB-22).
   sessions (e.g. an overly narrow `--since`), or it matched **only subagent
   sessions** while `--exclude-subagents` is set. The guard applies the same filter
   the scan will use *before* writing (#132); the message names which case applies —
-  the first is fixed by widening filters, the second by dropping the flag. An
-  already-empty manifest on disk still replays as a zero-match corpus.
+  the first is fixed by widening filters, the second by dropping the flag. The
+  read side is guarded the same way: a manifest already on disk that pins
+  **zero** refs (written before the write guard, hand-edited, or truncated) is
+  refused on replay — `fatal freeze error`, exit 1, the file left byte-for-byte
+  as found — so an empty pin can never answer "no sessions matched" at exit 0 in
+  the words a genuinely empty archive uses. A pin whose refs have all *vanished*
+  since the freeze is not empty: it replays, scans zero, and names the vanished
+  count.
   - **Manifest v2 + freeze-time census (TB-37).** New freezes write
     `toolbench-freeze-2` and, when the freeze-time census succeeded, persist it
     under a `census` key together with its subagent-population filter. Replay then
@@ -887,7 +899,11 @@ working tree. Change the budget in `complexity_gate.py`, not in `pyproject.toml`
   unchanged or reduced, but fails if it gets worse;
 - the hermetic suite also pins the absolute set empty
   (`test_no_first_party_function_exceeds_the_threshold`, #132) — so a hotspot
-  the regression gate would grandfather still fails `pytest` until it is reduced;
+  the regression gate would grandfather still fails `pytest` until it is reduced.
+  Its failure message also names the three functions closest to the threshold
+  (`complexity_gate.nearest_to_threshold`), so the author who trips the pin sees
+  the cliff — several functions sit at exactly 10 — rather than reading their
+  own change as the only cause;
 - an increase of 2 or more that remains at or below 10 emits a review warning;
 - `# noqa: C901` does not hide a function from the regression comparison
   (`ruff check --ignore-noqa`).

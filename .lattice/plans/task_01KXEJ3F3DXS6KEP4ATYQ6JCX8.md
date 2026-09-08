@@ -1,5 +1,7 @@
 # TB-36: _probe_agentsview hand-assembles a session-list argv outside _list_argv(), the sole-builder invariant TB-33 established
 
+> Paths as written at run time: `tests/test_passive_cli.py` has since been merged into `tests/test_passive.py` (PR #132). Record body frozen.
+
 WHERE: toolbench/sources.py:555-563 (_probe_agentsview) vs toolbench/sources.py:211-235 (_list_argv).
 
 WHAT: TB-33 made _list_argv the ONE place a agentsview session list argv is built, by design -- its docstring states the invariant: the census denominators and the discovery numerators must carry identical filters or they describe different populations. Routing both through here makes that invariant structural instead of a comment two functions apart.
