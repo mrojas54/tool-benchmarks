@@ -1,5 +1,7 @@
 # Run State — tool-benchmarks Run 3 (TB-34 · TB-36 · TB-37 · TB-38)
 
+> Paths as written at run time: `tests/test_passive_cli.py` has since been merged into `tests/test_passive.py` (PR #132). Record body frozen.
+
 Run 1 (TB-2…TB-7, closed 2026-07-08) is archived under [`run-1/`](run-1/);
 its CLOSEOUT and validation report live there. Run 2 (TB-19/TB-18/TB-20) and
 the intervening TB-21…23, TB-32, TB-39 waves closed without a matching

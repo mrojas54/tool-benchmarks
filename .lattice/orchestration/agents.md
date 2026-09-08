@@ -1,5 +1,7 @@
 # Agents — tool-benchmarks (run 3: TB-34 · TB-36 · TB-37 · TB-38)
 
+> Paths as written at run time: `tests/test_passive_cli.py` has since been merged into `tests/test_passive.py` (PR #132). Record body frozen.
+
 Active table overwritten each dispatch tick. Run 3 uses Agent-tool worktree
 isolation, not c11 panes/surfaces — "Surface ref"/"Pane ref" are N/A this run;
 ground truth is the Agent tool's background-task status plus verified git/PR

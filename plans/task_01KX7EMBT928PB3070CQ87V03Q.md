@@ -1,5 +1,7 @@
 # TB-26 — session-grain cache-token sums for Claude (read + creation)
 
+> Paths as written at run time: `tests/test_passive_cli.py` has since been merged into `tests/test_passive.py` (PR #132). Record body frozen.
+
 Spec: S39 · Buildplan: T16 · Closed by PR #43 (merged `dc52ca9`)
 
 ## Plan (revised after audit)

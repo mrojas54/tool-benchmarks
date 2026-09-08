@@ -1,5 +1,7 @@
 # Result Validation Report — Run 3 (TB-34, TB-36, TB-37, TB-38)
 
+> Paths as written at run time: `tests/test_passive_cli.py` has since been merged into `tests/test_passive.py` (PR #132). Record body frozen.
+
 Validator: Result Validator (cold read, no prior dispatch context).
 Date: 2026-07-14.
 Baseline (pre-run, `main` @ c07609a): 578 passed, 2 skipped, 3 subtests; ruff clean; mypy --strict 0 errors.
