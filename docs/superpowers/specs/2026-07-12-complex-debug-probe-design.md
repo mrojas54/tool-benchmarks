@@ -33,7 +33,9 @@ warmup commands inside a short-lived archived tree at the same SHA.
 Each repo cache leaf stamps `.manifest-sha` after a successful build; on the
 next `ensure_deps` call a missing or drifted stamp wipes cached dep trees and
 rebuilds (PR #102), so a packaged-SHA bump cannot leave oracles on stale
-`node_modules` while trials archive the new pin.
+`node_modules` while trials archive the new pin. The throwaway trial commit also
+forces `commit.gpgsign=false` beside the identity overrides (PR #138), so an
+operator's global signing config cannot hang or fail provisioning.
 
 **Deps-cache invariants** (`UnsafeDepsCache`): the shared cache must diverge from
 the corpus at the filesystem root; must be a real private directory owned by this

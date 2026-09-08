@@ -3,7 +3,11 @@
 Date: 2026-07-12
 Ticket: `TB-27` (buildplan `T17`)
 Depends on: `TB-26` / `S39` (session-grain cache sums), landed
-Status: implemented (TB-27 / PR #46); contract rows live in SPEC/EVALUATION/BUILDPLAN
+**Status:** shipped (TB-27 / PR #46). Body below is the design-time snapshot
+(example paths may be flat-layout). Live contract rows: SPEC/EVALUATION/BUILDPLAN
+**S40**; operator recipe: [`.claude/skills/cache-token-metrics/SKILL.md`](../../../.claude/skills/cache-token-metrics/SKILL.md).
+`--tickets` without `--run-manifest` is a no-op; empty/missing `branches` exits 1;
+optional `worktrees` is unused for attribution.
 
 ## Why this exists
 

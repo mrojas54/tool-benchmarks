@@ -2,7 +2,13 @@
 
 Date: 2026-07-09
 Ticket: TB-13
-Status: shipped (PR #19, merged 2026-07-09)
+**Status:** shipped (PR #19, merged 2026-07-09). Body below is the 2026-07-09
+design snapshot — flat-layout paths (`toolbench/…`) and the path-based
+`parse_session` API named in the Problem section are historical. Live modules
+live under `src/toolbench/`; schema classes own `parsers.py`, sniff/dispatch is
+`adapters.detect_parser` over `DETECT_WINDOW` (not `JsonLines`), and path-based
+`parse_session` is retired (CQ 1.3). Operator truth:
+[`README.md`](../../../README.md) (Module ownership) + SPEC S27.
 Supersedes: the design sketch in TB-13's own description (see "Corrections to the ticket")
 
 ## Problem
