@@ -659,7 +659,13 @@ def _apply_fixture(
 def _commit_initial_state(dest: Path, branch: str, message: str) -> None:
     """A fresh repo whose single commit IS the defect state.
 
-    Identity is set on the commit invocation so provisioning needs no global git config.
+    Identity is set on the commit invocation so provisioning needs no global git
+    config -- and commit signing is switched off on the same invocation, for the
+    same reason. An operator's `commit.gpgsign=true` would otherwise route this
+    throwaway commit through their signing agent: blocked while the agent waits
+    for an unlock, exit 128 when no key answers, and green only on the days the
+    agent happens to be awake. The trial tree is nobody's authored work, so
+    there is nothing to sign.
     PROMPT.md is deliberately committed too, so `git status` stays clean rather than
     showing an untracked file that would itself invite `git status` (C1 in miniature).
     """
@@ -679,6 +685,8 @@ def _commit_initial_state(dest: Path, branch: str, message: str) -> None:
             "user.email=probe@toolbench.local",
             "-c",
             "user.name=toolbench-probe",
+            "-c",
+            "commit.gpgsign=false",
             "commit",
             "-q",
             "-m",

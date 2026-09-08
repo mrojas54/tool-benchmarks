@@ -15,6 +15,7 @@ from toolbench.complexity_gate import (
     compare_complexity,
     evaluate_repository,
     format_annotations,
+    nearest_to_threshold,
 )
 
 
@@ -98,6 +99,23 @@ def test_material_increase_below_threshold_is_a_warning() -> None:
     ] == ["complexity increased by 2"]
 
 
+def test_nearest_to_threshold_ranks_the_least_headroom_first_and_skips_the_over() -> None:
+    at_budget = _function("at_budget", 10)
+    over = _function("over", 12)
+    close = _function("close", 9, path="src/toolbench/a.py")
+    also_close = _function("also_close", 9, path="src/toolbench/b.py")
+    roomy = _function("roomy", 2)
+    report = {f.symbol: f for f in (roomy, over, also_close, at_budget, close)}
+
+    nearest = nearest_to_threshold(report)
+
+    assert [f.symbol.qualname for f in nearest] == ["at_budget", "close", "also_close"]
+    assert [f.symbol.qualname for f in nearest_to_threshold(report, count=1)] == [
+        "at_budget"
+    ]
+    assert nearest_to_threshold({over.symbol: over}) == ()
+
+
 def test_collect_complexities_uses_qualified_names_and_ignores_noqa(
     tmp_path: Path,
 ) -> None:
@@ -144,6 +162,7 @@ def test_repository_evaluation_compares_worktree_to_base_commit(
         ("init", "-q"),
         ("config", "user.email", "complexity-gate@example.invalid"),
         ("config", "user.name", "Complexity Gate Test"),
+        ("config", "commit.gpgsign", "false"),
         ("add", "src/sample.py"),
         ("commit", "-qm", "base"),
     ):
@@ -264,15 +283,22 @@ def test_no_first_party_function_exceeds_the_threshold() -> None:
     )
     assert paths, "found no first-party sources to measure"
 
+    report = collect_complexities(repo_root, paths, ruff_executable=ruff)
     over_threshold = {
         f"{symbol.path}:{symbol.qualname}": measured.complexity
-        for symbol, measured in collect_complexities(
-            repo_root, paths, ruff_executable=ruff
-        ).items()
+        for symbol, measured in report.items()
         if measured.complexity > DEFAULT_THRESHOLD
     }
+    # The cliff, named on failure: the pin holds at zero, but four functions sit
+    # at exactly the budget, so the next author to trip it should see who else
+    # is one branch away rather than read their own change as the only cause.
+    cliff = ", ".join(
+        f"{m.symbol.path}:{m.symbol.qualname}={m.complexity}"
+        for m in nearest_to_threshold(report, threshold=DEFAULT_THRESHOLD)
+    )
 
     assert over_threshold == {}, (
         f"functions over complexity {DEFAULT_THRESHOLD}: {over_threshold}. "
-        "Reduce it, or the base-relative gate will grandfather it indefinitely."
+        "Reduce it, or the base-relative gate will grandfather it indefinitely. "
+        f"Closest to the threshold (refactor on next touch): {cliff}"
     )

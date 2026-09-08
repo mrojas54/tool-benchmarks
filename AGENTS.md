@@ -30,8 +30,8 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   this tree (comments in `pyproject.toml` record what was adopted vs skipped).
 - Optional live dependencies (`agentsview`, Claude/Codex archives, Hermes) are
   not required for the gate; skips for absent live archives are expected. On the
-  default install the hermetic suite is ~754 passing / 4 skipped; with
-  `uv sync --extra tracing` it is ~755 / 3 (the observability skip becomes a
+  default install the hermetic suite is ~757 passing / 4 skipped; with
+  `uv sync --extra tracing` it is ~758 / 3 (the observability skip becomes a
   pass). The four default skips: optional-tracing (`lmnr` missing), corpus
   fixtures (`TOOLBENCH_CORPUS_TESTS`), Hermes live-archive (`TOOLBENCH_LIVE`),
   and the sidecar-less WAL classic-reject pin in `test_hermes.py` when this
@@ -125,8 +125,10 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   `--exclude-subagents`. The guard measures the post-filter scan set *before*
   writing (#132); both cases exit 1 and create no file. The message names which
   case applies, since one is fixed by widening filters and the other by dropping
-  the flag. An already-empty manifest on disk still replays as a zero-match
-  corpus.
+  the flag. The read side mirrors it: a manifest already on disk that pins
+  zero refs (pre-guard, hand-edited, or truncated) is refused on replay --
+  `fatal freeze error`, exit 1, file left as found -- while a pin whose refs
+  have all vanished since still replays and names the vanished count.
 - `ensure_deps` / `provision_worktree` default to the **packaged** manifest
   (`src/toolbench/corpus/manifest.json`); custom corpora must pass their own
   manifest explicitly so a stale generated `corpus/manifest.json` cannot change
