@@ -929,19 +929,24 @@ def main(
     # must still reach `render_report` (and honor `--out`), not read as an empty
     # archive via the discovery-only early return below (S35 / TB-34).
     if scan.reducer.sessions_scanned == 0:
-        print(
-            "\n".join(
-                _no_sessions_lines(
-                    scan.reducer,
-                    census,
-                    skips,
-                    args,
-                    resolved.limit_truncated,
-                    dict(sampled_by_agent),
-                    freeze=freeze,
-                )
-            )
+        lines = _no_sessions_lines(
+            scan.reducer,
+            census,
+            skips,
+            args,
+            resolved.limit_truncated,
+            dict(sampled_by_agent),
+            freeze=freeze,
         )
+        content = "\n".join(lines) + "\n"
+        if args.out:
+            # #135 honored `--out` when sessions scanned but joined zero calls; the
+            # zero-scan path must too -- otherwise a later empty run exits 0 while
+            # leaving a prior report.md byte-for-byte unchanged (silent wrong answer).
+            Path(args.out).write_text(content)
+            print(f"Report written to {args.out}")
+        else:
+            print(content, end="")
         return 0
 
     report = render_report(

@@ -348,6 +348,31 @@ class MainExitContractTests(unittest.TestCase):
             self.assertTrue(out_path.exists())
             self.assertIn("## Summary", out_path.read_text())
 
+    def test_zero_match_with_out_overwrites_stale_report(self) -> None:
+        """A zero-scan run with `--out` must not leave a prior report on disk."""
+        with TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "proj"
+            proj.mkdir()
+            shutil.copy(FIXTURES / "sample.jsonl", proj / "sess-001.jsonl")
+            out_path = Path(tmp) / "report.md"
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                code = main(["--index-source", "raw", "--out", str(out_path)], root=tmp)
+            self.assertEqual(code, 0)
+            prior = out_path.read_text()
+            self.assertIn("## Summary", prior)
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                code = main(
+                    ["--index-source", "raw", "--since", "2099-01-01", "--out", str(out_path)],
+                    root=tmp,
+                )
+            self.assertEqual(code, 0)
+            self.assertNotEqual(out_path.read_text(), prior)
+            self.assertIn("no sessions matched", out_path.read_text())
+            self.assertEqual(stdout.getvalue(), f"Report written to {out_path}\n")
+
     def test_date_filter_with_scanned_sessions_renders_report_not_empty_selection(
         self,
     ) -> None:
