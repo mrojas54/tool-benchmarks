@@ -665,7 +665,9 @@ def _commit_initial_state(dest: Path, branch: str, message: str) -> None:
     throwaway commit through their signing agent: blocked while the agent waits
     for an unlock, exit 128 when no key answers, and green only on the days the
     agent happens to be awake. The trial tree is nobody's authored work, so
-    there is nothing to sign.
+    there is nothing to sign. `--no-verify` skips global `core.hooksPath` hooks
+    for the same reason -- a failing pre-commit on the operator's machine must
+    not block a throwaway benchmark tree that is never pushed.
     PROMPT.md is deliberately committed too, so `git status` stays clean rather than
     showing an untracked file that would itself invite `git status` (C1 in miniature).
     """
@@ -689,6 +691,7 @@ def _commit_initial_state(dest: Path, branch: str, message: str) -> None:
             "commit.gpgsign=false",
             "commit",
             "-q",
+            "--no-verify",
             "-m",
             message,
         ],

@@ -282,6 +282,39 @@ class ProvisionWorktreeTests(unittest.TestCase):
         self.assertEqual(len(log), 1, "the trial commit must land unsigned")
         self.assertEqual(_run(["git", "status", "--porcelain"], dest).stdout, "")
 
+    def test_commit_lands_under_an_operator_config_with_failing_hooks(self) -> None:
+        """A global `core.hooksPath` pre-commit must not block the trial commit."""
+        hook_dir = self.root / "hooks"
+        hook_dir.mkdir()
+        (hook_dir / "pre-commit").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        (hook_dir / "pre-commit").chmod(0o755)
+        gitconfig = self.root / "operator-hooks-gitconfig"
+        gitconfig.write_text(f"[core]\n\thooksPath = {hook_dir}\n", encoding="utf-8")
+        with mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(gitconfig)}):
+            bare = self.root / "bare_hooks"
+            bare.mkdir()
+            _run(["git", "init", "-q"], bare)
+            _run(["git", "config", "user.email", "test@example.com"], bare)
+            _run(["git", "config", "user.name", "Test"], bare)
+            (bare / "f.txt").write_text("x\n", encoding="utf-8")
+            _run(["git", "add", "f.txt"], bare)
+            with self.assertRaises(subprocess.CalledProcessError):
+                _run(["git", "commit", "-q", "-m", "hook blocks"], bare)
+
+            dest = self.root / "wt_hooks_operator"
+            provision_worktree(
+                self.defect,
+                _arm("bash"),
+                1,
+                self.corpus_root,
+                dest,
+                fixture_root=self.fixture_root,
+                manifest_path=self.manifest_path,
+            )
+        log = _run(["git", "log", "--oneline"], dest).stdout.strip().splitlines()
+        self.assertEqual(len(log), 1, "the trial commit must bypass global hooks")
+        self.assertEqual(_run(["git", "status", "--porcelain"], dest).stdout, "")
+
     def test_git_diff_reveals_nothing_because_the_defect_is_committed(self) -> None:
         # The direct C1 reproduction: with the old worktree+apply path this diff
         # printed the seeded change verbatim.
