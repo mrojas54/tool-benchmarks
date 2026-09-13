@@ -1062,6 +1062,18 @@ class CorpusFreezeMainTests(unittest.TestCase):
             }
         )
 
+    def _parent_probe_payload(self, *session_ids: str) -> str:
+        """Child-excluded listing for agentsview freeze replay restamp (TB-31)."""
+        return json.dumps(
+            {
+                "sessions": [
+                    {"id": sid, "project": "p", "agent": "claude"} for sid in session_ids
+                ],
+                "next_cursor": "",
+                "total": len(session_ids),
+            }
+        )
+
     def test_first_run_writes_the_manifest(self) -> None:
         good = (FIXTURES / "sample.jsonl").read_text()
         with TemporaryDirectory() as d:
@@ -1213,6 +1225,7 @@ class CorpusFreezeMainTests(unittest.TestCase):
             write_manifest(manifest, refs, corpus_fingerprint(["gone-1", "gone-2"]).digest)
             runner = FakeRunner(
                 [
+                    completed(stdout=self._parent_probe_payload("gone-1", "gone-2")),
                     completed(returncode=1, stderr="fatal: source file not found: /x/gone-1.jsonl"),
                     completed(returncode=1, stderr="fatal: source file not found: /x/gone-2.jsonl"),
                 ]
@@ -1234,12 +1247,19 @@ class CorpusFreezeMainTests(unittest.TestCase):
                 SessionRef("claude", "agentsview", "p", "good-2", None),
             ]
             write_manifest(manifest, refs, corpus_fingerprint(["good-1", "good-2"]).digest)
-            # Only exports -- no `session list` call, because inputs come from the manifest.
-            runner = FakeRunner([completed(stdout=good), completed(stdout=good)])
+            # One parent-probe listing restamps subagent flags; no live discovery census.
+            runner = FakeRunner(
+                [
+                    completed(stdout=self._parent_probe_payload("good-1", "good-2")),
+                    completed(stdout=good),
+                    completed(stdout=good),
+                ]
+            )
             with redirect_stdout(io.StringIO()):
                 code = main(["--index-source", "agentsview", "--freeze", manifest], runner=runner)
             self.assertEqual(code, 0)
-            self.assertTrue(all("list" not in argv for argv in runner.calls))
+            list_calls = [argv for argv in runner.calls if "list" in argv]
+            self.assertEqual(len(list_calls), 1)
 
     def test_replay_reports_refs_that_vanished_since_freeze(self) -> None:
         good = (FIXTURES / "sample.jsonl").read_text()
@@ -1252,6 +1272,7 @@ class CorpusFreezeMainTests(unittest.TestCase):
             write_manifest(manifest, refs, corpus_fingerprint(["good-1", "gone-2"]).digest)
             runner = FakeRunner(
                 [
+                    completed(stdout=self._parent_probe_payload("good-1", "gone-2")),
                     completed(stdout=good),
                     completed(returncode=1, stderr="fatal: source file not found: /x/gone-2.jsonl"),
                 ]
@@ -1281,12 +1302,74 @@ class CorpusFreezeMainTests(unittest.TestCase):
             write_manifest(manifest, refs, corpus_fingerprint(["good-1", "good-2"]).digest)
             outs = []
             for _ in range(2):
-                runner = FakeRunner([completed(stdout=good), completed(stdout=good)])
+                runner = FakeRunner(
+                    [
+                        completed(stdout=self._parent_probe_payload("good-1", "good-2")),
+                        completed(stdout=good),
+                        completed(stdout=good),
+                    ]
+                )
                 out = io.StringIO()
                 with redirect_stdout(out):
                     main(["--index-source", "agentsview", "--freeze", manifest], runner=runner)
                 outs.append(out.getvalue())
             self.assertEqual(outs[0], outs[1])
+
+    def test_replay_restamps_stale_agentsview_subagent_flags(self) -> None:
+        """TB-29 on replay: agentsview refs carry no path, so stale `is_subagent: false`
+        must be re-derived from a parent probe or `--exclude-subagents` is a no-op."""
+        good = (FIXTURES / "sample.jsonl").read_text()
+        with TemporaryDirectory() as d:
+            manifest = Path(d) / "corpus.manifest"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "version": MANIFEST_VERSION,
+                        "fingerprint": "x",
+                        "count": 2,
+                        "refs": [
+                            {
+                                "agent": "claude",
+                                "source": "agentsview",
+                                "project": "p",
+                                "session_id": "good-1",
+                                "path": None,
+                                "is_subagent": False,
+                            },
+                            {
+                                "agent": "claude",
+                                "source": "agentsview",
+                                "project": "p",
+                                "session_id": "agent-child-1",
+                                "path": None,
+                                "is_subagent": False,
+                            },
+                        ],
+                    }
+                )
+            )
+            runner = FakeRunner(
+                [
+                    completed(stdout=self._parent_probe_payload("good-1")),
+                    completed(stdout=good),
+                ]
+            )
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = main(
+                    [
+                        "--index-source",
+                        "agentsview",
+                        "--exclude-subagents",
+                        "--freeze",
+                        str(manifest),
+                    ],
+                    runner=runner,
+                )
+            self.assertEqual(code, 0)
+            report = out.getvalue()
+            self.assertIn("scanned: 1", report)
+            self.assertIn("Subagents included: no (1 of 2 discovered excluded)", report)
 
 
 class FreezeReplayCensusTests(unittest.TestCase):

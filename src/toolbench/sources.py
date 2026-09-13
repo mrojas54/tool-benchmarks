@@ -390,6 +390,27 @@ def _agentsview_pages(
             break
 
 
+def agentsview_parent_ids(
+    runner: Runner,
+    *,
+    agent: str = "all",
+    project: str | None = None,
+    since: str | None = None,
+    limit: int = 500,
+) -> set[str]:
+    """Parent session ids from agentsview's child-excluded listing (TB-31).
+
+    Exposed for freeze replay: agentsview refs in a manifest carry no filesystem
+    path, so `_is_subagent_from_manifest` cannot self-heal a stale explicit
+    `is_subagent: false` the way raw refs can from `/subagents/` layout. Replay
+    restamps `is_subagent` from this set.
+    """
+    parent_ids, _ = _probe_pass(
+        runner, agent=agent, project=project, since=since, limit=limit
+    )
+    return parent_ids
+
+
 def _probe_pass(
     runner: Runner,
     *,

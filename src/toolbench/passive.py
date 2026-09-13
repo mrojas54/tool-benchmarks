@@ -51,6 +51,7 @@ from toolbench.sources import (
     SkipReason,
     SkipRecord,
     _run_agentsview,
+    agentsview_parent_ids,
     iter_sessions,
 )
 from toolbench.transcript import ParseResult
@@ -622,6 +623,13 @@ def _resolve_corpus(
             print(_empty_replay_refusal(freeze_path), file=sys.stderr)
             return None
         refs, fallback_reason, skips = manifest.refs, None, []
+        if runner is not None:
+            restamped = _restamp_agentsview_subagents(
+                refs, args, runner, freeze_path=freeze_path
+            )
+            if restamped is None:
+                return None
+            refs = restamped
         census, frozen_census_note = _replay_census(manifest, freeze_path, args)
     else:
         try:
@@ -653,6 +661,48 @@ def _resolve_corpus(
         limit_truncated,
         frozen_census_note,
     )
+
+
+def _restamp_agentsview_subagents(
+    refs: list[SessionRef],
+    args: CliArgs,
+    runner: Runner,
+    *,
+    freeze_path: str,
+) -> list[SessionRef] | None:
+    """Re-derive `is_subagent` for agentsview refs on freeze replay.
+
+    Raw refs self-heal from `/subagents/` path layout at read time; agentsview refs
+    carry `path=None`, so a stale explicit `is_subagent: false` from pre-TB-31
+    manifests survives `read_manifest` and defeats `--exclude-subagents` while the
+    report claims exclusion. One parent probe restores the classification discovery
+    would have stamped at freeze time.
+    """
+    if not any(ref.source == "agentsview" for ref in refs):
+        return refs
+    project = None if args.all_projects else args.project
+    page_limit = args.limit if args.limit is not None else 500
+    try:
+        parent_ids = agentsview_parent_ids(
+            runner,
+            agent=args.agent,
+            project=project,
+            since=args.since,
+            limit=page_limit,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(
+            "toolbench.passive: fatal freeze error: could not re-classify "
+            f"agentsview refs for replay of {freeze_path}: {exc}",
+            file=sys.stderr,
+        )
+        return None
+    return [
+        replace(ref, is_subagent=ref.session_id not in parent_ids)
+        if ref.source == "agentsview"
+        else ref
+        for ref in refs
+    ]
 
 
 def _empty_replay_refusal(freeze_path: str) -> str:
