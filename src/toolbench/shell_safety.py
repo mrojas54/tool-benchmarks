@@ -78,6 +78,7 @@ _SERENA_TOOL_PREFIX = "mcp__plugin_serena_serena__"
 # their name with `_SERENA_TOOL_PREFIX` stripped.
 _READ_PATH_ARG: dict[str, tuple[str, str | None]] = {
     "Read": ("file_path", None),
+    "Edit": ("file_path", None),
     "Grep": ("path", "."),
     "Glob": ("path", "."),
     "read_file": ("relative_path", None),
@@ -87,6 +88,10 @@ _READ_PATH_ARG: dict[str, tuple[str, str | None]] = {
     "get_symbols_overview": ("relative_path", None),
     "find_symbol": ("relative_path", None),
     "find_referencing_symbols": ("relative_path", None),
+    "replace_symbol_body": ("relative_path", None),
+    "insert_after_symbol": ("relative_path", None),
+    "insert_before_symbol": ("relative_path", None),
+    "replace_content": ("relative_path", None),
 }
 
 

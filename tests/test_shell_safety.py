@@ -141,6 +141,45 @@ class ReadEscapeTests(unittest.TestCase):
         clean = read_escapes([_rc("Read", file_path="src/schedule.ts")], TRIAL_ROOT)
         self.assertEqual(clean, ())
 
+    def test_native_edit_escaping_the_tree_is_flagged_intree_is_not(self) -> None:
+        # Edit reads its target before mutating; an out-of-tree path is a read escape
+        # even though Edit is a write tool and was omitted from the audited dict.
+        escaped = read_escapes(
+            [_rc("Edit", file_path="../../corpus/wids/web/src/lib/schedule.ts")],
+            TRIAL_ROOT,
+        )
+        self.assertTrue(any(e.startswith("ReadEscape:") for e in escaped), escaped)
+        clean = read_escapes(
+            [_rc("Edit", file_path="web/src/lib/schedule.ts")], TRIAL_ROOT
+        )
+        self.assertEqual(clean, ())
+
+    def test_serena_replace_content_escaping_is_flagged_intree_is_not(self) -> None:
+        out = read_escapes(
+            [
+                _rc(
+                    f"{_SERENA}replace_content",
+                    relative_path="../../corpus/wids/web/src/lib/schedule.ts",
+                    needle="x",
+                    repl="y",
+                )
+            ],
+            TRIAL_ROOT,
+        )
+        self.assertTrue(any(e.startswith("ReadEscape:") for e in out), out)
+        intree = read_escapes(
+            [
+                _rc(
+                    f"{_SERENA}replace_content",
+                    relative_path="web/src/lib/schedule.ts",
+                    needle="x",
+                    repl="y",
+                )
+            ],
+            TRIAL_ROOT,
+        )
+        self.assertEqual(intree, ())
+
     def test_native_grep_with_absolute_path_outside_the_tree_is_flagged(self) -> None:
         calls = [_rc("Grep", pattern="x", path="/Users/me/corpus/wids")]
         escaped = read_escapes(calls, TRIAL_ROOT)
