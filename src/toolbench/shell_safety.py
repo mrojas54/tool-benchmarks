@@ -69,17 +69,27 @@ def _bash_command(call: ToolCall) -> str | None:
 
 _SERENA_TOOL_PREFIX = "mcp__plugin_serena_serena__"
 
-# Structured read tools -> (path-argument key, default when the key is absent).
+# Structured tools -> (path-argument key, default when the key is absent).
 # A `None` default means "no path argument when the key is absent" -- e.g. serena's
 # `search_for_pattern`/`find_symbol` operate project-wide unless a `relative_path`
 # restriction is given, so an absent key is not a read to audit. `Grep`/`Glob`
 # default their scope to the cwd (".") -> the trial root, which is always in-tree.
 # Keys are the LOGICAL tool name: native tools by their own name, serena tools by
 # their name with `_SERENA_TOOL_PREFIX` stripped.
+#
+# Covers WRITE tools too (`Edit`, and serena's mutators), not only reads: a
+# structured mutator also resolves a path argument before touching a file, so an
+# out-of-tree `Edit`/`replace_content`/etc. is exactly as auditable as a read at
+# the same call site -- and an out-of-tree WRITE is worse than a read, since it
+# can change the pristine corpus that later trials read. `read_escapes` flags any
+# escaping call this table covers regardless of whether the tool reads or writes;
+# only tools actually grantable to an arm (see `NATIVE_TOOLS`/`SERENA_TOOLS` in
+# `complex.py`) are listed, since ungrantable tools never appear in a transcript.
 _READ_PATH_ARG: dict[str, tuple[str, str | None]] = {
     "Read": ("file_path", None),
     "Grep": ("path", "."),
     "Glob": ("path", "."),
+    "Edit": ("file_path", None),
     "read_file": ("relative_path", None),
     "find_file": ("relative_path", None),
     "list_dir": ("relative_path", None),
@@ -87,6 +97,10 @@ _READ_PATH_ARG: dict[str, tuple[str, str | None]] = {
     "get_symbols_overview": ("relative_path", None),
     "find_symbol": ("relative_path", None),
     "find_referencing_symbols": ("relative_path", None),
+    "replace_content": ("relative_path", None),
+    "replace_symbol_body": ("relative_path", None),
+    "insert_after_symbol": ("relative_path", None),
+    "insert_before_symbol": ("relative_path", None),
 }
 
 
@@ -152,16 +166,21 @@ def _bash_token_escapes(token: str, root: str) -> bool:
 
 
 def read_escapes(calls: list[ToolCall], trial_root: Path) -> tuple[str, ...]:
-    """Reads whose resolved path lies outside the trial tree. Voids the trial.
+    """Reads OR structured writes whose resolved path lies outside the trial
+    tree. Voids the trial.
 
-    Precise for structured read tools; best-effort for full-shell Bash (a shell
-    can read via indirection no static audit sees -- `bash script.sh`,
+    Precise for structured read/write tools; best-effort for full-shell Bash (a
+    shell can read via indirection no static audit sees -- `bash script.sh`,
     `cat $(locate x)`, a compiled helper -- the reason per-trial filesystem
     sandboxing is the deferred stronger option for full-shell arms).
 
-    Structured read tools (`Read`/`Grep`/`Glob`, serena symbolic reads) carry an
-    explicit path argument: it is extracted, resolved against `trial_root`, and
-    flagged if it is not `trial_root` or a descendant. Bash is scanned token by
+    Structured tools (`Read`/`Grep`/`Glob`/`Edit`, serena's symbolic reads AND
+    mutators) carry an explicit path argument: it is extracted, resolved against
+    `trial_root`, and flagged if it is not `trial_root` or a descendant. An
+    out-of-tree structured WRITE is audited the same way as a read -- it can
+    itself act as a one-bit oracle over pristine source (whether the call
+    succeeds or fails), and any out-of-tree write mutates the corpus that later
+    trials read, which is worse than a read alone. Bash is scanned token by
     token for absolute paths outside the tree and `..` sequences that escape it --
     a tripwire, not a proof, and deliberately not a full shell parse.
 

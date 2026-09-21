@@ -277,6 +277,51 @@ class ReadEscapeTests(unittest.TestCase):
             (),
         )
 
+    def test_native_edit_escaping_the_tree_is_flagged_intree_is_not(self) -> None:
+        # Medium finding, 20260921 tech-debt report: `Edit` resolves a path
+        # exactly like `Read` does, but was absent from the audited dict, so an
+        # out-of-tree `Edit` could read (and mutate) pristine corpus source
+        # without voiding the trial.
+        out = read_escapes(
+            [_rc("Edit", file_path="../../corpus/wids/web/src/lib/schedule.ts")],
+            TRIAL_ROOT,
+        )
+        self.assertTrue(any(e.startswith("ReadEscape:") for e in out), out)
+        intree = read_escapes(
+            [_rc("Edit", file_path="web/src/lib/schedule.ts")], TRIAL_ROOT
+        )
+        self.assertEqual(intree, ())
+
+    def test_serena_mutators_escaping_the_tree_are_flagged_intree_is_not(self) -> None:
+        # Same finding as above, for serena's structured mutators: a
+        # `replace_content`/`replace_symbol_body`/`insert_after_symbol`/
+        # `insert_before_symbol` call with an out-of-tree `relative_path` is a
+        # write escape, not merely a read escape -- and can itself act as a
+        # one-bit oracle over pristine source, or corrupt the corpus other
+        # trials later read.
+        for tool in (
+            "replace_content",
+            "replace_symbol_body",
+            "insert_after_symbol",
+            "insert_before_symbol",
+        ):
+            with self.subTest(tool=tool):
+                out = read_escapes(
+                    [
+                        _rc(
+                            f"{_SERENA}{tool}",
+                            relative_path="../../corpus/wids/web/src/lib/schedule.ts",
+                        )
+                    ],
+                    TRIAL_ROOT,
+                )
+                self.assertTrue(any(e.startswith("ReadEscape:") for e in out), out)
+                intree = read_escapes(
+                    [_rc(f"{_SERENA}{tool}", relative_path="web/src/lib/schedule.ts")],
+                    TRIAL_ROOT,
+                )
+                self.assertEqual(intree, ())
+
     def test_escapes_are_returned_sorted(self) -> None:
         calls = [
             _rc("Bash", command="cat /z/late.ts"),
