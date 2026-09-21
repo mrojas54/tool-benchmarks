@@ -28,6 +28,7 @@ from toolbench.sources import (
     _list_argv,
     _probe_agentsview,
     _run_agentsview,
+    agentsview_parent_ids,
     discover_agentsview,
     iter_agentsview_sessions,
     iter_session_files,
@@ -192,6 +193,33 @@ class IterAgentsviewSessionsTests(unittest.TestCase):
         with self.assertWarns(AgentsViewExclusionWarning) as caught:
             list(iter_agentsview_sessions(runner=runner))
         self.assertIn("7497", str(caught.warning))
+
+
+class AgentsviewParentIdsTests(unittest.TestCase):
+    """`agentsview_parent_ids` exposes TB-31's parent probe alone, for callers
+    (freeze replay's restamp) that need only the classification, not a fresh
+    discovery pass. One call, one page -- the child-excluded listing."""
+
+    def test_returns_ids_from_the_child_excluded_listing_only(self) -> None:
+        parent = {"id": "parent-1", "project": "p", "agent": "claude"}
+        runner = FakeRunner([completed(stdout=_page(parent))])
+        ids = agentsview_parent_ids(runner=runner)
+        self.assertEqual(ids, {"parent-1"})
+        self.assertEqual(len(runner.calls), 1)
+        self.assertNotIn("--include-children", runner.calls[0])
+
+    def test_paginates_until_the_cursor_is_exhausted(self) -> None:
+        s1 = {"id": "s1", "project": "p", "agent": "claude"}
+        s2 = {"id": "s2", "project": "p", "agent": "claude"}
+        runner = FakeRunner(
+            [
+                completed(stdout=_page(s1, cursor="CURSOR1")),
+                completed(stdout=_page(s2)),
+            ]
+        )
+        ids = agentsview_parent_ids(runner=runner)
+        self.assertEqual(ids, {"s1", "s2"})
+        self.assertEqual(len(runner.calls), 2)
 
 
 class AgentsViewPayloadValidationTests(unittest.TestCase):

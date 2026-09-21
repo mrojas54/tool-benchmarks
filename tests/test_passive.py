@@ -348,6 +348,30 @@ class MainExitContractTests(unittest.TestCase):
             self.assertTrue(out_path.exists())
             self.assertIn("## Summary", out_path.read_text())
 
+    def test_zero_scan_with_out_overwrites_a_stale_report(self) -> None:
+        """A run matching zero sessions must still honor `--out` (Medium finding,
+        20260921 tech-debt report).
+
+        The sibling case below (sessions scanned, zero calls joined) already
+        routes through `render_report` and honors `--out`. A run that scans zero
+        SESSIONS took the discovery-only early return instead, printed to stdout
+        only, and left a prior `--out` file untouched -- so automation reading
+        "exit 0 plus the `--out` file" got stale data with no error signal.
+        """
+        with TemporaryDirectory() as tmp:
+            out_path = Path(tmp) / "report.md"
+            out_path.write_text("STALE REPORT FROM LAST WEEK", encoding="utf-8")
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                code = main(
+                    ["--index-source", "raw", "--out", str(out_path)], root=tmp
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(stdout.getvalue(), f"Report written to {out_path}\n")
+            report = out_path.read_text()
+            self.assertIn("no sessions matched", report)
+            self.assertNotIn("STALE REPORT FROM LAST WEEK", report)
+
     def test_date_filter_with_scanned_sessions_renders_report_not_empty_selection(
         self,
     ) -> None:
@@ -1196,6 +1220,94 @@ class CorpusFreezeMainTests(unittest.TestCase):
             self.assertIn("refusing to replay an empty freeze manifest", err.getvalue())
             self.assertNotIn("no sessions matched", out.getvalue())
             self.assertEqual(Path(manifest).read_bytes(), before)
+
+    def test_refuses_to_replay_subagent_only_freeze_with_exclude_subagents(self) -> None:
+        """The replay-side twin of the write-side subagent guard (Medium finding,
+        20260921 tech-debt report).
+
+        A manifest frozen WITHOUT `--exclude-subagents` can pin only subagent
+        sessions. `_resolve_corpus` hands `main` those refs untouched (replay
+        never runs `filter_subagents` itself); `main` then filters them AFTER,
+        same as the discovery path. Without this guard the filtered set is
+        empty, the run falls through to the zero-scan path, and exits 0 with the
+        same first line a genuinely empty archive prints. The manifest is left
+        untouched: this refuses, it does not tidy.
+        """
+        with TemporaryDirectory() as tmp:
+            manifest = str(Path(tmp) / "freeze.json")
+            # `source="raw"` deliberately: the AgentsView restamp added alongside this
+            # guard (see `_restamp_agentsview_subagents`) only fires for
+            # `source="agentsview"` refs and would otherwise need a live runner here
+            # -- this test is about the exclude-subagents-empties-the-replay guard,
+            # not AgentsView's own subagent classification.
+            refs = [
+                SessionRef("claude", "raw", "p", "child-1", None, is_subagent=True),
+                SessionRef("claude", "raw", "p", "child-2", None, is_subagent=True),
+            ]
+            write_manifest(manifest, refs, corpus_fingerprint(["child-1", "child-2"]).digest)
+            before = Path(manifest).read_bytes()
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                code = main(
+                    [
+                        "--index-source",
+                        "raw",
+                        "--freeze",
+                        manifest,
+                        "--exclude-subagents",
+                    ],
+                )
+            self.assertEqual(code, 1)
+            self.assertIn("fatal freeze error", err.getvalue())
+            self.assertIn("--exclude-subagents", err.getvalue())
+            self.assertNotIn("no sessions matched", out.getvalue())
+            self.assertEqual(Path(manifest).read_bytes(), before)
+
+    def test_replay_restamps_stale_agentsview_subagent_flags(self) -> None:
+        """Low finding, 20260921 tech-debt report: a pre-TB-31 AgentsView manifest
+        can persist a stale `is_subagent: false` for a real subagent (TB-29's
+        path-based self-heal can never run for AgentsView refs -- they carry
+        `path=None`). `--exclude-subagents` on replay must still exclude it.
+
+        `child-1` is written `is_subagent=False` (the stale legacy value); the
+        parent probe response does not list it, so the restamp corrects it to
+        `True` and `filter_subagents` drops it. `parent-1` is genuinely a
+        parent -- the probe lists it, the restamp leaves it `False`, and it
+        alone reaches the scan.
+        """
+        good = (FIXTURES / "sample.jsonl").read_text()
+        with TemporaryDirectory() as tmp:
+            manifest = str(Path(tmp) / "freeze.json")
+            refs = [
+                SessionRef("claude", "agentsview", "p", "parent-1", None, is_subagent=False),
+                SessionRef("claude", "agentsview", "p", "child-1", None, is_subagent=False),
+            ]
+            write_manifest(
+                manifest, refs, corpus_fingerprint(["parent-1", "child-1"]).digest
+            )
+            probe_page = json.dumps(
+                {
+                    "sessions": [{"id": "parent-1", "agent": "claude", "project": "p"}],
+                    "next_cursor": "",
+                    "total": 1,
+                }
+            )
+            runner = FakeRunner([completed(stdout=probe_page), completed(stdout=good)])
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = main(
+                    [
+                        "--index-source",
+                        "agentsview",
+                        "--freeze",
+                        manifest,
+                        "--exclude-subagents",
+                    ],
+                    runner=runner,
+                )
+            self.assertEqual(code, 0)
+            report = out.getvalue()
+            self.assertIn("Subagents included: no (1 of 2 discovered excluded)", report)
 
     def test_replay_whose_refs_all_vanished_is_disclosed_not_refused(self) -> None:
         """Counter-trap: a pin whose refs have all vanished is not an empty pin.

@@ -666,6 +666,15 @@ def _commit_initial_state(dest: Path, branch: str, message: str) -> None:
     for an unlock, exit 128 when no key answers, and green only on the days the
     agent happens to be awake. The trial tree is nobody's authored work, so
     there is nothing to sign.
+    `core.hooksPath` is pinned to `/dev/null` on the same invocation, for the
+    same class of reason: an operator's global hooks (e.g. `core.hooksPath` in
+    `~/.gitconfig`) would otherwise run against the throwaway defect tree. A
+    failing hook blocks provisioning with `CalledProcessError`; a passing one
+    can run arbitrary operator code over the tree and even re-stage files,
+    silently changing the fixture the benchmark scores against. `--no-verify`
+    is not enough here: it skips `pre-commit`/`commit-msg` but still runs
+    `post-commit`. Pointing `core.hooksPath` at `/dev/null` (a directory containing
+    no hook scripts) disables every hook for this commit alone.
     PROMPT.md is deliberately committed too, so `git status` stays clean rather than
     showing an untracked file that would itself invite `git status` (C1 in miniature).
     """
@@ -687,6 +696,8 @@ def _commit_initial_state(dest: Path, branch: str, message: str) -> None:
             "user.name=toolbench-probe",
             "-c",
             "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
             "commit",
             "-q",
             "-m",

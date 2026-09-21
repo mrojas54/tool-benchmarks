@@ -292,7 +292,13 @@ packaged manifest there so the vendored tree stays self-describing). Design:
   under a writable non-sticky ancestor. Contents are symlinked into every trial
   and executed by oracles.
 - Arms are enforced by **transcript audit** (`arm_violations` + read-scope), not
-  filesystem walls: any resolved read outside the trial tree voids the trial.
+  filesystem walls: any resolved read OR structured write outside the trial
+  tree voids the trial — `read_escapes` audits `Edit` and serena's mutators
+  (`replace_content`, `replace_symbol_body`, `insert_after_symbol`,
+  `insert_before_symbol`) the same way it audits `Read`/`Grep`/`Glob`/serena's
+  reads, since a structured write also resolves a path argument before it acts,
+  and an out-of-tree write both leaks a one-bit oracle over pristine source and
+  can corrupt the corpus that later trials read.
   `arm_violations` also voids banned tools (`Task` / `Agent`) and gated
   `Bash(<prefix>:*)` commands that chain past the oracle prefix (`;`, `&&`,
   `$()`, …) — the flag is a claim, the transcript is evidence. Bash/control
@@ -722,7 +728,20 @@ moving, not your code (TB-22).
   as found — so an empty pin can never answer "no sessions matched" at exit 0 in
   the words a genuinely empty archive uses. A pin whose refs have all *vanished*
   since the freeze is not empty: it replays, scans zero, and names the vanished
-  count.
+  count. **A third guard covers replay's own subagent filter**: a manifest
+  frozen *without* `--exclude-subagents` can pin only subagent sessions, and
+  replaying it *with* `--exclude-subagents` drops every pinned ref *after*
+  replay loads them — the write-side guard above never sees this case, because
+  it runs before the flag is even applied. Refused the same way: `fatal freeze
+  error`, exit 1, manifest untouched; the message names the flag as the remedy.
+  **AgentsView refs are restamped before that filter runs**, whenever
+  `--exclude-subagents` is set: AgentsView refs carry no path (unlike raw
+  refs), so TB-29's path-based self-heal can never correct a stale
+  `is_subagent: false` persisted by a pre-TB-31 manifest. One extra
+  parent-probe call (`agentsview_parent_ids`) re-derives the flag from the
+  live archive before filtering — paid only on this replay shape, so a plain
+  replay (no `--exclude-subagents`) stays fully hermetic, issuing no AgentsView
+  call at all.
   - **Manifest v2 + freeze-time census (TB-37).** New freezes write
     `toolbench-freeze-2` and, when the freeze-time census succeeded, persist it
     under a `census` key together with its subagent-population filter. Replay then
@@ -847,6 +866,9 @@ line means the run headline may understate what the orchestration spent.
 | `--freeze` exits 1 with `fatal freeze error` / traceback used to escape | Path is a directory, unreadable, non-UTF-8, or invalid JSON; or the first-write could not create the file | Point `--freeze` at a JSON *file* path (create parent dirs if needed). Same contract as a bad `--run-manifest` (S23 / PR #87). |
 | `--freeze` exits 1 with `discovery matched zero sessions; refusing to write an empty freeze manifest` | Selection filters excluded every session. Writing would have pinned the empty set: write-once plus `replaying = path.is_file()` means every later run replays that manifest instead of discovering, so the run would analyze nothing and still exit 0 (`24c4637`) | Expected, and **no manifest is written** — the path is safe to reuse. Widen `--since` / `--project` / other filters and re-run. When the archive is non-empty the message names its session count, so an over-narrow filter is distinguishable from a genuinely empty archive. |
 | `--freeze` exits 1 with `discovery matched only subagent sessions` | Every discovered ref is a subagent; with `--exclude-subagents` the post-filter scan set is empty. The write guard measures that set *before* writing (#132), so it refuses rather than pinning a non-empty manifest that would replay to zero forever at exit 0 | Expected, and **no manifest is written**. Drop `--exclude-subagents`, or widen the selection to reach parent sessions. The message names the subagent count so an over-narrow selection is distinguishable from an archive that genuinely holds only children. |
+| `--freeze` replay exits 1 with `pins N session(s), but --exclude-subagents drops every one of them` | The manifest was frozen *without* `--exclude-subagents` and pinned only subagent sessions; this replay adds the flag, which empties the pinned set *after* replay loads it — a case the write-side guard above never sees | Expected, and the manifest is untouched. Drop `--exclude-subagents` for this replay, or re-freeze a selection that still has parent sessions once the flag is applied. |
+| `--out` file unchanged after a run that matched zero sessions | Fixed (20260921 tech-debt report): the zero-scan early return used to print to stdout only and never touch `--out`, so a stale prior report survived byte-for-byte at exit 0 | Current code always writes `--out` (or prints, when unset) on the zero-scan path too — the same "Report written to …" confirmation as any other run. Re-run on current `main`. |
+| Complex trial provisioning hangs or fails with `CalledProcessError` under an operator's git config | Global `core.hooksPath` holds a hook that blocks or fails against the throwaway defect tree (fixed 20260921; sibling of the `commit.gpgsign` fix in #138) | Current code pins `-c core.hooksPath=/dev/null` beside `-c commit.gpgsign=false` on the trial commit, so no global hook (not even `post-commit`) reaches it. Re-run on current `main`. |
 | `--limit 0` (or a negative `--limit`) still analyzes one session | `--limit` is a plain `int`; truncation is checked *after* each append, so `len(refs) >= 0` (or `>=` a negative) trips only after the first ref | Pass a positive limit, or omit `--limit`. `--tickets` rejects non-positive values; `--limit` does not. |
 | SessionStart hook never finishes listing reclaimable trees on a busy machine | Tracked `.claude/settings.json` caps the hook at `timeout: 10`, while each linked tree may spend up to `GIT_TIMEOUT_S` (60s) on status / idle / size probes | Silence can be a budget miss, not "nothing reclaimable". Run `uv run toolbench worktrees` (or `--reclaimable-only`) outside SessionStart. |
 | Complexity gate fails a function you only moved / renamed | Identity is `(path, qualified name)`; a rename looks like a new function | Reduce it under 10, or land the move with a real simplification. `# noqa: C901` will not hide it. |
@@ -865,6 +887,7 @@ line means the run headline may understate what the orchestration spent.
 | `--run-manifest` shows a large `unattributed` line | Candidate sessions also ran on non-run branches (straddle spillover, S40) | Expected. The run total is only the in-set entry slice; do not treat session totals as run-owned. |
 | `--run-manifest path.md` (or empty `branches`) exits 1 | Manifest must be JSON with a non-empty `branches` list (S40) | Use a dispatch-time JSON like `.lattice/orchestration/run-tb21-23.json`; `agents.md` cannot serve (Branch column is discarded on completion). |
 | `--exclude-subagents` still includes nested subagents / freeze replay ignores the flag | Pre-TB-29 discovery checked `rel.parts[1] == "subagents"` (flat layout that does not exist on disk); freeze manifests could pin stale `"is_subagent": false` | Current code matches `"subagents" in rel.parts[1:-1]` and ORs path re-derivation on freeze replay. Re-run on current `main`; rewrite the freeze manifest only if you intentionally want a new pin. |
+| `--exclude-subagents` on an AgentsView replay still includes a real subagent | Pre-TB-31 AgentsView manifest persisting a stale `"is_subagent": false`; AgentsView refs carry `path=None`, so TB-29's path-based self-heal above (which only reads `path`) can never correct them (fixed 20260921) | Current code restamps AgentsView refs from a fresh parent probe (`agentsview_parent_ids`) whenever `--exclude-subagents` is set on replay, overwriting the stored flag. Re-run on current `main`; a plain replay (no `--exclude-subagents`) is unaffected and stays fully hermetic. |
 | Complex trial raises `UnsafeDepsCache` | Dep cache shares a walkable ancestor with the corpus, is a symlink (including dangling — checked before `resolve()`), or is not private to this uid | Pass `deps_base=` (or set `$TMPDIR`) so cache and corpus diverge at `/`; never point the cache at a replaceable symlink. |
 | Complex trial raises `UnprovisionedWorktree` | `run_trial` was called without `provision_worktree` (no `PROMPT.md`) | Call `provision_worktree` first. There is no fallback prompt — the rationale would leak the predicted winner. |
 | `toolbench worktrees` flags a long-idle tree you meant to keep | The branch has no live remote-tracking upstream, so it is not `CLAIMED` | Push/set an upstream, or leave it — reclaimable requires `SAFE` + idle ≥7d. A live upstream is a standing exemption at any age. |

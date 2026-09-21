@@ -51,6 +51,7 @@ from toolbench.sources import (
     SkipReason,
     SkipRecord,
     _run_agentsview,
+    agentsview_parent_ids,
     iter_sessions,
 )
 from toolbench.transcript import ParseResult
@@ -581,6 +582,49 @@ def _write_freeze(
     return True
 
 
+def _restamp_agentsview_subagents(
+    refs: list[SessionRef], runner: Runner | None, args: CliArgs
+) -> list[SessionRef]:
+    """Re-derive `is_subagent` for AgentsView refs on a `--exclude-subagents`
+    freeze replay (Low finding, 20260921 tech-debt report).
+
+    TB-29's self-heal (`freeze._is_subagent_from_manifest`) treats a session's
+    PATH as ground truth and ORs it with the stored flag -- but AgentsView refs
+    are built with `path=None`, so for them the self-heal can never run. A
+    pre-TB-31 AgentsView manifest that recorded `is_subagent: false` for a real
+    subagent keeps that stale value forever, and `--exclude-subagents` on replay
+    then silently lets it through while the report claims it was excluded.
+
+    Gated on `args.exclude_subagents`: replay is deliberately hermetic (S37 --
+    it exists precisely so a run does not depend on a live corpus that may have
+    moved since freeze), and `test_replay_uses_frozen_refs_not_live_discovery`
+    pins that a plain replay issues no `session list` call at all. A stale flag
+    only changes the SCAN when `--exclude-subagents` acts on it, so the one
+    extra parent-probe pass this costs is paid only on the replay shape that can
+    actually be wrong -- every other replay stays exactly as hermetic as before.
+    A no-op, further, when the manifest carries no AgentsView refs at all (raw
+    refs self-heal from `path` already).
+    """
+    if not args.exclude_subagents or not any(ref.source == "agentsview" for ref in refs):
+        return refs
+    assert runner is not None
+    parent_ids = agentsview_parent_ids(
+        runner,
+        agent=args.agent,
+        project=None if args.all_projects else args.project,
+        since=args.since,
+        limit=args.limit if args.limit is not None else 500,
+    )
+    return [
+        (
+            replace(ref, is_subagent=ref.session_id not in parent_ids)
+            if ref.source == "agentsview"
+            else ref
+        )
+        for ref in refs
+    ]
+
+
 def _resolve_corpus(
     args: CliArgs,
     root: str,
@@ -621,7 +665,11 @@ def _resolve_corpus(
         if not manifest.refs:
             print(_empty_replay_refusal(freeze_path), file=sys.stderr)
             return None
-        refs, fallback_reason, skips = manifest.refs, None, []
+        refs, fallback_reason, skips = (
+            _restamp_agentsview_subagents(manifest.refs, runner, args),
+            None,
+            [],
+        )
         census, frozen_census_note = _replay_census(manifest, freeze_path, args)
     else:
         try:
@@ -677,6 +725,36 @@ def _empty_replay_refusal(freeze_path: str) -> str:
         'answer "no sessions matched" at exit 0 in the same words a genuinely empty '
         "archive uses. Remove the manifest and re-run --freeze to pin a fresh "
         "selection, or drop --freeze."
+    )
+
+
+def _replay_emptied_by_exclude_subagents(
+    freeze: _FreezePlan, refs: list[SessionRef], sessions_discovered: int
+) -> bool:
+    """True iff a replay pinned refs but `--exclude-subagents` just dropped
+    every one of them -- the condition `_empty_replay_after_filter_refusal`
+    guards. Split out of `main` to keep the refusal's three-part condition off
+    `main`'s own complexity count (it is one caller-visible fact, not three)."""
+    return freeze.replaying and not refs and sessions_discovered > 0
+
+
+def _empty_replay_after_filter_refusal(freeze_path: str, pinned: int) -> str:
+    """Why a replay is refused when `--exclude-subagents` empties a subagent-only
+    pin (Medium finding, 20260921 tech-debt report).
+
+    Distinct from `_empty_replay_refusal`: that guard catches a manifest that
+    pinned zero refs to begin with. This one catches a manifest that pinned refs
+    -- just all of them subagent sessions -- replayed with a flag the freeze was
+    never written under. The remedy is the flag, not the manifest, so the two
+    refusals do not share text.
+    """
+    return (
+        f"toolbench.passive: fatal freeze error: {freeze_path} pins {pinned} "
+        "session(s), but --exclude-subagents drops every one of them; refusing "
+        "to replay a manifest that would scan zero sessions. A replay of "
+        'nothing would answer "no sessions matched" at exit 0 in the same words '
+        "a genuinely empty archive uses. Drop --exclude-subagents, or re-freeze "
+        "a selection that still has parent sessions after it filters."
     )
 
 
@@ -868,6 +946,21 @@ def _no_sessions_lines(
     return lines
 
 
+def _emit_report(text: str, out_path: str | None) -> None:
+    """Write `text` to `out_path` and confirm, or print it to stdout.
+
+    The one place `main` chooses between the two, shared by the zero-scan
+    report and the full report: both used to repeat this `if args.out` inline,
+    each copy adding its own branch to `main`'s own complexity count for a
+    choice that is the same choice both times.
+    """
+    if out_path:
+        Path(out_path).write_text(text)
+        print(f"Report written to {out_path}")
+    else:
+        print(text)
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -903,6 +996,22 @@ def main(
 
     if args.exclude_subagents:
         refs = filter_subagents(refs)
+        if _replay_emptied_by_exclude_subagents(freeze, refs, sessions_discovered):
+            # Replay-side twin of `_empty_freeze_refusal` (the write-side guard)
+            # and `_empty_replay_refusal` (the empty-pin guard): a manifest frozen
+            # WITHOUT `--exclude-subagents` can pin only subagent sessions, and
+            # replaying it WITH `--exclude-subagents` drops every pinned ref here,
+            # after `_resolve_corpus` already returned a non-empty `refs`. Left
+            # unguarded, the run reaches the zero-scan path below and exits 0 with
+            # the same first line a genuinely empty archive prints -- the same
+            # silent-wrong-answer shape the other two guards exist to prevent,
+            # through a third door (Medium finding, 20260921 tech-debt report).
+            assert freeze.path is not None
+            print(
+                _empty_replay_after_filter_refusal(freeze.path, sessions_discovered),
+                file=sys.stderr,
+            )
+            return 1
 
     # AFTER the filter, unlike the two provenance counts above (TB-35). The census's
     # `includes` track the POST-filter population (TB-33 Finding 1), so a pre-filter count
@@ -929,19 +1038,24 @@ def main(
     # must still reach `render_report` (and honor `--out`), not read as an empty
     # archive via the discovery-only early return below (S35 / TB-34).
     if scan.reducer.sessions_scanned == 0:
-        print(
-            "\n".join(
-                _no_sessions_lines(
-                    scan.reducer,
-                    census,
-                    skips,
-                    args,
-                    resolved.limit_truncated,
-                    dict(sampled_by_agent),
-                    freeze=freeze,
-                )
+        no_sessions_report = "\n".join(
+            _no_sessions_lines(
+                scan.reducer,
+                census,
+                skips,
+                args,
+                resolved.limit_truncated,
+                dict(sampled_by_agent),
+                freeze=freeze,
             )
         )
+        # `--out` must always describe THIS run, even a zero-scan one: otherwise
+        # exit 0 plus a stale `--out` file (from an earlier, non-empty run) reads
+        # as fresh data to any automation keyed on "exit 0 and the file exists"
+        # (Medium finding, 20260921 tech-debt report). Shares `_emit_report` with
+        # the full-report path below, so the confirmation line is the same shape
+        # whether or not any session was scanned.
+        _emit_report(no_sessions_report, args.out)
         return 0
 
     report = render_report(
@@ -972,11 +1086,7 @@ def main(
             else args.agentsview_timeout
         ),
     )
-    if args.out:
-        Path(args.out).write_text(report)
-        print(f"Report written to {args.out}")
-    else:
-        print(report)
+    _emit_report(report, args.out)
     return 0
 
 
