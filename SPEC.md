@@ -169,7 +169,15 @@ and re-exports the public symbols historical imports expect.
   window can still scan sessions whose tool calls all fall outside the range (or
   a transcript can carry no tool work). Those runs must reach `render_report`
   (and honor `--out`) with `scanned: M` and `Tool calls joined: 0`, not the
-  empty-selection message (#135).
+  empty-selection message (#135). **The `sessions_scanned == 0` path itself
+  also honors `--out`** (20260921 tech-debt report): earlier code printed the
+  empty-selection message to stdout only and left any pre-existing `--out`
+  file untouched, so exit 0 plus a stale `--out` file from an earlier,
+  non-empty run read as fresh data to any caller keying on "exit 0 and the
+  file exists". Current code writes the same message to `--out` (with the
+  same `Report written to <path>` confirmation) whenever it is set, sharing
+  the write/print choice with the full-report path (`_emit_report`) so `--out`
+  always describes *this* run, scanned or not.
 - **S36 — the Summary carries a corpus fingerprint.** The corpus is not stable
   between runs: claude-mem observer transcripts age out of a ~30-day sliding
   window *mid-scan*, so its tail deletes itself at roughly re-run cadence, and the
@@ -228,7 +236,27 @@ and re-exports the public symbols historical imports expect.
   writing (#132), so a selection matching only subagent sessions under
   `--exclude-subagents` is refused too (`discovery matched only subagent
   sessions`, exit 1, no file) rather than pinning a non-empty manifest that
-  replays to zero sessions forever.
+  replays to zero sessions forever. **A third guard covers replay's own
+  subagent filter** (20260921 tech-debt report): the write-side guard above
+  measures the post-filter scan set *before* writing, but a manifest frozen
+  *without* `--exclude-subagents` can still pin only subagent sessions, and
+  replaying it *with* `--exclude-subagents` drops every ref only *after*
+  `main` loads them from the manifest — a case the write-side guard never
+  observes. Refused the same way (`fatal freeze error`, exit 1, manifest
+  untouched), naming the flag as the remedy rather than the selection.
+  **AgentsView refs are restamped before that filter runs, on any replay with
+  `--exclude-subagents` set.** TB-29's path-based self-heal
+  (`freeze._is_subagent_from_manifest`) can never run for AgentsView refs —
+  they carry `path=None` — so a pre-TB-31 AgentsView manifest that persisted a
+  stale `is_subagent: false` for a real subagent keeps that value forever, and
+  `--exclude-subagents` would silently let it through while the report claims
+  it was excluded. One extra parent-probe call (`agentsview_parent_ids`,
+  TB-31's own classification) re-derives every AgentsView ref's flag from the
+  live archive before `filter_subagents` runs. Gated on `--exclude-subagents`
+  specifically: a plain replay stays fully hermetic (no AgentsView call at
+  all), matching S37's own "live discovery is bypassed" contract for the
+  common case, and paying the one probe call only on the replay shape a stale
+  flag can actually corrupt.
   - **TB-37 — manifest format v2 persists the freeze-time census.** `MANIFEST_VERSION`
     bumped `toolbench-freeze-1` -> `toolbench-freeze-2`. A freeze pins the REF LIST,
     not the archive it was drawn from, so TB-22/TB-33 shipped replay with a

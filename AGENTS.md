@@ -30,8 +30,8 @@ hermetic test suite plus strict gate as end-to-end coverage. README and
   this tree (comments in `pyproject.toml` record what was adopted vs skipped).
 - Optional live dependencies (`agentsview`, Claude/Codex archives, Hermes) are
   not required for the gate; skips for absent live archives are expected. On the
-  default install the hermetic suite is ~757 passing / 4 skipped; with
-  `uv sync --extra tracing` it is ~758 / 3 (the observability skip becomes a
+  default install the hermetic suite is ~764 passing / 4 skipped; with
+  `uv sync --extra tracing` it is ~765 / 3 (the observability skip becomes a
   pass). The four default skips: optional-tracing (`lmnr` missing), corpus
   fixtures (`TOOLBENCH_CORPUS_TESTS`), Hermes live-archive (`TOOLBENCH_LIVE`),
   and the sidecar-less WAL classic-reject pin in `test_hermes.py` when this
