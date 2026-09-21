@@ -415,6 +415,32 @@ def _probe_pass(
     return parent_ids, agents_seen
 
 
+def agentsview_parent_ids(
+    runner: Runner,
+    *,
+    agent: str = "all",
+    project: str | None = None,
+    since: str | None = None,
+    limit: int = 500,
+) -> set[str]:
+    """The child-excluded listing's session ids, alone -- TB-31's parent probe,
+    exposed for callers that only need the classification and not a fresh
+    discovery pass.
+
+    Used by freeze replay (`passive.py`) to restamp `is_subagent` on AgentsView
+    refs pulled from a manifest: those refs carry `path=None` (TB-29's
+    path-based self-heal, `freeze._is_subagent_from_manifest`, can never run for
+    them), so a manifest frozen before TB-31 classified subagents correctly can
+    persist a stale explicit `is_subagent: false` for a real child session
+    forever. One extra probe pass at replay time re-derives ground truth the
+    same way a live discovery would.
+    """
+    parent_ids, _agents_seen = _probe_pass(
+        runner, agent=agent, project=project, since=since, limit=limit
+    )
+    return parent_ids
+
+
 def _list_total(
     runner: Runner,
     *,
