@@ -163,6 +163,7 @@ def test_repository_evaluation_compares_worktree_to_base_commit(
         ("config", "user.email", "complexity-gate@example.invalid"),
         ("config", "user.name", "Complexity Gate Test"),
         ("config", "commit.gpgsign", "false"),
+        ("config", "core.hooksPath", "/dev/null"),
         ("add", "src/sample.py"),
         ("commit", "-qm", "base"),
     ):

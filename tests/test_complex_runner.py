@@ -149,6 +149,7 @@ class ProvisionWorktreeTests(unittest.TestCase):
         _run(["git", "config", "user.email", "test@example.com"], self.repo_dir)
         _run(["git", "config", "user.name", "Test"], self.repo_dir)
         _run(["git", "config", "commit.gpgsign", "false"], self.repo_dir)
+        _run(["git", "config", "core.hooksPath", "/dev/null"], self.repo_dir)
         (self.repo_dir / "a.txt").write_text("original\n", encoding="utf-8")
         _run(["git", "add", "a.txt"], self.repo_dir)
         _run(["git", "commit", "-q", "-m", "init"], self.repo_dir)
@@ -240,21 +241,30 @@ class ProvisionWorktreeTests(unittest.TestCase):
         self.assertEqual(len(log), 1, "the trial tree must have exactly one commit")
 
     def test_commit_lands_under_an_operator_config_that_signs_commits(self) -> None:
-        """A global `commit.gpgsign=true` must never reach the trial commit.
+        """A global `commit.gpgsign=true` and global hooks must never reach the
+        trial commit.
 
         `_commit_initial_state` promises provisioning needs no global git config.
-        Identity was overridden on the invocation; signing was not -- so an
-        operator's `commit.gpgsign=true` routed the throwaway commit through their
-        signing agent, and the suite blocked, failed with exit 128, or passed
-        depending only on whether that agent happened to answer. The counter-trap
-        first proves the config is live on this machine (a bare commit under it
-        fails), so a green run here is the override working and not a signer
-        quietly succeeding.
+        Identity was overridden on the invocation; signing and hooks were not --
+        so an operator's `commit.gpgsign=true` routed the throwaway commit through
+        their signing agent (blocked, exit 128, or a pass depending only on
+        whether the agent happened to answer), and a global `core.hooksPath`
+        holding a failing hook raised `CalledProcessError` outright. The
+        counter-trap first proves the config is live on this machine (a bare
+        commit under it fails on both counts), so a green run here is the
+        overrides working and not the operator config quietly not applying.
         """
+        hooks_dir = self.root / "operator-hooks"
+        hooks_dir.mkdir()
+        pre_commit = hooks_dir / "pre-commit"
+        pre_commit.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        pre_commit.chmod(0o755)
+
         gitconfig = self.root / "operator-gitconfig"
         gitconfig.write_text(
             "[commit]\n\tgpgsign = true\n"
-            "[gpg]\n\tprogram = /nonexistent/toolbench-no-signer\n",
+            "[gpg]\n\tprogram = /nonexistent/toolbench-no-signer\n"
+            f"[core]\n\thooksPath = {hooks_dir}\n",
             encoding="utf-8",
         )
         with mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(gitconfig)}):
@@ -279,7 +289,9 @@ class ProvisionWorktreeTests(unittest.TestCase):
                 manifest_path=self.manifest_path,
             )
         log = _run(["git", "log", "--oneline"], dest).stdout.strip().splitlines()
-        self.assertEqual(len(log), 1, "the trial commit must land unsigned")
+        self.assertEqual(
+            len(log), 1, "the trial commit must land unsigned and past the hook"
+        )
         self.assertEqual(_run(["git", "status", "--porcelain"], dest).stdout, "")
 
     def test_git_diff_reveals_nothing_because_the_defect_is_committed(self) -> None:
@@ -387,6 +399,7 @@ class ProvisionWorktreeTests(unittest.TestCase):
         _run(["git", "config", "user.email", "test@example.com"], repo_dir)
         _run(["git", "config", "user.name", "Test"], repo_dir)
         _run(["git", "config", "commit.gpgsign", "false"], repo_dir)
+        _run(["git", "config", "core.hooksPath", "/dev/null"], repo_dir)
         (repo_dir / "a.txt").write_text("original\n", encoding="utf-8")
         _run(["git", "add", "a.txt"], repo_dir)
         _run(["git", "commit", "-q", "-m", "init"], repo_dir)
@@ -456,6 +469,7 @@ class ProvisionWorktreeTests(unittest.TestCase):
         _run(["git", "config", "user.email", "test@example.com"], repo_dir)
         _run(["git", "config", "user.name", "Test"], repo_dir)
         _run(["git", "config", "commit.gpgsign", "false"], repo_dir)
+        _run(["git", "config", "core.hooksPath", "/dev/null"], repo_dir)
 
         web_dir = repo_dir / "web"
         web_dir.mkdir()
@@ -600,6 +614,7 @@ class DepsCacheAncestryTests(unittest.TestCase):
         _run(["git", "config", "user.email", "test@example.com"], self.repo_dir)
         _run(["git", "config", "user.name", "Test"], self.repo_dir)
         _run(["git", "config", "commit.gpgsign", "false"], self.repo_dir)
+        _run(["git", "config", "core.hooksPath", "/dev/null"], self.repo_dir)
         (self.repo_dir / "web" / "app.js").write_text("x\n", encoding="utf-8")
         _run(["git", "add", "-A"], self.repo_dir)
         _run(["git", "commit", "-q", "-m", "init"], self.repo_dir)
