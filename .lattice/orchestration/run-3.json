@@ -1,0 +1,11 @@
+{
+  "run": "3",
+  "tickets": ["TB-34", "TB-36", "TB-37", "TB-38"],
+  "branches": [
+    "fix/tb-34-zero-match-census-disclosure",
+    "chore/tb-36-probe-argv-sole-builder",
+    "feat/tb-37-freeze-manifest-census",
+    "fix/tb-38-auto-fallback-mid-listing"
+  ],
+  "worktrees": []
+}
