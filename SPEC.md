@@ -121,10 +121,15 @@ and re-exports the public symbols historical imports expect.
   reducers and report counters live globally (`Reducer` in `reducer.py`).
 - **S12 — CLI.** Flags: `--agent`, `--all | --project`, `--since`,
   `--date-from`, `--date-to`, `--out`, `--limit`, `--exclude-subagents`,
-  `--index-source`, `--agentsview-timeout`, `--verbose`, `--freeze`,
+  `--index-source`, `--raw-root`, `--agentsview-timeout`, `--verbose`, `--freeze`,
   `--run-manifest`, `--tickets`; default scope `--agent all --all`.
   `--agentsview-timeout` defaults to `AGENTSVIEW_TIMEOUT_S` (60.0); `0` means
-  unbounded; negatives are rejected at parse (TB-39).
+  unbounded; negatives are rejected at parse (TB-39). `--raw-root PATH`
+  (single-valued) replaces `DEFAULT_RAW_ROOT` (`~/.claude/projects`) for raw
+  discovery — `--index-source raw` and `auto`'s raw fallback — and wins over
+  `main`'s `root=` test seam; with `--index-source agentsview` it is a parse
+  error (exit 2), since AgentsView enumerates its own sources and a silently
+  inert root would read as one that was scanned.
 - **S13 — subagents.** Included by default; `--exclude-subagents` drops refs
   with `SessionRef.is_subagent` set at discovery. Raw discovery attributes
   project as the first path segment under the session root and sets the flag
@@ -142,7 +147,13 @@ and re-exports the public symbols historical imports expect.
   subagents were included, any AgentsView fallback reason, and skipped
   roots (including per-session `NonTranscriptExport` / decode failures, each
   now carrying a typed `SkipReason` — S34); it notes `--since` is file-mtime
-  based.
+  based. Whenever raw discovery actually walked the filesystem (strict `raw`,
+  or `auto` after a probe or mid-listing fallback) the Summary names the root
+  as `Raw root scanned: <path>`, `~`-expanded, directly under the index
+  source; the empty-selection message carries the same line. It is withheld
+  — not defaulted — when no root was read (AgentsView served the listing, a
+  vanished binary degraded to `MISSING_SOURCE` without a rescan, or a
+  `--freeze` replay took its refs from the manifest).
 - **S35 — the Summary reconciles discovery.** `scanned` is not the corpus
   size and must never read as it. The Summary opens with
   `Sessions discovered: D / scanned: M / skipped: K`, where `D = M + K` is

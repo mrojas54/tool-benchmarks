@@ -15,7 +15,10 @@ is TB-27 / S40: it landed as a grouping dimension on `toolbench.passive` itself,
 is one analyzer and one number — no separate run-aggregation CLI to drift against it.
 
 **Runs against `~/.claude/projects`** — invoke from `~` (cwd hygiene), not from a project
-checkout, so the read doesn't bill an unrelated project's cache.
+checkout, so the read doesn't bill an unrelated project's cache. Transcripts elsewhere
+(Claude desktop's `~/Library/Application Support/Claude/local-agent-mode-sessions/<…>/.claude/projects/`,
+or an archive copied from another machine) take `--index-source raw --raw-root PATH`;
+check the Summary's `Raw root scanned:` line to confirm which tree the numbers came from.
 
 ## The measurement (recipe steps 1-4)
 

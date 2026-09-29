@@ -208,6 +208,11 @@ def _project_and_subagent(root: Path, path: Path) -> tuple[str, bool]:
 # generous for the largest of those against a healthy daemon, and finite against a hung one.
 AGENTSVIEW_TIMEOUT_S = 60.0
 
+# Where Claude Code writes transcripts by default. Not the only place they live (Claude
+# desktop keeps its own tree; an archive may be copied in from another machine), which
+# is why `passive --raw-root` overrides it and the Summary names the root it scanned.
+DEFAULT_RAW_ROOT = "~/.claude/projects"
+
 
 def _run_agentsview(
     argv: list[str], timeout: float | None = AGENTSVIEW_TIMEOUT_S
@@ -240,7 +245,7 @@ def _run_agentsview(
 
 
 def iter_session_files(
-    root: str = "~/.claude/projects",
+    root: str = DEFAULT_RAW_ROOT,
     project: str | None = None,
     since: str | None = None,
 ) -> Iterator[Path]:
@@ -819,7 +824,7 @@ def iter_sessions(
     project: str | None = None,
     since: str | None = None,
     limit: int = 500,
-    root: str = "~/.claude/projects",
+    root: str = DEFAULT_RAW_ROOT,
     runner: Runner | None = None,
     include_subagents: bool = True,
 ) -> tuple[Iterator[SessionRef], str | None, AgentCensus]:

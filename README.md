@@ -448,7 +448,8 @@ Three source adapters. The first two are selected per-session by
 `--index-source`; the third is selected by agent.
 
 - **Claude Code raw transcripts** — scans on-disk JSONL session files
-  directly under a root (default `~/.claude/projects`).
+  directly under a root (default `~/.claude/projects`; `--raw-root PATH`
+  points elsewhere).
 - **AgentsView** — pages the `agentsview` CLI for any AgentsView-registered
   runtime (Claude Code, Codex, Hermes, …), yielding one `SessionRef` per
   session with cursor-based pagination.
@@ -503,6 +504,12 @@ uv run python -m toolbench.passive --agent all --all
 uv run python -m toolbench.passive --project my-repo --since 2026-06-01
 uv run python -m toolbench.passive --all --index-source agentsview
 uv run python -m toolbench.passive --all --date-from 2026-06-01 --date-to 2026-06-30
+
+# Scan transcripts outside ~/.claude/projects: Claude desktop's own tree, or an
+# archive copied from another machine. The Summary names the root it scanned.
+uv run python -m toolbench.passive --index-source raw \
+  --raw-root "$HOME/Library/Application Support/Claude/local-agent-mode-sessions/<id>/.claude/projects"
+uv run python -m toolbench.passive --index-source raw --raw-root /mnt/archive/other-host/projects
 uv run python -m toolbench.passive --all --exclude-subagents --out reports/2026-07-08-tool-usage.md
 
 # Reproducible before/after: freeze the corpus once, then replay it to compare.
@@ -626,6 +633,15 @@ traces.
   report's Summary section.
 - `agentsview` — AgentsView only; a source error is fatal.
 - `raw` — raw local transcript roots only; a source error is fatal.
+
+`--raw-root PATH` (default `~/.claude/projects`) is the directory raw discovery
+walks, so it governs `raw` and `auto`'s fallback only. `--index-source agentsview
+--raw-root …` is refused at parse: AgentsView enumerates its own sources, and a
+root that was accepted but never read would look like one that was. Whenever raw
+discovery ran, the Summary (and the "no sessions matched" message) prints
+`Raw root scanned: <expanded path>`; when it did not — AgentsView served the
+listing, or a `--freeze` replay supplied the refs — the line is absent rather than
+defaulted. The flag is single-valued: to cover several roots, run once per root.
 
 "Failure" means any of four things, not two (TB-32 / TB-38). AgentsView can be
 **absent** (binary not on `PATH`), **broken** (nonzero exit), **hung** — a daemon
