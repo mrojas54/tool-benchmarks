@@ -137,6 +137,11 @@ class TurnStats:
     non_tool_output: bool = False
 
 
+# git stamps a literal "HEAD" as the branch when the checkout is detached, so this is
+# a real gitBranch value that is not a branch name -- and no manifest can list it.
+DETACHED_BRANCH = "HEAD"
+
+
 @dataclass
 class BranchUsage:
     """Per-branch usage sums for one session (S40).
@@ -193,6 +198,10 @@ class ParseResult:
     # totals -- the invariant `session total == sum of buckets` is an eval. Entries
     # with usage but no gitBranch bucket under "" so no billed token is dropped.
     usage_by_branch: dict[str, BranchUsage] = field(default_factory=dict)
+    # S40 worktree attribution: the `DETACHED_BRANCH` bucket above, re-split by each
+    # entry's `cwd`. A sub-partition, not a second total: its buckets sum to
+    # `usage_by_branch[DETACHED_BRANCH]`. Entries with no `cwd` bucket under "".
+    detached_usage_by_cwd: dict[str, BranchUsage] = field(default_factory=dict)
     unjoinable: dict[str, int] = field(default_factory=dict)
     # Populated only when ClaudeParser(track_turns=True); empty otherwise.
     turns: dict[str, TurnStats] = field(default_factory=dict)

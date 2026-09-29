@@ -200,7 +200,9 @@ rather than silently absent (S38 / TB-24).
   PR #87).
 - **`run_manifest.py`** — JSON reader for `--run-manifest` (S40). Defines a
   run's branch set (`branches` required; empty/missing is refused). Optional
-  `worktrees` is accepted and stored but unused for attribution (branches-only).
+  `worktrees` (absolute delegator worktree paths, recorded at dispatch) claim
+  detached-HEAD entries whose `cwd` lies inside one; branches still decide
+  everything that has a branch.
   Not `.lattice/orchestration/agents.md` — that file drops its Branch column
   when the run finishes.
 - **`probe.py`** — scores matched tool-vs-Bash probe pairs from a dedicated

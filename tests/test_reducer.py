@@ -555,3 +555,125 @@ def test_uncached_detached_session_is_still_a_blind_spot() -> None:
     assert reducer.run_stats.detached_sessions == 1
     assert reducer.run_stats.detached_input == 1_234
     assert reducer.run_stats.detached_output == 5_678
+
+
+def _worktree_manifest(*worktrees: str) -> RunManifest:
+    return RunManifest(
+        run="3",
+        tickets=("TB-1", "TB-2"),
+        branches=frozenset({"feat/tb-1"}),
+        worktrees=worktrees,
+    )
+
+
+def _detached(by_cwd: dict[str, BranchUsage]) -> ParseResult:
+    """A detached session as ClaudeParser builds it: the HEAD bucket plus its
+    cwd sub-partition, summing to the same totals."""
+    head = BranchUsage()
+    for usage in by_cwd.values():
+        head.read += usage.read
+        head.creation += usage.creation
+        head.input += usage.input
+        head.output += usage.output
+        head.messages += usage.messages
+    return ParseResult(
+        calls=[], malformed=0, usage_by_branch={"HEAD": head}, detached_usage_by_cwd=by_cwd
+    )
+
+
+def test_detached_entry_inside_a_manifest_worktree_folds_into_the_run() -> None:
+    """The July runs read `0 candidate sessions` because every delegator ran detached.
+    A worktree path recorded at dispatch is a key of the same standing as a branch
+    name, so an entry whose cwd lies inside one belongs to the run."""
+    manifest = _worktree_manifest("/wt/tb-1")
+    reducer = Reducer(run=manifest)
+    reducer.absorb(
+        "claude-code",
+        _detached({"/wt/tb-1/src": BranchUsage(read=800, creation=80, input=3, output=9, messages=4)}),
+    )
+    stats = reducer.run_stats
+    assert stats.read == 800
+    assert stats.creation == 80
+    assert stats.output == 9
+    assert stats.candidate_sessions == 1
+    assert stats.worktree_sessions == 1
+    assert stats.worktree_read == 800
+    # Claimed, so no longer a blind spot.
+    assert stats.detached_sessions == 0
+    assert stats.detached_read == 0
+    assert stats.missing_worktrees(manifest) == []
+
+
+def test_sibling_prefix_worktree_does_not_claim() -> None:
+    """COUNTER-TRAP. `/wt/tb-1` is a string prefix of `/wt/tb-12` but not a parent
+    directory of it. A string-prefix match would hand TB-12's cost to TB-1."""
+    manifest = _worktree_manifest("/wt/tb-1")
+    reducer = Reducer(run=manifest)
+    reducer.absorb("claude-code", _detached({"/wt/tb-12": BranchUsage(read=500, messages=2)}))
+    stats = reducer.run_stats
+    assert stats.read == 0
+    assert stats.candidate_sessions == 0
+    assert stats.detached_read == 500  # still named as unattributable
+    assert stats.missing_worktrees(manifest) == ["/wt/tb-1"]
+
+
+def test_detached_outside_every_worktree_stays_in_the_detached_line() -> None:
+    """Only the claimed part leaves the blind spot. A session with detached work both
+    inside and outside the manifest's worktrees splits exactly along that line."""
+    reducer = Reducer(run=_worktree_manifest("/wt/tb-1"))
+    reducer.absorb(
+        "claude-code",
+        _detached(
+            {
+                "/wt/tb-1": BranchUsage(read=300, creation=30, messages=2),
+                "/elsewhere": BranchUsage(read=40, creation=4, messages=1),
+                "": BranchUsage(read=2, messages=1),
+            }
+        ),
+    )
+    stats = reducer.run_stats
+    assert stats.read == 300
+    assert stats.worktree_read == 300
+    assert stats.detached_read == 42  # /elsewhere + no-cwd, NOT 342
+    assert stats.detached_creation == 4
+    assert stats.detached_sessions == 1
+
+
+def test_nested_worktrees_claim_each_entry_once() -> None:
+    """With nested manifest worktrees the deepest wins; the entry is counted once."""
+    manifest = _worktree_manifest("/wt", "/wt/tb-1")
+    assert manifest.worktree_for("/wt/tb-1/x") == "/wt/tb-1"
+    reducer = Reducer(run=manifest)
+    reducer.absorb("claude-code", _detached({"/wt/tb-1/x": BranchUsage(read=10, messages=1)}))
+    assert reducer.run_stats.read == 10
+    assert reducer.run_stats.missing_worktrees(manifest) == ["/wt"]
+
+
+def test_branch_entries_are_not_reclaimed_by_cwd() -> None:
+    """A named branch outside the run stays `unattributed` even when its cwd is a
+    manifest worktree: cwd only claims what has no branch. Letting it override a
+    real branch would re-open the cwd-membership problem TB-28 rejected."""
+    reducer = Reducer(run=_worktree_manifest("/wt/tb-1"))
+    reducer.absorb(
+        "claude-code",
+        ParseResult(
+            calls=[],
+            malformed=0,
+            usage_by_branch={
+                "feat/tb-1": BranchUsage(read=100, messages=1),
+                "main": BranchUsage(read=900, messages=3),
+            },
+            detached_usage_by_cwd={},
+        ),
+    )
+    assert reducer.run_stats.read == 100
+    assert reducer.run_stats.unattributed_read == 900
+    assert reducer.run_stats.worktree_sessions == 0
+
+
+def test_manifest_without_worktrees_keeps_detached_unattributable() -> None:
+    """No `worktrees` -> the TB-28 behaviour, unchanged."""
+    reducer = Reducer(run=_manifest("feat/tb-1"))
+    reducer.absorb("claude-code", _detached({"/wt/tb-1": BranchUsage(read=70, messages=1)}))
+    assert reducer.run_stats.read == 0
+    assert reducer.run_stats.detached_read == 70

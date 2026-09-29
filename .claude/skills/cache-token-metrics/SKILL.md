@@ -29,11 +29,13 @@ check the Summary's `Raw root scanned:` line to confirm which tree the numbers c
 2. **Build the run manifest.** JSON, written by the orchestrator **at dispatch** (agents.md
    discards its Branch column once the run finishes, so reconstructing it after the fact
    isn't reliable): `{"run": "2", "tickets": ["TB-18", "TB-19"], "branches":
-   ["feat/tb-18", "tb-19-pytest-gate"], "worktrees": ["~/wt/tb-19"]}` (`worktrees` is
-   optional and currently unused for attribution — accepted/stored only;
-   `branches` is not — an empty or missing list is refused as malformed rather
-   than silently attributing nothing). No run-id exists inside a transcript — the branch
-   set in this manifest *is* the correlation.
+   ["feat/tb-18", "tb-19-pytest-gate"], "worktrees": ["~/wt/tb-19"]}`. `branches` is
+   required — an empty or missing list is refused as malformed rather than silently
+   attributing nothing. `worktrees` is optional but **list every delegator worktree**:
+   delegators that run on a detached HEAD stamp `gitBranch="HEAD"`, and their worktree
+   path is then the only thing that can tie their usage to the run (paths must be
+   absolute or `~`-relative; never list the repo root). No run-id exists inside a
+   transcript — the branch and worktree sets in this manifest *are* the correlation.
 3. **Sum per session** — the passive analyzer's `ClaudeParser` stamps session-grain
    `cache_read` / `cache_creation` / input / output *and* buckets that same usage by each
    entry's `gitBranch` (S40), so a session that straddles branches only donates the entries
@@ -64,10 +66,13 @@ uv run --project ~/tool-benchmarks toolbench passive \
   to read** — cache-read alone misleads (S39). The eval
   `test_prefix_sharing_trap_read_drop_offset_by_creation_rise` pins exactly this.
 - **Incomplete run total** = a `detached-HEAD (unattributable)` line appears. Detached
-  checkouts stamp `gitBranch="HEAD"`, which can never match a manifest branch (TB-28). That
-  usage is named (including input/output, so an uncached first turn is not invisible) and
+  checkouts stamp `gitBranch="HEAD"`, which can never match a manifest branch (TB-28).
+  Detached entries whose `cwd` lies inside a manifest `worktrees` path *are* folded into
+  the run and shown on a `via worktree cwd` line; whatever no listed worktree claims is
+  named (including input/output, so an uncached first turn is not invisible) and
   **never folded into the run** — folding would fabricate attribution; dropping would
-  silently undercount. Treat a large detached line as "the headline may be low."
+  silently undercount. Treat a large detached line as "the headline may be low," and a
+  `worktrees matched no detached entries` line as a mis-recorded worktree path.
 - **Narrow slice** = a large `unattributed` line. That is same-session work on non-run
   branches inside candidate sessions (S40), not corpus-wide `main`. The run total is only
   the in-set entry slice.
