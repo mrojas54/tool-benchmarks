@@ -7,7 +7,8 @@ from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from toolbench.reducer import OVERSIZED_OUTPUT_TOKENS, AgentStats, Reducer
+from toolbench.reducer import OVERSIZED_OUTPUT_TOKENS, AgentStats, Reducer, RunStats
+from toolbench.run_manifest import RunManifest
 from toolbench.sources import AgentCensus, SkipReason, SkipRecord
 
 # Ratio of the largest per-agent sampling fraction to the smallest, above which
@@ -702,6 +703,7 @@ def _summary_run_lines(reducer: Reducer, run_tickets: int | None) -> list[str]:
             f"  - per ticket ({tickets}): "
             f"read={norm['cache_read']:.1f} creation={norm['cache_creation']:.1f}"
         )
+    out.extend(_summary_worktree_claim_line(run_stats))
     if run_stats.unattributed_read or run_stats.unattributed_creation:
         # Straddle spillover: same-session work on branches outside the run. A
         # large value means the run total is a narrow slice of what was spent.
@@ -733,7 +735,29 @@ def _summary_run_lines(reducer: Reducer, run_tickets: int | None) -> list[str]:
     missing = run_stats.missing_branches(reducer.run)
     if missing:
         out.append(f"  - matched no entries: {', '.join(missing)}")
-    return out
+    return out + _summary_missing_worktree_line(run_stats, reducer.run)
+
+
+def _summary_worktree_claim_line(run_stats: RunStats) -> list[str]:
+    """Detached entries claimed by a manifest worktree (entry cwd inside it). Part of
+    the run headline, shown apart so a reader can see how much of the total rests on
+    a dispatch-time directory rather than a branch name."""
+    if not run_stats.worktree_sessions:
+        return []
+    return [
+        f"  - via worktree cwd (detached HEAD): read={run_stats.worktree_read} "
+        f"creation={run_stats.worktree_creation} "
+        f"({run_stats.worktree_sessions} session"
+        f"{'' if run_stats.worktree_sessions == 1 else 's'}; included above)"
+    ]
+
+
+def _summary_missing_worktree_line(run_stats: RunStats, run: RunManifest) -> list[str]:
+    """A listed worktree no detached entry ran in -- named like an unmatched branch."""
+    missing = run_stats.missing_worktrees(run)
+    if not missing:
+        return []
+    return [f"  - worktrees matched no detached entries: {', '.join(missing)}"]
 
 
 def _summary_join_lines(reducer: Reducer) -> list[str]:

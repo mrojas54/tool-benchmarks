@@ -529,3 +529,51 @@ def test_claude_parser_no_usage_leaves_usage_by_branch_empty() -> None:
 
     assert result.usage_by_branch == {}
     assert result.session_cache_read_tokens is None
+
+
+def _usage_line(read: int, *, branch: str, cwd: str | None = None) -> str:
+    entry: dict[str, object] = {
+        "type": "assistant",
+        "sessionId": "s1",
+        "timestamp": "2026-07-01T00:00:00Z",
+        "gitBranch": branch,
+        "message": {
+            "role": "assistant",
+            "content": [],
+            "usage": {"cache_read_input_tokens": read, "cache_creation_input_tokens": 1},
+        },
+    }
+    if cwd is not None:
+        entry["cwd"] = cwd
+    return json.dumps(entry)
+
+
+def test_claude_parser_splits_detached_usage_by_cwd() -> None:
+    """S40 worktree attribution: a detached entry stamps no branch, so its `cwd` is the
+    only key a run-manifest worktree can claim it by. The split is a sub-partition of
+    the HEAD bucket -- it must sum back to it, or the run would double-count."""
+    lines = [
+        _usage_line(300, branch="HEAD", cwd="/wt/tb-1"),
+        _usage_line(100, branch="HEAD", cwd="/wt/tb-2"),
+        _usage_line(5, branch="HEAD", cwd="/wt/tb-1"),
+        _usage_line(7, branch="HEAD"),  # no cwd -> "" bucket, never dropped
+    ]
+    result = ClaudeParser().parse(lines, agent="claude-code", source="raw", project="p")
+
+    by_cwd = result.detached_usage_by_cwd
+    assert by_cwd["/wt/tb-1"].read == 305
+    assert by_cwd["/wt/tb-2"].read == 100
+    assert by_cwd[""].read == 7
+    head = result.usage_by_branch["HEAD"]
+    assert sum(b.read for b in by_cwd.values()) == head.read
+    assert sum(b.messages for b in by_cwd.values()) == head.messages
+
+
+def test_claude_parser_does_not_split_named_branches_by_cwd() -> None:
+    """Only detached entries need a cwd key -- a named branch already identifies its
+    work, and splitting it too would invite cwd to override a real branch."""
+    lines = [_usage_line(50, branch="feat/tb-9", cwd="/wt/tb-9")]
+    result = ClaudeParser().parse(lines, agent="claude-code", source="raw", project="p")
+
+    assert result.detached_usage_by_cwd == {}
+    assert result.usage_by_branch["feat/tb-9"].read == 50

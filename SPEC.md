@@ -343,9 +343,19 @@ and re-exports the public symbols historical imports expect.
   scoped corpus-wide it would be dominated by unrelated `main` work. A manifest
   branch matching zero entries is reported, never a silent zero (S23/S38). An
   empty or missing `branches` list is `MalformedRunManifest` (exit 1) — a run
-  with no branch set would attribute nothing. Optional manifest `worktrees` is
-  accepted and stored but unused for attribution (branches-only; TB-28 rejected
-  cwd-based membership). The run section renders read + creation together,
+  with no branch set would attribute nothing. Optional manifest `worktrees`
+  (the delegators' linked-worktree paths, recorded at dispatch like `branches`)
+  claim **detached** entries only: `ClaudeParser` re-splits the `"HEAD"` bucket by
+  entry `cwd` into `detached_usage_by_cwd` (a sub-partition that sums back to it),
+  and a detached entry whose `cwd` lies inside a manifest worktree — compared by
+  path components, deepest worktree wins — folds into the run total and is shown
+  on its own `via worktree cwd` line. This narrows, not reverses, TB-28's rejection
+  of cwd-based membership: `cwd` never overrides a named branch, never matches by
+  time window, and only reads a directory the orchestrator wrote down at dispatch.
+  Unclaimed detached usage stays in the `detached_*` bucket; a listed worktree
+  that claimed nothing is named. A relative worktree (can never match an absolute
+  `cwd`) or `/` (would claim everything) is `MalformedRunManifest`; the repo root
+  must not be listed. The run section renders read + creation together,
   normalized per ticket (`--tickets N` when set, else `len(manifest.tickets)`;
   `--tickets` without `--run-manifest` is a no-op; `--tickets 0` is rejected at
   parse), as a Summary caveat — never a ranking column (S19).
