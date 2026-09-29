@@ -519,6 +519,104 @@ class ZeroMatchCensusDisclosureTests(unittest.TestCase):
         )
 
 
+class UnknownAgentDisclosureTests(unittest.TestCase):
+    """An `--agent` that names no agent in the archive must say so (S23/S38): a
+    miscapitalized `--agent Codex` used to print only the line a genuinely empty
+    archive prints. Additive, like TB-34 -- the headline never changes."""
+
+    EMPTY: ClassVar[str] = json.dumps({"sessions": [], "next_cursor": "", "total": 0})
+    UNIVERSE: ClassVar[str] = json.dumps(
+        {
+            "sessions": [
+                {"id": "s1", "project": "p", "agent": "claude"},
+                {"id": "s2", "project": "p", "agent": "codex"},
+                {"id": "s3", "project": "p", "agent": "hermes"},
+            ],
+            "next_cursor": "",
+            "total": 3,
+        }
+    )
+
+    def _run(
+        self, agent: str, universe: "subprocess.CompletedProcess[str] | Exception"
+    ) -> tuple[int, str, FakeRunner]:
+        runner = FakeRunner(
+            [
+                # Run-scoped discovery under `--agent <agent>`: the probe sees no agent,
+                # the scoped archive total is 0, the full listing is empty. Then the
+                # unscoped universe pass the empty path adds.
+                completed(stdout=self.EMPTY),
+                completed(stdout=_json_total(0)),
+                completed(stdout=self.EMPTY),
+                universe,
+            ]
+        )
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = main(["--index-source", "agentsview", "--agent", agent], runner=runner)
+        return code, out.getvalue(), runner
+
+    def test_unknown_agent_is_named_with_the_known_roster(self) -> None:
+        code, message, runner = self._run("Codex", completed(stdout=self.UNIVERSE))
+        self.assertEqual(code, 0)
+        self.assertIn(
+            "toolbench.passive: no sessions matched the given selection.\n", message
+        )
+        self.assertIn(
+            "--agent 'Codex' matched no known agent (known: claude, codex, hermes)"
+            " (did you mean 'codex'?)",
+            message,
+        )
+        # The universe pass drops every filter -- a name absent from a scoped listing
+        # may just be out of window, which is not what "unknown" claims.
+        universe_argv = runner.calls[-1]
+        self.assertNotIn("--agent", universe_argv)
+        self.assertNotIn("--project", universe_argv)
+        self.assertNotIn("--date-from", universe_argv)
+        self.assertIn("--include-children", universe_argv)
+
+    def test_no_hint_when_nothing_matches_case_insensitively(self) -> None:
+        _code, message, _runner = self._run("codx", completed(stdout=self.UNIVERSE))
+        self.assertIn("--agent 'codx' matched no known agent", message)
+        self.assertNotIn("did you mean", message)
+
+    def test_hint_lists_every_case_fold_collision_rather_than_picking_one(self) -> None:
+        self.assertEqual(
+            passive._agent_suggestion("CLAUDE", {"Claude", "claude", "codex"}),
+            " (did you mean 'Claude' or 'claude'?)",
+        )
+
+    def test_known_agent_with_no_sessions_in_window_is_not_called_unknown(self) -> None:
+        _code, message, _runner = self._run("hermes", completed(stdout=self.UNIVERSE))
+        self.assertIn("no sessions matched", message)
+        self.assertNotIn("matched no known agent", message)
+
+    def test_failed_universe_lookup_is_disclosed_not_fatal(self) -> None:
+        code, message, _runner = self._run(
+            "Codex", completed(returncode=1, stderr="daemon down")
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("no sessions matched", message)
+        self.assertIn("Agent check unavailable", message)
+        self.assertIn("daemon down", message)
+
+    def test_nonzero_scoped_total_skips_the_universe_pass(self) -> None:
+        # The scoped archive total already proves the agent exists; the FakeRunner
+        # would raise on a fourth, unscripted call.
+        runner = FakeRunner(
+            [
+                completed(stdout=self.EMPTY),
+                completed(stdout=_json_total(5)),
+                completed(stdout=self.EMPTY),
+            ]
+        )
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = main(["--index-source", "agentsview", "--agent", "codex"], runner=runner)
+        self.assertEqual(code, 0)
+        self.assertNotIn("matched no known agent", out.getvalue())
+
+
 def _exclude_subagents_population_runner() -> "Runner":
     """A realistic `agentsview` double for scenario (A) of TB-33 Finding 1.
 
