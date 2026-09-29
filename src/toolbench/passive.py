@@ -52,6 +52,7 @@ from toolbench.sources import (
     SkipReason,
     SkipRecord,
     _run_agentsview,
+    agentsview_agent_universe,
     agentsview_parent_ids,
     iter_sessions,
 )
@@ -931,6 +932,67 @@ def _freeze_note(plan: _FreezePlan, skips: list[SkipRecord]) -> str | None:
     return f"Corpus frozen to: {plan.path}"
 
 
+def _agent_suggestion(requested: str, known: set[str]) -> str | None:
+    """A ` (did you mean ...?)` hint for a `--agent` name that matched nothing, or `None`.
+
+    Suggest only -- never substitute. Silently rerunning under the corrected name would
+    change which population is measured without the operator ever choosing it.
+
+    Case-insensitive equality only, no edit-distance fuzzing: a fuzzy hint can point at
+    a DIFFERENT agent that merely looks alike. When several known agents fold to the
+    same name, all are listed -- picking one would be the silent choice this refuses.
+    """
+    folded = requested.casefold()
+    matches = sorted(k for k in known if k.casefold() == folded)
+    if not matches:
+        return None
+    return " (did you mean " + " or ".join(repr(m) for m in matches) + "?)"
+
+
+def _unknown_agent_note(
+    args: CliArgs,
+    resolved: _ResolvedCorpus,
+    runner: Runner,
+    *,
+    replaying: bool,
+) -> str | None:
+    """Name a `--agent` that matches no agent in the archive, on the empty path only.
+
+    Without this, `--agent Codex` (the real tag is `codex`) prints the exact words a
+    genuinely empty archive prints: an operator typo reads as "no data" (S23/S38).
+
+    Only a LIVE agentsview discovery honors `--agent`: the raw path stamps every ref
+    `claude-code` regardless, and a replay reads the manifest's pinned refs. A non-zero
+    run-scoped `archive_total` already proves the name is real, so the full-archive
+    pass is skipped there. A failed lookup is disclosed, never allowed to take down the
+    empty report it is annotating.
+    """
+    census = resolved.census
+    if (
+        args.agent == "all"
+        or replaying
+        or args.index_source == "raw"
+        or resolved.fallback_reason is not None
+        or (census.unavailable_reason is None and census.archive_total > 0)
+    ):
+        return None
+    try:
+        known = agentsview_agent_universe(runner)
+    except (RuntimeError, ValueError) as exc:
+        return (
+            "- **Agent check unavailable**: could not list the archive's agents to "
+            f"verify --agent {args.agent!r}: {exc}"
+        )
+    if args.agent in known:
+        return None
+    roster = ", ".join(sorted(known)) or "none"
+    hint = _agent_suggestion(args.agent, known) or ""
+    return (
+        f"- **Unknown agent**: --agent {args.agent!r} matched no known agent "
+        f"(known: {roster}){hint}"
+    )
+
+
 def _no_sessions_lines(
     reducer: Reducer,
     census: AgentCensus,
@@ -941,6 +1003,7 @@ def _no_sessions_lines(
     *,
     freeze: _FreezePlan | None = None,
     raw_root_note: str | None = None,
+    agent_note: str | None = None,
 ) -> list[str]:
     """The empty-selection report: the headline, plus the census notes behind it.
 
@@ -964,6 +1027,8 @@ def _no_sessions_lines(
         # The one report where naming the root matters most: an empty scan of the
         # WRONG root reads exactly like an empty archive without it.
         lines.append(raw_root_note)
+    if agent_note is not None:
+        lines.append(agent_note)
     if freeze is not None:
         note = _freeze_note(freeze, skips)
         if note is not None:
@@ -1115,6 +1180,9 @@ def main(
                 dict(sampled_by_agent),
                 freeze=freeze,
                 raw_root_note=raw_root_note,
+                agent_note=_unknown_agent_note(
+                    args, resolved, runner, replaying=freeze.replaying
+                ),
             )
         )
         # `--out` must always describe THIS run, even a zero-scan one: otherwise

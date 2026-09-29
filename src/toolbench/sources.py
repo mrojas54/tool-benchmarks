@@ -446,6 +446,29 @@ def agentsview_parent_ids(
     return parent_ids
 
 
+def agentsview_agent_universe(runner: Runner, *, limit: int = 500) -> set[str]:
+    """Every agent with >= 1 session ANYWHERE in the archive -- unscoped on purpose.
+
+    The run's `AgentCensus` cannot answer "does `--agent X` name a real agent?": it is
+    gathered under this run's filters (TB-33), so under `--agent Codex` its probe sees
+    only Codex -- i.e. nothing -- and an empty census reads the same for a typo as for a
+    real agent with no sessions in the window. This drops every filter (agent, project,
+    since) so a name absent here is absent from the archive, not merely out of window.
+
+    `_ALL_INCLUDES`, not `_PROBE_INCLUDES`: an agent whose sessions are all children is
+    invisible to the probe listing (see `AgentCensus.residual`), and calling a real agent
+    "unknown" is the very lie this lookup exists to prevent. Derived from the listing,
+    never a hardcoded roster, so a new agent is known the day it appears (TB-30/TB-33).
+    Costs a full-archive pass, so callers reach for it only on the empty-selection path.
+    """
+    agents: set[str] = set()
+    for payload, _ in _agentsview_pages(
+        runner, agent="all", project=None, since=None, limit=limit, includes=_ALL_INCLUDES
+    ):
+        agents.update(entry["agent"] for entry in payload["sessions"])
+    return agents
+
+
 def _list_total(
     runner: Runner,
     *,
