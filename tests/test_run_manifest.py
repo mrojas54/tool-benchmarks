@@ -106,3 +106,23 @@ def test_non_utf8_file_is_malformed(tmp_path: Path) -> None:
     path.write_bytes(b"\xff\xfe\x00invalid")
     with pytest.raises(MalformedRunManifest, match="not valid UTF-8"):
         read_run_manifest(str(path))
+
+
+def test_worktrees_are_expanded_and_normalized(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        {"run": "1", "tickets": ["TB-1"], "branches": ["b"], "worktrees": ["~/wt/tb-1/", "/a/./b"]},
+    )
+    worktrees = read_run_manifest(path).worktrees
+    assert worktrees == (str(Path("~/wt/tb-1").expanduser()), "/a/b")
+
+
+@pytest.mark.parametrize("bad", ["wt/tb-1", "/"])
+def test_relative_or_root_worktree_is_malformed(tmp_path: Path, bad: str) -> None:
+    """A relative path can never match a transcript's absolute cwd (silently claims
+    nothing); "/" would claim every detached entry on the machine. Refuse both."""
+    path = _write(
+        tmp_path, {"run": "1", "tickets": ["TB-1"], "branches": ["b"], "worktrees": [bad]}
+    )
+    with pytest.raises(MalformedRunManifest, match="worktree"):
+        read_run_manifest(path)

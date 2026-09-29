@@ -785,6 +785,45 @@ class CorpusFingerprintRenderTests(unittest.TestCase):
             census=AgentCensus(totals={}, archive_total=0),
         )
         self.assertNotIn("detached-HEAD", report)
+        self.assertNotIn("via worktree cwd", report)
+
+    def test_run_section_shows_worktree_claimed_usage_and_unmatched_worktrees(self) -> None:
+        """Worktree-claimed detached usage is IN the headline, but shown on its own line
+        so a reader sees how much rests on cwd; a listed worktree that claimed nothing
+        is named, like a branch that matched nothing."""
+        manifest = RunManifest(
+            run="3",
+            tickets=("TB-1",),
+            branches=frozenset({"b1"}),
+            worktrees=("/wt/tb-1", "/wt/tb-2"),
+        )
+        reducer = Reducer(run=manifest)
+        reducer.absorb(
+            "claude-code",
+            ParseResult(
+                calls=[],
+                malformed=0,
+                usage_by_branch={"HEAD": BranchUsage(read=600, creation=60, messages=3)},
+                detached_usage_by_cwd={
+                    "/wt/tb-1": BranchUsage(read=600, creation=60, messages=3)
+                },
+            ),
+        )
+        report = render_report(
+            reducer,
+            index_source="raw",
+            fallback_reason=None,
+            skips=[],
+            include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=0,
+            since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
+        )
+        self.assertIn("Run cache tokens (run 3): read=600 creation=60 (1 candidate session", report)
+        self.assertIn("via worktree cwd (detached HEAD): read=600 creation=60 (1 session", report)
+        self.assertIn("worktrees matched no detached entries: /wt/tb-2", report)
+        self.assertNotIn("detached-HEAD (unattributable)", report)
 
 
 def _reducer_with(**sessions_by_agent: int) -> Reducer:

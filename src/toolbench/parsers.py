@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import ClassVar
 
 from toolbench.transcript import (
+    DETACHED_BRANCH,
     BranchUsage,
     JsonLines,
     ParseResult,
@@ -89,6 +90,22 @@ class _UsageTally:
     output_tokens: int = 0
     usage_messages: int = 0
     by_branch: dict[str, BranchUsage] = field(default_factory=dict)
+    detached_by_cwd: dict[str, BranchUsage] = field(default_factory=dict)
+
+
+def _usage_buckets(tally: _UsageTally, entry: dict[str, object]) -> list[BranchUsage]:
+    """The buckets one entry's usage folds into: its branch bucket, plus -- for a
+    detached entry -- its `cwd` bucket, so a run-manifest worktree can claim it. A
+    named branch needs no cwd split; the branch already says whose work it is."""
+    branch = entry.get("gitBranch")
+    branch_key = branch if isinstance(branch, str) else ""
+    buckets = [tally.by_branch.setdefault(branch_key, BranchUsage())]
+    if branch_key == DETACHED_BRANCH:
+        cwd = entry.get("cwd")
+        buckets.append(
+            tally.detached_by_cwd.setdefault(cwd if isinstance(cwd, str) else "", BranchUsage())
+        )
+    return buckets
 
 
 def _account_usage(tally: _UsageTally, entry: dict[str, object], message: object) -> None:
@@ -113,15 +130,12 @@ def _account_usage(tally: _UsageTally, entry: dict[str, object], message: object
     tally.output_tokens += entry_output
     # S40: same pass, no second interpreter (CQ 1.2). Bucket by the ENTRY's branch,
     # not the session's -- sessions straddle.
-    branch = entry.get("gitBranch")
-    bucket = tally.by_branch.setdefault(
-        branch if isinstance(branch, str) else "", BranchUsage()
-    )
-    bucket.read += entry_read
-    bucket.creation += entry_creation
-    bucket.input += entry_input
-    bucket.output += entry_output
-    bucket.messages += 1
+    for bucket in _usage_buckets(tally, entry):
+        bucket.read += entry_read
+        bucket.creation += entry_creation
+        bucket.input += entry_input
+        bucket.output += entry_output
+        bucket.messages += 1
 
 
 def _track_turn(
@@ -465,6 +479,7 @@ class ClaudeParser(TranscriptParser):
             session_output_tokens=tally.output_tokens,
             session_usage_messages=tally.usage_messages,
             usage_by_branch=tally.by_branch,
+            detached_usage_by_cwd=tally.detached_by_cwd,
             turns=turns,
         )
 

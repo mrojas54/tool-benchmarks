@@ -14,8 +14,9 @@ key we filter on.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 class MalformedRunManifest(RuntimeError):
@@ -24,7 +25,14 @@ class MalformedRunManifest(RuntimeError):
 
 @dataclass(frozen=True)
 class RunManifest:
-    """One orchestration run: its tickets and the branches its delegators worked on."""
+    """One orchestration run: its tickets and the branches its delegators worked on.
+
+    `worktrees` are the delegators' linked-worktree paths, recorded at dispatch like
+    `branches`. They claim only DETACHED-HEAD entries whose `cwd` lies inside one (see
+    `worktree_for`): a detached checkout stamps no branch, so its directory is the only
+    dispatch-time key left. Never the repo root -- that would claim every detached
+    session in the clone.
+    """
 
     run: str
     tickets: tuple[str, ...]
@@ -34,6 +42,43 @@ class RunManifest:
     @property
     def ticket_count(self) -> int:
         return len(self.tickets)
+
+    def worktree_for(self, cwd: str) -> str | None:
+        """The manifest worktree containing `cwd`, or None.
+
+        Compared by path COMPONENTS, never string prefix: `/wt/tb-1` must not claim
+        `/wt/tb-12`. When worktrees nest, the deepest wins, so each entry is claimed
+        exactly once. Pure path math -- the transcript's machine may not be this one.
+        """
+        if not cwd:
+            return None
+        parts = _path_parts(cwd)
+        best: str | None = None
+        best_len = 0
+        for worktree in self.worktrees:
+            tree = _path_parts(worktree)
+            if len(tree) > best_len and parts[: len(tree)] == tree:
+                best, best_len = worktree, len(tree)
+        return best
+
+
+def _path_parts(path: str) -> tuple[str, ...]:
+    return PurePosixPath(os.path.normpath(os.path.expanduser(path))).parts
+
+
+def _worktree_tuple(data: dict[str, object], path: str) -> tuple[str, ...]:
+    """Normalized absolute worktree paths. A relative path cannot be matched against a
+    transcript's absolute `cwd`, and "/" would claim every detached entry anywhere --
+    both are refused rather than silently matching nothing or everything."""
+    out = []
+    for raw in _str_tuple(data, "worktrees"):
+        norm = os.path.normpath(os.path.expanduser(raw))
+        if not os.path.isabs(norm) or norm == os.sep:
+            raise MalformedRunManifest(
+                f"{path}: worktree {raw!r} must be an absolute path below the filesystem root"
+            )
+        out.append(norm)
+    return tuple(out)
 
 
 def _str_tuple(data: dict[str, object], key: str) -> tuple[str, ...]:
@@ -77,5 +122,5 @@ def read_run_manifest(path: str) -> RunManifest:
         run=str(run),
         tickets=_str_tuple(data, "tickets"),
         branches=frozenset(branches),
-        worktrees=_str_tuple(data, "worktrees"),
+        worktrees=_worktree_tuple(data, path),
     )
