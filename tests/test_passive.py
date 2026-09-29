@@ -2435,7 +2435,11 @@ class RawRootFlagTests(unittest.TestCase):
              "next_cursor": "", "total": 1}
         )
         # Parent probe, per-agent census, archive total, full listing, one export.
-        runner = FakeRunner([completed(stdout=payload)] * 4 + [completed(stdout=good)])
+        script: list[subprocess.CompletedProcess[str] | Exception] = [
+            *[completed(stdout=payload)] * 4,
+            completed(stdout=good),
+        ]
+        runner = FakeRunner(script)
         code, report = self._run(["--index-source", "agentsview"], runner=runner)
         self.assertEqual(code, 0)
         self.assertIn("## Summary", report)
