@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -2208,3 +2209,153 @@ class FacadeReexportTests(unittest.TestCase):
 
     def test_passive_no_longer_imports_tempfile(self) -> None:
         self.assertFalse(hasattr(passive, "tempfile"))
+
+
+class RawRootFlagTests(unittest.TestCase):
+    """`--raw-root PATH` reaches discovery, and the Summary names the root it scanned.
+
+    Claude Code transcripts do not all live under `~/.claude/projects`: Claude desktop
+    keeps its own tree, and an operator may analyze an archive copied from another
+    machine. The `root` keyword on `main` was the only way to point elsewhere, which in
+    practice meant tests only. The disclosure half is the load-bearing one: scanning the
+    wrong root renders the same confident numbers -- or the same "no sessions matched" --
+    as scanning the right one, so the root must be named whenever raw discovery ran, and
+    withheld whenever it did not (a named root nobody read is its own lie).
+    """
+
+    NOWHERE = "/definitely/not/a/real/root"
+
+    def _root_with_one_session(self) -> str:
+        tmp = Path(tempfile.mkdtemp())
+        project = tmp / "proj-a"
+        project.mkdir()
+        shutil.copy(FIXTURES / "sample.jsonl", project / "sess-001.jsonl")
+        self.addCleanup(shutil.rmtree, tmp)
+        return str(tmp)
+
+    def _run(self, argv: list[str], **kwargs: object) -> tuple[int, str]:
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            code = main(argv, **kwargs)  # type: ignore[arg-type]
+        return code, out.getvalue()
+
+    def test_parse_defaults_to_none_and_accepts_a_path(self) -> None:
+        self.assertIsNone(parse_args([]).raw_root)
+        self.assertEqual(parse_args(["--raw-root", "/a/b"]).raw_root, "/a/b")
+        self.assertEqual(
+            parse_args(["--index-source", "raw", "--raw-root", "/a/b"]).raw_root, "/a/b"
+        )
+
+    def test_rejected_with_explicit_agentsview(self) -> None:
+        err = io.StringIO()
+        with redirect_stderr(err), self.assertRaises(SystemExit) as ctx:
+            parse_args(["--index-source", "agentsview", "--raw-root", "/a/b"])
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertIn("--raw-root has no effect with --index-source agentsview", err.getvalue())
+
+    def test_flag_reaches_discovery_and_overrides_the_keyword(self) -> None:
+        # The keyword points nowhere: if the flag did not win, strict raw would exit 1.
+        root = self._root_with_one_session()
+        code, report = self._run(
+            ["--index-source", "raw", "--raw-root", root], root=self.NOWHERE
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("scanned: 1", report)
+
+    def test_missing_flag_root_is_fatal_under_strict_raw(self) -> None:
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            code = main(["--index-source", "raw", "--raw-root", self.NOWHERE])
+        self.assertEqual(code, 1)
+        self.assertIn(self.NOWHERE, err.getvalue())
+
+    def test_summary_names_the_root_for_a_raw_scan(self) -> None:
+        root = self._root_with_one_session()
+        _, report = self._run(["--index-source", "raw", "--raw-root", root])
+        summary = report.split("## Summary", 1)[1]
+        self.assertIn(f"- Raw root scanned: {root}\n", summary)
+
+    def test_default_root_is_disclosed_too(self) -> None:
+        # No flag: the disclosure is about what was scanned, not about what was typed.
+        root = self._root_with_one_session()
+        _, report = self._run(["--index-source", "raw"], root=root)
+        self.assertIn(f"- Raw root scanned: {root}\n", report)
+
+    def test_zero_scan_report_names_the_root(self) -> None:
+        # The wrong-root case in its most dangerous form: an empty directory reads as
+        # an empty archive unless the report says which directory it was.
+        with TemporaryDirectory() as tmp:
+            _, report = self._run(["--index-source", "raw", "--raw-root", tmp])
+        self.assertIn("no sessions matched", report)
+        self.assertIn(f"Raw root scanned: {tmp}", report)
+
+    def test_tilde_is_expanded_in_the_disclosure(self) -> None:
+        root = self._root_with_one_session()
+        with unittest.mock.patch.dict(os.environ, {"HOME": str(Path(root).parent)}):
+            _, report = self._run(
+                ["--index-source", "raw", "--raw-root", f"~/{Path(root).name}"]
+            )
+        self.assertIn(f"- Raw root scanned: {root}\n", report)
+        self.assertNotIn("Raw root scanned: ~", report)
+
+    def test_auto_probe_fallback_names_the_root(self) -> None:
+        root = self._root_with_one_session()
+        runner = FakeRunner([FileNotFoundError("no agentsview")])
+        _, report = self._run(
+            ["--index-source", "auto", "--raw-root", root], runner=runner
+        )
+        self.assertIn("scanned: 1", report)
+        self.assertIn(f"- Raw root scanned: {root}\n", report)
+
+    def test_auto_mid_listing_fallback_names_the_root(self) -> None:
+        root = self._root_with_one_session()
+        probe_ok = completed(stdout=json.dumps({"sessions": [], "next_cursor": "", "total": 0}))
+        runner = FakeRunner([probe_ok, completed(returncode=1, stderr="daemon down")])
+        _, report = self._run(
+            ["--index-source", "auto", "--raw-root", root], runner=runner
+        )
+        self.assertIn("degraded to raw", report)
+        self.assertIn(f"- Raw root scanned: {root}\n", report)
+
+    def test_auto_vanished_agentsview_names_no_root(self) -> None:
+        # agentsview answered the probe, then vanished (FileNotFoundError) during its
+        # eager parent-probe pass. That degrades to a MISSING_SOURCE skip with NO raw
+        # rescan (S10), so the raw root was never read and must not be named.
+        probe_ok = completed(stdout=json.dumps({"sessions": [], "next_cursor": "", "total": 0}))
+        runner = FakeRunner([probe_ok, FileNotFoundError("agentsview vanished")])
+        _, report = self._run(
+            ["--index-source", "auto", "--raw-root", self._root_with_one_session()],
+            runner=runner,
+        )
+        self.assertIn("no sessions matched", report)
+        self.assertNotIn("Raw root scanned", report)
+
+    def test_healthy_agentsview_names_no_root(self) -> None:
+        good = (FIXTURES / "sample.jsonl").read_text()
+        payload = json.dumps(
+            {"sessions": [{"id": "s1", "project": "p", "agent": "claude"}],
+             "next_cursor": "", "total": 1}
+        )
+        # Parent probe, per-agent census, archive total, full listing, one export.
+        runner = FakeRunner([completed(stdout=payload)] * 4 + [completed(stdout=good)])
+        code, report = self._run(["--index-source", "agentsview"], runner=runner)
+        self.assertEqual(code, 0)
+        self.assertIn("## Summary", report)
+        self.assertNotIn("Raw root scanned", report)
+
+    def test_freeze_replay_names_no_root_even_under_raw(self) -> None:
+        # A replay reads its refs from the manifest; discovery never walks a root, so
+        # `--index-source raw` alone must not earn the disclosure.
+        good = (FIXTURES / "sample.jsonl").read_text()
+        with TemporaryDirectory() as d:
+            manifest = str(Path(d) / "corpus.manifest")
+            refs = [SessionRef("claude", "agentsview", "p", "good-1", None)]
+            write_manifest(manifest, refs, corpus_fingerprint(["good-1"]).digest)
+            runner = FakeRunner([completed(stdout=good)])
+            code, report = self._run(
+                ["--index-source", "raw", "--raw-root", d, "--freeze", manifest],
+                runner=runner,
+            )
+        self.assertEqual(code, 0)
+        self.assertIn("Replaying frozen corpus", report)
+        self.assertNotIn("Raw root scanned", report)

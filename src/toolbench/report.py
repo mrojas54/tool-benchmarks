@@ -787,12 +787,18 @@ def _render_summary(
     freeze_note: str | None,
     run_tickets: int | None,
     agentsview_timeout: float | None,
+    raw_root_note: str | None = None,
 ) -> list[str]:
     """The Summary section: provenance, sampling recap, cache/run tokens, and flags."""
     out: list[str] = []
     out.append("## Summary")
     out.append("")
     out.append(f"- Index source: {index_source}")
+    if raw_root_note is not None:
+        # Beside the index source because it answers the same question -- WHERE the
+        # sessions came from. Scanning the wrong root is otherwise indistinguishable
+        # from a quiet archive: the numbers render just as confidently either way.
+        out.append(f"- {raw_root_note}")
     # Reconcile discovery so `scanned` is never mistaken for the corpus size: a
     # discovered session either scanned or skipped, and every skip is one SkipRecord
     # (TB-21). `discovered` is derived, not a separate count that could drift.
@@ -876,6 +882,7 @@ def render_report(
     limit_truncated: bool | None = False,
     sampled_by_agent: dict[str, int] | None = None,
     agentsview_timeout: float | None = None,
+    raw_root_note: str | None = None,
 ) -> str:
     """Render the five-section report (S14) with provenance (S15).
 
@@ -889,6 +896,8 @@ def render_report(
     manifest carried a real (v2) census -- the disclosure that the fractions above are
     historical, not live. `render_report` does not derive this itself; it only renders
     what `passive.py` hands it, the same division of labor as `freeze_note`.
+    `raw_root_note` follows the same division: `passive.py` sets it only when raw
+    discovery actually ran, and this function only places it.
     """
     lines: list[str] = ["# Tool Usage Report", ""]
     lines += _render_agent_breakdown(
@@ -911,6 +920,7 @@ def render_report(
         freeze_note=freeze_note,
         run_tickets=run_tickets,
         agentsview_timeout=agentsview_timeout,
+        raw_root_note=raw_root_note,
     )
     lines += _render_skipped_detail(verbose, skips)
     return "\n".join(lines) + "\n"

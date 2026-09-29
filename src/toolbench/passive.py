@@ -41,6 +41,7 @@ from toolbench.report import (
 from toolbench.run_manifest import MalformedRunManifest, RunManifest, read_run_manifest
 from toolbench.sources import (
     AGENTSVIEW_TIMEOUT_S,
+    DEFAULT_RAW_ROOT,
     AgentCensus,
     AgentsViewTimeout,
     IndexSource,
@@ -166,6 +167,7 @@ class CliArgs:
     run_manifest: str | None
     tickets: int | None
     agentsview_timeout: float
+    raw_root: str | None = None
 
 
 def _positive_int(raw: str) -> int:
@@ -246,6 +248,7 @@ def _cli_args_from_namespace(ns: argparse.Namespace) -> CliArgs:
         run_manifest=_optional_str(ns.run_manifest),
         tickets=ns.tickets,
         agentsview_timeout=agentsview_timeout,
+        raw_root=_optional_str(ns.raw_root),
     )
 
 
@@ -262,6 +265,18 @@ def parse_args(argv: list[str] | None) -> CliArgs:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--exclude-subagents", action="store_true", default=False)
     parser.add_argument("--index-source", choices=("auto", "agentsview", "raw"), default="auto")
+    parser.add_argument(
+        "--raw-root",
+        default=None,
+        metavar="PATH",
+        help=(
+            f"Directory raw discovery scans for Claude Code JSONL transcripts (default "
+            f"{DEFAULT_RAW_ROOT}). Governs `--index-source raw` and the raw fallback of "
+            "`auto`; AgentsView has its own sources, so it is rejected with "
+            "`--index-source agentsview`. The Summary names the root whenever raw "
+            "discovery ran."
+        ),
+    )
     parser.add_argument(
         "--agentsview-timeout",
         type=_nonnegative_float,
@@ -283,7 +298,17 @@ def parse_args(argv: list[str] | None) -> CliArgs:
     )
     parser.add_argument("--run-manifest", default=None)
     parser.add_argument("--tickets", type=_positive_int, default=None)
-    return _cli_args_from_namespace(parser.parse_args(argv))
+    ns = parser.parse_args(argv)
+    if ns.raw_root is not None and ns.index_source == "agentsview":
+        # Unlike `--tickets` without `--run-manifest`, this is refused rather than left
+        # a documented no-op: an operator who pointed at a root and got a report back
+        # would reasonably believe that root was read, and nothing in an AgentsView-only
+        # run could correct that belief.
+        parser.error(
+            "--raw-root has no effect with --index-source agentsview "
+            "(AgentsView enumerates its own sources); use --index-source raw or auto"
+        )
+    return _cli_args_from_namespace(ns)
 
 
 def _probe_truncation(refs_iter: Iterator[SessionRef], *, exclude_subagents: bool) -> bool | None:
@@ -915,6 +940,7 @@ def _no_sessions_lines(
     sampled_by_agent: dict[str, int],
     *,
     freeze: _FreezePlan | None = None,
+    raw_root_note: str | None = None,
 ) -> list[str]:
     """The empty-selection report: the headline, plus the census notes behind it.
 
@@ -934,6 +960,10 @@ def _no_sessions_lines(
     else:
         suffix = ""
     lines = [f"toolbench.passive: no sessions matched the given selection.{suffix}"]
+    if raw_root_note is not None:
+        # The one report where naming the root matters most: an empty scan of the
+        # WRONG root reads exactly like an empty archive without it.
+        lines.append(raw_root_note)
     if freeze is not None:
         note = _freeze_note(freeze, skips)
         if note is not None:
@@ -944,6 +974,37 @@ def _no_sessions_lines(
         )
     )
     return lines
+
+
+def _raw_root_scanned(args: CliArgs, fallback_reason: str | None, *, replaying: bool) -> bool:
+    """Did this run's discovery actually walk the raw root?
+
+    Keyed on what HAPPENED, not on the flag. `--index-source raw` alone is not enough:
+    a `--freeze` replay takes its refs from the manifest and never walks a root. And
+    `auto` walked one only when it fell back -- which `_discover_refs` always records as
+    a `fallback_reason`, whether the probe failed or the listing broke mid-page (TB-38).
+    The one `auto` failure that leaves `fallback_reason` unset is agentsview vanishing
+    during its eager parent-probe pass, and that path deliberately rescans nothing (S10).
+    """
+    if replaying:
+        return False
+    return args.index_source == "raw" or fallback_reason is not None
+
+
+def _raw_root_note(
+    args: CliArgs, root: str, fallback_reason: str | None, *, replaying: bool
+) -> str | None:
+    """The Summary line naming the raw root, or `None` when no raw scan happened.
+
+    Printed expanded, not as typed: `~` resolves differently under another user or a
+    sandboxed HOME, and "which directory was this?" is the whole question the line
+    exists to answer. Withheld -- never defaulted -- when the root governed nothing,
+    the same discipline as `agentsview_timeout` (TB-39): naming a root nobody read would
+    be a provenance claim with no scan behind it.
+    """
+    if not _raw_root_scanned(args, fallback_reason, replaying=replaying):
+        return None
+    return f"Raw root scanned: {Path(root).expanduser()}"
 
 
 def _emit_report(text: str, out_path: str | None) -> None:
@@ -965,9 +1026,12 @@ def main(
     argv: list[str] | None = None,
     *,
     runner: Runner | None = None,
-    root: str = "~/.claude/projects",
+    root: str = DEFAULT_RAW_ROOT,
 ) -> int:
     args = parse_args(argv)
+    # `--raw-root` wins over the keyword: the keyword is the test seam, the flag is the
+    # operator's, and an operator who typed a path must get that path.
+    root = args.raw_root if args.raw_root is not None else root
 
     freeze = _plan_freeze(args)
     if freeze is None:
@@ -987,6 +1051,9 @@ def main(
     refs = resolved.refs
     skips = resolved.skips
     census = resolved.census
+    raw_root_note = _raw_root_note(
+        args, root, resolved.fallback_reason, replaying=freeze.replaying
+    )
 
     # Counted before the filter runs, on both the discovery and the replay path -- these
     # are what the provenance line reports, so they must describe the corpus as it was
@@ -1047,6 +1114,7 @@ def main(
                 resolved.limit_truncated,
                 dict(sampled_by_agent),
                 freeze=freeze,
+                raw_root_note=raw_root_note,
             )
         )
         # `--out` must always describe THIS run, even a zero-scan one: otherwise
@@ -1085,6 +1153,7 @@ def main(
             if freeze.replaying or args.index_source == "raw"
             else args.agentsview_timeout
         ),
+        raw_root_note=raw_root_note,
     )
     _emit_report(report, args.out)
     return 0
