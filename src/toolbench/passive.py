@@ -53,7 +53,7 @@ from toolbench.sources import (
     SkipRecord,
     _run_agentsview,
     agentsview_agent_universe,
-    agentsview_parent_ids,
+    agentsview_classify_subagents,
     iter_sessions,
 )
 from toolbench.transcript import ParseResult
@@ -634,21 +634,37 @@ def _restamp_agentsview_subagents(
     if not args.exclude_subagents or not any(ref.source == "agentsview" for ref in refs):
         return refs
     assert runner is not None
-    parent_ids = agentsview_parent_ids(
+    parent_ids, child_ids = agentsview_classify_subagents(
         runner,
         agent=args.agent,
         project=None if args.all_projects else args.project,
         since=args.since,
         limit=args.limit if args.limit is not None else 500,
     )
-    return [
-        (
-            replace(ref, is_subagent=ref.session_id not in parent_ids)
-            if ref.source == "agentsview"
-            else ref
+    # Absence from the live listing is not evidence of being a child: the listing is
+    # bounded by --limit/--since/--project and reflects the archive now, so a frozen
+    # parent that was pruned or left the window is absent from it. Only ids the archive
+    # positively classifies are restamped; the rest keep their stored flag.
+    restamped: list[SessionRef] = []
+    unclassifiable = 0
+    for ref in refs:
+        if ref.source != "agentsview":
+            restamped.append(ref)
+        elif ref.session_id in child_ids:
+            restamped.append(replace(ref, is_subagent=True))
+        elif ref.session_id in parent_ids:
+            restamped.append(replace(ref, is_subagent=False))
+        else:
+            unclassifiable += 1
+            restamped.append(ref)
+    if unclassifiable:
+        print(
+            f"toolbench.passive: note: {unclassifiable} AgentsView ref(s) in the freeze "
+            "are absent from the live archive listing and could not be re-classified "
+            "as subagents; their frozen is_subagent flag was kept.",
+            file=sys.stderr,
         )
-        for ref in refs
-    ]
+    return restamped
 
 
 def _resolve_corpus(
@@ -691,11 +707,12 @@ def _resolve_corpus(
         if not manifest.refs:
             print(_empty_replay_refusal(freeze_path), file=sys.stderr)
             return None
-        refs, fallback_reason, skips = (
-            _restamp_agentsview_subagents(manifest.refs, runner, args),
-            None,
-            [],
-        )
+        try:
+            refs = _restamp_agentsview_subagents(manifest.refs, runner, args)
+        except (FileNotFoundError, RuntimeError, ValueError) as exc:
+            print(f"toolbench.passive: fatal source error: {exc}", file=sys.stderr)
+            return None
+        fallback_reason, skips = None, []
         census, frozen_census_note = _replay_census(manifest, freeze_path, args)
     else:
         try:
