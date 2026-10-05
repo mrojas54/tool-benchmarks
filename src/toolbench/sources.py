@@ -446,6 +446,36 @@ def agentsview_parent_ids(
     return parent_ids
 
 
+def agentsview_classify_subagents(
+    runner: Runner,
+    *,
+    agent: str = "all",
+    project: str | None = None,
+    since: str | None = None,
+    limit: int = 500,
+) -> tuple[set[str], set[str]]:
+    """`(parent_ids, child_ids)` from the live archive, under the given scope.
+
+    `agentsview_parent_ids` alone can only say who IS a parent; "absent from that
+    listing" is not evidence of anything, because the listing is bounded by
+    `agent` / `project` / `since` / `limit` and reflects the archive NOW. A parent
+    that was pruned or fell out of the window is absent for reasons unrelated to
+    whether it is a child. Child ids are the positive evidence: present in the
+    `_ALL_INCLUDES` listing, absent from the `_PROBE_INCLUDES` one (the two differ in
+    exactly `--include-children`, TB-31). An id in neither set is unclassifiable and
+    callers must keep whatever they already knew about it.
+    """
+    parent_ids, _agents_seen = _probe_pass(
+        runner, agent=agent, project=project, since=since, limit=limit
+    )
+    all_ids: set[str] = set()
+    for payload, _ in _agentsview_pages(
+        runner, agent=agent, project=project, since=since, limit=limit, includes=_ALL_INCLUDES
+    ):
+        all_ids.update(entry["id"] for entry in payload["sessions"])
+    return parent_ids, all_ids - parent_ids
+
+
 def agentsview_agent_universe(runner: Runner, *, limit: int = 500) -> set[str]:
     """Every agent with >= 1 session ANYWHERE in the archive -- unscoped on purpose.
 

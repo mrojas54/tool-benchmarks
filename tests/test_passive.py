@@ -1391,7 +1391,19 @@ class CorpusFreezeMainTests(unittest.TestCase):
                     "total": 1,
                 }
             )
-            runner = FakeRunner([completed(stdout=probe_page), completed(stdout=good)])
+            all_page = json.dumps(
+                {
+                    "sessions": [
+                        {"id": "parent-1", "agent": "claude", "project": "p"},
+                        {"id": "child-1", "agent": "claude", "project": "p"},
+                    ],
+                    "next_cursor": "",
+                    "total": 2,
+                }
+            )
+            runner = FakeRunner(
+                [completed(stdout=probe_page), completed(stdout=all_page), completed(stdout=good)]
+            )
             out = io.StringIO()
             with redirect_stdout(out):
                 code = main(
@@ -1407,6 +1419,51 @@ class CorpusFreezeMainTests(unittest.TestCase):
             self.assertEqual(code, 0)
             report = out.getvalue()
             self.assertIn("Subagents included: no (1 of 2 discovered excluded)", report)
+
+    def test_replay_restamp_keeps_flag_for_refs_absent_from_the_live_listing(self) -> None:
+        """High finding, 20260927/20261004 tech-debt reports: a frozen parent that was
+        pruned or left the `--since`/`--limit` window is absent from the live listing.
+        Absence is not evidence of being a subagent, so it must keep its stored
+        `is_subagent=False` and still reach the scan -- and the keep is disclosed.
+        """
+        good = (FIXTURES / "sample.jsonl").read_text()
+        empty_page = json.dumps({"sessions": [], "next_cursor": "", "total": 0})
+        with TemporaryDirectory() as tmp:
+            manifest = str(Path(tmp) / "freeze.json")
+            refs = [SessionRef("claude", "agentsview", "p", "pruned-parent", None, is_subagent=False)]
+            write_manifest(manifest, refs, corpus_fingerprint(["pruned-parent"]).digest)
+            runner = FakeRunner(
+                [completed(stdout=empty_page), completed(stdout=empty_page), completed(stdout=good)]
+            )
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                code = main(
+                    ["--index-source", "agentsview", "--freeze", manifest, "--exclude-subagents"],
+                    runner=runner,
+                )
+            self.assertEqual(code, 0)
+            self.assertIn("Subagents included: no (0 of 1 discovered excluded)", out.getvalue())
+            self.assertIn("1 AgentsView ref(s)", err.getvalue())
+            self.assertIn("could not be re-classified", err.getvalue())
+
+    def test_replay_restamp_outage_is_a_fatal_source_error_not_a_traceback(self) -> None:
+        """Medium finding: the live probe on the replay branch maps failures to
+        `fatal source error` and exit 1, exactly as live discovery does.
+        """
+        with TemporaryDirectory() as tmp:
+            manifest = str(Path(tmp) / "freeze.json")
+            refs = [SessionRef("claude", "agentsview", "p", "parent-1", None, is_subagent=False)]
+            write_manifest(manifest, refs, corpus_fingerprint(["parent-1"]).digest)
+            runner = FakeRunner([completed(returncode=1, stderr="daemon down")])
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                code = main(
+                    ["--index-source", "agentsview", "--freeze", manifest, "--exclude-subagents"],
+                    runner=runner,
+                )
+            self.assertEqual(code, 1)
+            self.assertIn("fatal source error", err.getvalue())
+            self.assertIn("daemon down", err.getvalue())
 
     def test_replay_whose_refs_all_vanished_is_disclosed_not_refused(self) -> None:
         """Counter-trap: a pin whose refs have all vanished is not an empty pin.
