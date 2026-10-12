@@ -812,6 +812,7 @@ def _render_summary(
     run_tickets: int | None,
     agentsview_timeout: float | None,
     raw_root_note: str | None = None,
+    restamp_note: str | None = None,
 ) -> list[str]:
     """The Summary section: provenance, sampling recap, cache/run tokens, and flags."""
     out: list[str] = []
@@ -861,6 +862,10 @@ def _render_summary(
         out.append(f"- Subagents included: yes ({subagent_note} are subagent sessions)")
     else:
         out.append(f"- Subagents included: no ({subagent_note} excluded)")
+    if restamp_note is not None:
+        # Directly under the count it qualifies: a saved report must not show an
+        # `--exclude-subagents` number resting on stale flags with no trace of it.
+        out.append(f"- {restamp_note}")
     out.append(f"- AgentsView fallback reason: {fallback_reason if fallback_reason else 'none'}")
     timeout_note = _agentsview_timeout_note(agentsview_timeout, skips)
     if timeout_note:
@@ -907,6 +912,7 @@ def render_report(
     sampled_by_agent: dict[str, int] | None = None,
     agentsview_timeout: float | None = None,
     raw_root_note: str | None = None,
+    restamp_note: str | None = None,
 ) -> str:
     """Render the five-section report (S14) with provenance (S15).
 
@@ -921,7 +927,9 @@ def render_report(
     historical, not live. `render_report` does not derive this itself; it only renders
     what `passive.py` hands it, the same division of labor as `freeze_note`.
     `raw_root_note` follows the same division: `passive.py` sets it only when raw
-    discovery actually ran, and this function only places it.
+    discovery actually ran, and this function only places it. So does
+    `restamp_note`: set only when a freeze replay kept frozen subagent flags it
+    could not re-classify.
     """
     lines: list[str] = ["# Tool Usage Report", ""]
     lines += _render_agent_breakdown(
@@ -945,6 +953,7 @@ def render_report(
         run_tickets=run_tickets,
         agentsview_timeout=agentsview_timeout,
         raw_root_note=raw_root_note,
+        restamp_note=restamp_note,
     )
     lines += _render_skipped_detail(verbose, skips)
     return "\n".join(lines) + "\n"

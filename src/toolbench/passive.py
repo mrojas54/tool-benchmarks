@@ -514,6 +514,10 @@ class _ResolvedCorpus:
     census: AgentCensus
     limit_truncated: bool | None
     frozen_census_note: str | None
+    # Set only on a `--exclude-subagents` freeze replay that kept stale `is_subagent`
+    # flags for refs the live archive could not classify. Rendered in the Summary so a
+    # saved report carries the caveat -- stderr alone does not survive `--out`.
+    restamp_note: str | None = None
 
 
 def _no_denominator(reason: str) -> AgentCensus:
@@ -610,7 +614,7 @@ def _write_freeze(
 
 def _restamp_agentsview_subagents(
     refs: list[SessionRef], runner: Runner | None, args: CliArgs
-) -> list[SessionRef]:
+) -> tuple[list[SessionRef], int]:
     """Re-derive `is_subagent` for AgentsView refs on a `--exclude-subagents`
     freeze replay (Low finding, 20260921 tech-debt report).
 
@@ -630,9 +634,12 @@ def _restamp_agentsview_subagents(
     actually be wrong -- every other replay stays exactly as hermetic as before.
     A no-op, further, when the manifest carries no AgentsView refs at all (raw
     refs self-heal from `path` already).
+
+    Returns the refs plus how many AgentsView refs could not be classified and so
+    kept their frozen flag; the caller renders that count into the report.
     """
     if not args.exclude_subagents or not any(ref.source == "agentsview" for ref in refs):
-        return refs
+        return refs, 0
     assert runner is not None
     parent_ids, child_ids = agentsview_classify_subagents(
         runner,
@@ -664,7 +671,23 @@ def _restamp_agentsview_subagents(
             "as subagents; their frozen is_subagent flag was kept.",
             file=sys.stderr,
         )
-    return restamped
+    return restamped, unclassifiable
+
+
+def _restamp_note(unclassifiable: int) -> str | None:
+    """The Summary line for refs whose frozen `is_subagent` flag could not be refreshed.
+
+    `None` when every ref was classified (or no restamp ran): the line is a caveat on
+    a number, so it is withheld -- never rendered as "0" -- when the number is sound.
+    """
+    if not unclassifiable:
+        return None
+    return (
+        f"**Subagent flags kept from freeze**: {unclassifiable} AgentsView ref(s) were "
+        "absent from the live archive listing and could not be re-classified, so their "
+        "frozen is_subagent flag was kept; the --exclude-subagents count may rest on "
+        "stale flags."
+    )
 
 
 def _resolve_corpus(
@@ -697,6 +720,7 @@ def _resolve_corpus(
     # beside the sampling notes it qualifies -- never left implicit alongside a number
     # that could otherwise read as "current".
     frozen_census_note: str | None = None
+    restamp_note: str | None = None
     if replaying:
         assert freeze_path is not None
         try:
@@ -708,10 +732,13 @@ def _resolve_corpus(
             print(_empty_replay_refusal(freeze_path), file=sys.stderr)
             return None
         try:
-            refs = _restamp_agentsview_subagents(manifest.refs, runner, args)
+            refs, unclassifiable = _restamp_agentsview_subagents(
+                manifest.refs, runner, args
+            )
         except (FileNotFoundError, RuntimeError, ValueError) as exc:
             print(f"toolbench.passive: fatal source error: {exc}", file=sys.stderr)
             return None
+        restamp_note = _restamp_note(unclassifiable)
         fallback_reason, skips = None, []
         census, frozen_census_note = _replay_census(manifest, freeze_path, args)
     else:
@@ -743,6 +770,7 @@ def _resolve_corpus(
         census,
         limit_truncated,
         frozen_census_note,
+        restamp_note,
     )
 
 
@@ -1021,6 +1049,7 @@ def _no_sessions_lines(
     freeze: _FreezePlan | None = None,
     raw_root_note: str | None = None,
     agent_note: str | None = None,
+    restamp_note: str | None = None,
 ) -> list[str]:
     """The empty-selection report: the headline, plus the census notes behind it.
 
@@ -1046,6 +1075,8 @@ def _no_sessions_lines(
         lines.append(raw_root_note)
     if agent_note is not None:
         lines.append(agent_note)
+    if restamp_note is not None:
+        lines.append(f"- {restamp_note}")
     if freeze is not None:
         note = _freeze_note(freeze, skips)
         if note is not None:
@@ -1197,6 +1228,7 @@ def main(
                 dict(sampled_by_agent),
                 freeze=freeze,
                 raw_root_note=raw_root_note,
+                restamp_note=resolved.restamp_note,
                 agent_note=_unknown_agent_note(
                     args, resolved, runner, replaying=freeze.replaying
                 ),
@@ -1239,6 +1271,7 @@ def main(
             else args.agentsview_timeout
         ),
         raw_root_note=raw_root_note,
+        restamp_note=resolved.restamp_note,
     )
     _emit_report(report, args.out)
     return 0
