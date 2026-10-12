@@ -1419,6 +1419,8 @@ class CorpusFreezeMainTests(unittest.TestCase):
             self.assertEqual(code, 0)
             report = out.getvalue()
             self.assertIn("Subagents included: no (1 of 2 discovered excluded)", report)
+            # Every ref was positively classified, so there is no caveat to render.
+            self.assertNotIn("Subagent flags kept from freeze", report)
 
     def test_replay_restamp_keeps_flag_for_refs_absent_from_the_live_listing(self) -> None:
         """High finding, 20260927/20261004 tech-debt reports: a frozen parent that was
@@ -1445,6 +1447,11 @@ class CorpusFreezeMainTests(unittest.TestCase):
             self.assertIn("Subagents included: no (0 of 1 discovered excluded)", out.getvalue())
             self.assertIn("1 AgentsView ref(s)", err.getvalue())
             self.assertIn("could not be re-classified", err.getvalue())
+            # The same fact must live in the artifact, not only on stderr: a saved
+            # report is what gets compared later (20261011 tech-debt Low).
+            report = out.getvalue()
+            self.assertIn("Subagent flags kept from freeze**: 1 AgentsView ref(s)", report)
+            self.assertIn("may rest on stale flags", report)
 
     def test_replay_restamp_outage_is_a_fatal_source_error_not_a_traceback(self) -> None:
         """Medium finding: the live probe on the replay branch maps failures to

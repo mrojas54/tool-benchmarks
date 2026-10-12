@@ -148,7 +148,8 @@ Aggregation is in `reducer.py`; markdown/fingerprints in `report.py`
 `freeze.py`; run-manifest I/O in `run_manifest.py`. `passive.py` owns CLI
 orchestration: `main()` runs named phases `_plan_freeze` → `_resolve_corpus`
 (replay-vs-discover) → `_scan_refs` → render/write, plus compatibility
-re-exports. `sources.py` owns multi-agent discovery, AgentsView/raw loaders, and
+re-exports; the freeze-replay guards (AgentsView `is_subagent` restamp and the
+empty-replay refusals) live in `replay.py`. `sources.py` owns multi-agent discovery, AgentsView/raw loaders, and
 `AgentCensus`; `hermes.py` owns the read-only SQLite session read (discovery
 still comes from AgentsView). `registry.py` holds the ordered adapter list and
 `pick_adapter` (breaks the `hermes.py` ↔ `adapters.py` cycle); `adapters.py`

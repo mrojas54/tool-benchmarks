@@ -174,6 +174,11 @@ rather than silently absent (S38 / TB-24).
   `_scan_refs` → render/write; also owns argparse, date-range filter, typed
   skips, and compatibility re-exports so historical
   `from toolbench.passive import …` imports keep working.
+- **`replay.py`** — freeze-replay guards split out of `passive.py`: AgentsView
+  `is_subagent` restamp (and the Summary note for refs it could not refresh) and
+  the two empty-replay refusals (zero-pin manifest; `--exclude-subagents`
+  emptying a subagent-only pin). `CliArgs`/`_FreezePlan` are `TYPE_CHECKING`
+  imports, so there is no runtime cycle on `passive`.
 - **`reducer.py`** — incremental corpus aggregation (S11). Folds each
   session's `ParseResult` into per-agent / per-tool counters and discards the
   call list — never a whole-corpus `list[ToolCall]`. Schema-neutral: it only
