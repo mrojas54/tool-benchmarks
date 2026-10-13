@@ -103,7 +103,9 @@ rather than silently absent (S38 / TB-24).
   `pick_adapter(ref).parse(ref)`.
 - **`parsers.py`** — one class per schema. `ClaudeParser` joins each assistant
   `tool_use` block to its result by id, stamps inefficiency tags at emit
-  (CQ 3.1), and sums session-grain cache read/creation (S39). Usage and turn
+  (CQ 3.1), and sums session-grain cache read/creation (S39), charging each API
+  response's `usage` once even though Claude Code repeats it on every
+  content-block entry (S43). Usage and turn
   accounting live in module-level `_account_usage` / `_track_turn` (local
   `_UsageTally`, no instance state on `parse`). Optional `keep_raw_input` /
   `track_turns` (CQ 7.1) let probe reuse this pass instead of a second
@@ -378,7 +380,8 @@ folded into the per-call `cache_assisted` column), the codex schema
 TB-23), corpus fingerprint + `--freeze` (**S36–S37** / TB-22), unjoinable
 records (**S38** / TB-24), Claude session-grain cache read+creation
 (**S39** / TB-26), and per-run cache-token grouping via `--run-manifest`,
-entry-grain by `gitBranch` (**S40** / TB-27). Follow-ons name the
+entry-grain by `gitBranch` (**S40** / TB-27); both count each Claude API
+response once, not once per transcript entry (**S43**). Follow-ons name the
 detached-HEAD attribution blind spot (**TB-28**) and make
 `--exclude-subagents` match the real nested
 `<project>/<session-uuid>/subagents/` layout (**TB-29**). AgentsView hang
@@ -425,7 +428,7 @@ pytest with `--extra tracing`.
 
 Source-of-truth documents:
 
-- [`SPEC.md`](SPEC.md) — 42 numbered acceptance criteria (S1–S42).
+- [`SPEC.md`](SPEC.md) — 43 numbered acceptance criteria (S1–S43).
 - [`EVALUATION.md`](EVALUATION.md) — verification map for every criterion.
 - [`BUILDPLAN.md`](BUILDPLAN.md) — decided architecture and the ticket
   breakdown (T1–T27, including post-merge TB/T rows).

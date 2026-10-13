@@ -373,6 +373,17 @@ and re-exports the public symbols historical imports expect.
   `.lattice/orchestration/agents.md` cannot serve as the manifest: it discards
   its Branch column on run completion (TB-27; builds on the session-grain sums
   of S39/TB-26).
+- **S43 — Claude usage charged once per API response.** S26 records that Claude
+  Code writes one response as several entries that repeat one `usage` object.
+  `ClaudeParser` charges that `usage` once per response: the billing key is
+  `requestId`, else `message.id`; a later entry with an already-charged key adds
+  nothing to the S39 session totals or the S40 buckets, and the first copy wins if
+  copies ever disagree. An entry with neither id is charged on its own (no key is
+  invented, S30). The dedup sits before bucketing, so `session total == sum of
+  buckets` still holds, and `session_usage_messages` counts billed responses, not
+  entries. Summing every entry overcounted by the response's block count: on a real
+  transcript, 123 usage-bearing entries were 69 responses and cache read read
+  1.75x high (design: `docs/superpowers/specs/2026-10-13-claude-usage-once-per-response-design.md`).
 - **S41 — per-agent sampling disclosure.** `--limit` truncates discovery in
   **recency order across the whole archive**, not per agent, so each agent's row
   rests on a different fraction of its own history and an agent whose work is all
