@@ -577,3 +577,122 @@ def test_claude_parser_does_not_split_named_branches_by_cwd() -> None:
 
     assert result.detached_usage_by_cwd == {}
     assert result.usage_by_branch["feat/tb-9"].read == 50
+
+
+def _response_entry(
+    block: dict[str, object],
+    usage: dict[str, int],
+    *,
+    request_id: str | None = None,
+    message_id: str | None = None,
+    branch: str = "main",
+) -> str:
+    """One JSONL entry of a Claude response. Claude Code writes a response as one
+    entry per content block, each repeating the response's `usage` (S26)."""
+    message: dict[str, object] = {"role": "assistant", "content": [block], "usage": usage}
+    if message_id is not None:
+        message["id"] = message_id
+    entry: dict[str, object] = {
+        "type": "assistant",
+        "sessionId": "s1",
+        "timestamp": "2026-10-13T00:00:00Z",
+        "gitBranch": branch,
+        "message": message,
+    }
+    if request_id is not None:
+        entry["requestId"] = request_id
+    return json.dumps(entry)
+
+
+_USAGE = {
+    "input_tokens": 3,
+    "output_tokens": 40,
+    "cache_read_input_tokens": 1000,
+    "cache_creation_input_tokens": 100,
+}
+_THINK: dict[str, object] = {"type": "thinking", "thinking": "plan"}
+_TEXT: dict[str, object] = {"type": "text", "text": "reading two files"}
+
+
+def _tool(uid: str) -> dict[str, object]:
+    return {"type": "tool_use", "id": uid, "name": "Read", "input": {}}
+
+
+def test_claude_parser_charges_a_split_response_once_by_request_id() -> None:
+    """S43: one response written as four entries is one charge, not four."""
+    lines = [
+        _response_entry(b, _USAGE, request_id="req_1", message_id="msg_1")
+        for b in (_THINK, _TEXT, _tool("u1"), _tool("u2"))
+    ]
+    result = ClaudeParser().parse(lines, agent="claude-code", source="raw", project="p")
+
+    assert result.session_cache_read_tokens == 1000
+    assert result.session_cache_creation_tokens == 100
+    assert result.session_input_tokens == 3
+    assert result.session_output_tokens == 40
+    assert result.session_usage_messages == 1
+    assert len(result.calls) == 2  # the join still sees every tool_use
+
+
+def test_claude_parser_charges_distinct_responses_separately() -> None:
+    lines = [
+        _response_entry(_TEXT, _USAGE, request_id="req_1"),
+        _response_entry(_tool("u1"), _USAGE, request_id="req_1"),
+        _response_entry(_TEXT, _USAGE, request_id="req_2"),
+    ]
+    result = ClaudeParser().parse(lines, agent="claude-code", source="raw", project="p")
+
+    assert result.session_cache_read_tokens == 2000
+    assert result.session_usage_messages == 2
+
+
+def test_claude_parser_falls_back_to_message_id_without_request_id() -> None:
+    lines = [
+        _response_entry(_TEXT, _USAGE, message_id="msg_1"),
+        _response_entry(_tool("u1"), _USAGE, message_id="msg_1"),
+    ]
+    result = ClaudeParser().parse(lines, agent="claude-code", source="raw", project="p")
+
+    assert result.session_cache_read_tokens == 1000
+    assert result.session_usage_messages == 1
+
+
+def test_claude_parser_charges_each_entry_without_any_id() -> None:
+    """No key to dedupe on: each entry is charged, as before S43. Guessing a key
+    (timestamp, content hash) would be inventing a join (S30)."""
+    lines = [_response_entry(_TEXT, _USAGE), _response_entry(_TEXT, _USAGE)]
+    result = ClaudeParser().parse(lines, agent="claude-code", source="raw", project="p")
+
+    assert result.session_cache_read_tokens == 2000
+    assert result.session_usage_messages == 2
+
+
+def test_claude_parser_first_copy_of_a_response_wins() -> None:
+    """Real copies are identical; if one ever disagrees, the first charge stands."""
+    later = {**_USAGE, "output_tokens": 999}
+    lines = [
+        _response_entry(_TEXT, _USAGE, request_id="req_1"),
+        _response_entry(_tool("u1"), later, request_id="req_1"),
+    ]
+    result = ClaudeParser().parse(lines, agent="claude-code", source="raw", project="p")
+
+    assert result.session_output_tokens == 40
+
+
+def test_claude_parser_split_response_keeps_buckets_equal_to_session_total() -> None:
+    """S40 invariant survives S43: the dedup sits before bucketing."""
+    lines = [
+        _response_entry(_TEXT, _USAGE, request_id="req_1", branch="feat/x"),
+        _response_entry(_tool("u1"), _USAGE, request_id="req_1", branch="feat/x"),
+        _response_entry(_TEXT, _USAGE, request_id="req_2", branch="HEAD"),
+        _response_entry(_tool("u2"), _USAGE, request_id="req_2", branch="HEAD"),
+    ]
+    result = ClaudeParser().parse(lines, agent="claude-code", source="raw", project="p")
+
+    buckets = result.usage_by_branch
+    assert buckets["feat/x"].read == 1000
+    assert buckets["feat/x"].messages == 1
+    assert buckets["HEAD"].read == 1000
+    assert sum(b.read for b in buckets.values()) == result.session_cache_read_tokens
+    assert sum(b.messages for b in buckets.values()) == result.session_usage_messages
+    assert sum(b.read for b in result.detached_usage_by_cwd.values()) == 1000

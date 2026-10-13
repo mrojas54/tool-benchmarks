@@ -91,6 +91,31 @@ class _UsageTally:
     usage_messages: int = 0
     by_branch: dict[str, BranchUsage] = field(default_factory=dict)
     detached_by_cwd: dict[str, BranchUsage] = field(default_factory=dict)
+    # S43: billing keys already charged in this parse, so a response written as
+    # several entries (S26) is charged once.
+    charged: set[str] = field(default_factory=set)
+
+
+def _billing_key(entry: dict[str, object], message: dict[str, object]) -> str | None:
+    """The response an entry's `usage` belongs to (S43): `requestId` (the S26 billing
+    unit), else `message.id`. `None` when neither is present -- the entry is then
+    charged on its own, since inventing a key would be guessing (S30)."""
+    for value in (entry.get("requestId"), message.get("id")):
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _already_charged(tally: _UsageTally, entry: dict[str, object], message: dict[str, object]) -> bool:
+    """True when this entry's response was charged earlier in the parse (S43); marks
+    it charged otherwise. Key-less entries are never deduplicated."""
+    key = _billing_key(entry, message)
+    if key is None:
+        return False
+    if key in tally.charged:
+        return True
+    tally.charged.add(key)
+    return False
 
 
 def _usage_buckets(tally: _UsageTally, entry: dict[str, object]) -> list[BranchUsage]:
@@ -111,13 +136,17 @@ def _usage_buckets(tally: _UsageTally, entry: dict[str, object]) -> list[BranchU
 def _account_usage(tally: _UsageTally, entry: dict[str, object], message: object) -> None:
     """Fold one record's `usage` into the session tally and its branch bucket (CQ 1.2).
 
-    Summed over every message that carries `usage`, not only tool_use turns --
-    assistant turns without tools still bill. A record with no dict `usage` is a no-op.
+    Summed over every response that carries `usage`, not only tool_use turns --
+    assistant turns without tools still bill. A record with no dict `usage` is a no-op,
+    and so is a later entry of a response already charged (S43): Claude Code repeats
+    one response's `usage` on each of its content-block entries, first copy wins.
     """
     if not isinstance(message, dict):
         return
     usage = message.get("usage")
     if not isinstance(usage, dict):
+        return
+    if _already_charged(tally, entry, message):
         return
     tally.usage_messages += 1
     entry_read = _as_usage_int(usage.get("cache_read_input_tokens"))

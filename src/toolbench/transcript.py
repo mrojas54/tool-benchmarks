@@ -172,8 +172,12 @@ class ParseResult:
     `usage.cache_creation_input_tokens`. ClaudeParser stamps both together;
     hermes leaves creation as `None` (no session-grain creation column).
 
+    All Claude sums charge each API response once (S43): Claude Code repeats one
+    response's `usage` on every content-block entry, keyed by `requestId` (else
+    `message.id`), so `session_usage_messages` counts responses, not entries.
+
     `session_input_tokens` / `session_output_tokens` / `session_usage_messages`
-    are the companion per-message totals ClaudeParser accumulates in the same
+    are the companion per-response totals ClaudeParser accumulates in the same
     pass so the cache-token benchmark CLI can façade over ParseResult without a
     second JSONL interpreter (CQ 1.2).
 
