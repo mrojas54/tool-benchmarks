@@ -76,7 +76,16 @@ class RunStats:
     detached_creation: int = 0
     detached_input: int = 0
     detached_output: int = 0
+    # TB-44: the slice of detached usage whose `cwd` sits inside a manifest worktree.
+    # Already INCLUDED in read/creation/input/output above; kept apart only so the
+    # report can show how much of the total came via cwd rather than via branch.
+    worktree_sessions: int = 0
+    worktree_read: int = 0
+    worktree_creation: int = 0
+    worktree_input: int = 0
+    worktree_output: int = 0
     branches_seen: set[str] = field(default_factory=set)
+    worktrees_seen: set[str] = field(default_factory=set)
 
     @property
     def total_cache(self) -> int:
@@ -98,6 +107,11 @@ class RunStats:
         """Manifest branches that matched zero entries — a typo'd or renamed branch
         would otherwise read as a ticket that cost nothing (S23/S38: name the gap)."""
         return sorted(manifest.branches - self.branches_seen)
+
+    def missing_worktrees(self, manifest: RunManifest) -> list[str]:
+        """Manifest worktrees no detached entry ran inside -- the TB-44 mirror of
+        `missing_branches`. A typo'd path would otherwise read as a free ticket."""
+        return sorted(set(manifest.worktrees) - self.worktrees_seen)
 
 
 @dataclass
@@ -234,36 +248,80 @@ class Reducer:
         """Fold one session into the run totals (S40). Only *candidate* sessions --
         those with at least one entry on a run branch -- contribute anything."""
         assert self.run is not None
+        stats = self.run_stats
 
-        # TB-28: book detached-HEAD usage BEFORE the candidate test. A delegator in a
-        # detached checkout has no run-branch entry at all, so it never reaches the
-        # loop below -- it would early-return and vanish from both the run total and
-        # `unattributed`, undercounting the run with no failure signal.
+        # TB-44: a detached entry whose cwd sits inside a manifest worktree is
+        # attributed by that path -- a dispatch-time key, like a branch name. Only
+        # that slice folds; the rest of HEAD stays in the unattributable bucket.
+        via_worktree, matched = self._match_worktrees(result)
+        stats.worktrees_seen |= matched
+
+        # TB-28: book the REMAINING detached usage BEFORE the candidate test. A
+        # delegator in a detached checkout has no run-branch entry at all, so it never
+        # reaches the loop below -- it would early-return and vanish from both the run
+        # total and `unattributed`, undercounting the run with no failure signal.
+        # Derived by subtraction from `usage_by_branch`, so a parser that stamps no
+        # cwd buckets leaves every HEAD token here rather than dropping any.
         detached = result.usage_by_branch.get(DETACHED_BRANCH)
-        if detached is not None and _spent_anything(detached):
-            self.run_stats.detached_sessions += 1
-            self.run_stats.detached_read += detached.read
-            self.run_stats.detached_creation += detached.creation
-            self.run_stats.detached_input += detached.input
-            self.run_stats.detached_output += detached.output
+        if detached is not None:
+            rest = _minus(detached, via_worktree)
+            if _spent_anything(rest):
+                stats.detached_sessions += 1
+                stats.detached_read += rest.read
+                stats.detached_creation += rest.creation
+                stats.detached_input += rest.input
+                stats.detached_output += rest.output
 
         in_set = {b for b in result.usage_by_branch if b in self.run.branches}
-        if not in_set:
+        if not in_set and not matched:
             return  # not part of this run; contributes to neither total
-        self.run_stats.candidate_sessions += 1
-        self.run_stats.branches_seen |= in_set
+        stats.candidate_sessions += 1
+        stats.branches_seen |= in_set
+        if matched:
+            stats.worktree_sessions += 1
+            stats.worktree_read += via_worktree.read
+            stats.worktree_creation += via_worktree.creation
+            stats.worktree_input += via_worktree.input
+            stats.worktree_output += via_worktree.output
+            stats.read += via_worktree.read
+            stats.creation += via_worktree.creation
+            stats.input += via_worktree.input
+            stats.output += via_worktree.output
         for branch, usage in result.usage_by_branch.items():
             if branch in self.run.branches:
-                self.run_stats.read += usage.read
-                self.run_stats.creation += usage.creation
-                self.run_stats.input += usage.input
-                self.run_stats.output += usage.output
+                stats.read += usage.read
+                stats.creation += usage.creation
+                stats.input += usage.input
+                stats.output += usage.output
             elif branch == DETACHED_BRANCH:
-                continue  # already booked as detached; `unattributed` means a BRANCH
+                continue  # booked above (worktree or detached); `unattributed` means a BRANCH
             else:
                 # Straddle spillover: work done in the same session on another branch.
-                self.run_stats.unattributed_read += usage.read
-                self.run_stats.unattributed_creation += usage.creation
+                stats.unattributed_read += usage.read
+                stats.unattributed_creation += usage.creation
+
+    def _match_worktrees(self, result: ParseResult) -> tuple[BranchUsage, set[str]]:
+        """Sum the detached (`HEAD`) cwd buckets that sit inside a manifest worktree,
+        and name the worktrees they matched. Branch-named entries are never re-keyed by
+        cwd: a branch already attributes them, and a second key could double-count."""
+        assert self.run is not None
+        total = BranchUsage()
+        matched: set[str] = set()
+        if not self.run.worktrees:
+            return total, matched
+        for (branch, cwd), usage in result.usage_by_branch_cwd.items():
+            if branch != DETACHED_BRANCH:
+                continue
+            worktree = self.run.worktree_for(cwd)
+            if worktree is None:
+                continue
+            matched.add(worktree)
+            total.read += usage.read
+            total.creation += usage.creation
+            total.input += usage.input
+            total.output += usage.output
+            total.messages += usage.messages
+        return total, matched
 
 
 def _absorb_session_cache(agent_stats: AgentStats, result: ParseResult) -> None:
@@ -294,6 +352,18 @@ def _spent_anything(usage: BranchUsage) -> bool:
     very silent drop TB-28 exists to close. A measured zero is not a blind spot; an
     uncounted cost is."""
     return bool(usage.read or usage.creation or usage.input or usage.output)
+
+
+def _minus(whole: BranchUsage, part: BranchUsage) -> BranchUsage:
+    """`whole - part`, where `part` is a sub-partition of `whole` (cwd buckets of one
+    branch), so no field can go negative."""
+    return BranchUsage(
+        read=whole.read - part.read,
+        creation=whole.creation - part.creation,
+        input=whole.input - part.input,
+        output=whole.output - part.output,
+        messages=whole.messages - part.messages,
+    )
 
 
 def _bump(counter: dict[str, int], tool: str) -> None:

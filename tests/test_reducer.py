@@ -555,3 +555,156 @@ def test_uncached_detached_session_is_still_a_blind_spot() -> None:
     assert reducer.run_stats.detached_sessions == 1
     assert reducer.run_stats.detached_input == 1_234
     assert reducer.run_stats.detached_output == 5_678
+
+
+def _wt_manifest(*worktrees: str) -> RunManifest:
+    return RunManifest(
+        run="3",
+        tickets=("TB-1",),
+        branches=frozenset({"feat/tb-1"}),
+        worktrees=worktrees,
+    )
+
+
+def _detached(**usage_by_cwd: BranchUsage) -> ParseResult:
+    """A fully-detached session whose HEAD usage is split by cwd, as ClaudeParser
+    emits it: `usage_by_branch["HEAD"]` is the sum of the cwd buckets."""
+    total = BranchUsage()
+    for usage in usage_by_cwd.values():
+        total.read += usage.read
+        total.creation += usage.creation
+        total.input += usage.input
+        total.output += usage.output
+        total.messages += usage.messages
+    return ParseResult(
+        calls=[],
+        malformed=0,
+        usage_by_branch={"HEAD": total},
+        usage_by_branch_cwd={("HEAD", cwd): u for cwd, u in usage_by_cwd.items()},
+    )
+
+
+def test_detached_entry_nested_in_a_manifest_worktree_folds_into_the_run() -> None:
+    """TB-44. A lattice delegator works in a DETACHED worktree, so every entry is
+    stamped HEAD and the run read `0 candidate sessions` though the transcripts exist.
+    Its cwd sits inside a worktree the orchestrator recorded at dispatch -- a key of
+    the same standing as a branch name -- so that usage is the run's."""
+    reducer = Reducer(run=_wt_manifest("/wt/tb-1"))
+    reducer.absorb(
+        "claude-code",
+        _detached(**{"/wt/tb-1/src/pkg": BranchUsage(read=700, creation=70, messages=3)}),
+    )
+    stats = reducer.run_stats
+    assert stats.candidate_sessions == 1
+    assert stats.read == 700
+    assert stats.creation == 70
+    # ...and it is visible AS worktree-attributed, not blended silently into branch.
+    assert stats.worktree_sessions == 1
+    assert stats.worktree_read == 700
+    assert stats.worktree_creation == 70
+    # Folded, so no longer reported as a blind spot.
+    assert stats.detached_sessions == 0
+    assert stats.detached_read == 0
+    assert stats.missing_worktrees(reducer.run) == []
+
+
+def test_worktree_root_itself_matches() -> None:
+    reducer = Reducer(run=_wt_manifest("~/wt/tb-1/"))
+    home = str(Path("~/wt/tb-1").expanduser())
+    reducer.absorb(
+        "claude-code", _detached(**{home: BranchUsage(read=5, creation=1, messages=1)})
+    )
+    assert reducer.run_stats.worktree_read == 5
+
+
+def test_sibling_prefix_worktree_does_not_match() -> None:
+    """COUNTER-TRAP. `/wt/tb-12` starts with the STRING `/wt/tb-1`. A startswith check
+    would hand tb-12's tokens to tb-1's run -- a fabricated attribution. Path components
+    are compared, so the sibling stays detached."""
+    reducer = Reducer(run=_wt_manifest("/wt/tb-1"))
+    reducer.absorb(
+        "claude-code",
+        _detached(**{"/wt/tb-12/src": BranchUsage(read=900, creation=90, messages=2)}),
+    )
+    stats = reducer.run_stats
+    assert stats.read == 0
+    assert stats.candidate_sessions == 0
+    assert stats.worktree_sessions == 0
+    assert stats.detached_read == 900
+    assert stats.detached_sessions == 1
+
+
+def test_manifest_worktree_matching_nothing_is_reported() -> None:
+    """Mirror of `matched no entries` for branches: a typo'd or reclaimed-and-renamed
+    worktree path would otherwise read as a ticket that cost nothing."""
+    manifest = _wt_manifest("/wt/tb-1", "/wt/typo")
+    reducer = Reducer(run=manifest)
+    reducer.absorb(
+        "claude-code",
+        _detached(**{"/wt/tb-1": BranchUsage(read=10, creation=1, messages=1)}),
+    )
+    assert reducer.run_stats.missing_worktrees(manifest) == ["/wt/typo"]
+
+
+def test_detached_usage_outside_every_worktree_stays_detached() -> None:
+    """Only the in-worktree slice folds. A session that ALSO ran detached elsewhere
+    keeps that remainder in the unattributable line -- still named, still not guessed."""
+    reducer = Reducer(run=_wt_manifest("/wt/tb-1"))
+    reducer.absorb(
+        "claude-code",
+        _detached(
+            **{
+                "/wt/tb-1": BranchUsage(read=400, creation=40, messages=1),
+                "/elsewhere/checkout": BranchUsage(read=60, creation=6, input=3, messages=1),
+            }
+        ),
+    )
+    stats = reducer.run_stats
+    assert stats.read == 400
+    assert stats.worktree_read == 400
+    assert stats.detached_read == 60
+    assert stats.detached_creation == 6
+    assert stats.detached_input == 3
+    assert stats.detached_sessions == 1
+
+
+def test_detached_usage_with_no_cwd_buckets_stays_detached() -> None:
+    """A parser that stamps no cwd buckets must not lose HEAD tokens: the detached
+    remainder is derived by subtraction from `usage_by_branch`, so it is all still here."""
+    reducer = Reducer(run=_wt_manifest("/wt/tb-1"))
+    reducer.absorb(
+        "claude-code",
+        ParseResult(
+            calls=[],
+            malformed=0,
+            usage_by_branch={"HEAD": BranchUsage(read=50, creation=5, messages=1)},
+        ),
+    )
+    assert reducer.run_stats.read == 0
+    assert reducer.run_stats.detached_read == 50
+
+
+def test_branch_named_entry_in_a_worktree_is_not_double_counted() -> None:
+    """Once the branch is pushed, entries carry its name AND a worktree cwd. The branch
+    already attributes them; re-keying by cwd would count them twice."""
+    reducer = Reducer(run=_wt_manifest("/wt/tb-1"))
+    reducer.absorb(
+        "claude-code",
+        ParseResult(
+            calls=[],
+            malformed=0,
+            usage_by_branch={
+                "feat/tb-1": BranchUsage(read=300, creation=30, messages=1),
+                "HEAD": BranchUsage(read=100, creation=10, messages=1),
+            },
+            usage_by_branch_cwd={
+                ("feat/tb-1", "/wt/tb-1"): BranchUsage(read=300, creation=30, messages=1),
+                ("HEAD", "/wt/tb-1"): BranchUsage(read=100, creation=10, messages=1),
+            },
+        ),
+    )
+    stats = reducer.run_stats
+    assert stats.read == 400  # 300 by branch + 100 by worktree -- NOT 700
+    assert stats.worktree_read == 100
+    assert stats.candidate_sessions == 1
+    assert stats.detached_read == 0

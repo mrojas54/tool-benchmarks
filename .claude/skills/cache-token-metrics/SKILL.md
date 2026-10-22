@@ -26,18 +26,25 @@ checkout, so the read doesn't bill an unrelated project's cache.
 2. **Build the run manifest.** JSON, written by the orchestrator **at dispatch** (agents.md
    discards its Branch column once the run finishes, so reconstructing it after the fact
    isn't reliable): `{"run": "2", "tickets": ["TB-18", "TB-19"], "branches":
-   ["feat/tb-18", "tb-19-pytest-gate"], "worktrees": ["~/wt/tb-19"]}` (`worktrees` is
-   optional and currently unused for attribution — accepted/stored only;
-   `branches` is not — an empty or missing list is refused as malformed rather
-   than silently attributing nothing). No run-id exists inside a transcript — the branch
-   set in this manifest *is* the correlation.
+   ["feat/tb-18", "tb-19-pytest-gate"], "worktrees": ["~/wt/tb-19"]}`. `branches` is
+   required — an empty or missing list is refused as malformed rather than silently
+   attributing nothing. `worktrees` is optional but **record it whenever delegators
+   work in detached worktrees** (lattice does): a detached entry stamps
+   `gitBranch="HEAD"`, and branch names only appear at push time, so without
+   `worktrees` all that usage lands in the detached line and the run can read
+   `0 candidate sessions`. With it, a `HEAD` entry whose `cwd` equals or is nested
+   under a listed path (after `~` expansion; compared by path component, so
+   `/wt/tb-1` never claims `/wt/tb-12`) folds into the run (TB-44). Paths must be
+   absolute or `~`-rooted. No run-id exists inside a transcript — the branch set and
+   worktree paths in this manifest *are* the correlation.
 3. **Sum per session** — the passive analyzer's `ClaudeParser` stamps session-grain
    `cache_read` / `cache_creation` / input / output *and* buckets that same usage by each
    entry's `gitBranch` (S40), so a session that straddles branches only donates the entries
    that actually touched the run's branches, not its whole total.
 4. **Aggregate + normalize** — `--run-manifest` folds every scanned session's matching
-   branch buckets into one run total (reporting unattributed spillover and any manifest
-   branch that matched zero entries); `--tickets N` overrides the per-ticket divisor,
+   branch buckets — plus detached entries inside a manifest worktree — into one run total
+   (reporting unattributed spillover and any manifest branch or worktree that matched zero
+   entries); `--tickets N` overrides the per-ticket divisor,
    otherwise `len(manifest.tickets)` is used (`--tickets` without `--run-manifest`
    is a no-op; `--tickets 0` is rejected at parse).
 
@@ -61,10 +68,13 @@ uv run --project ~/tool-benchmarks toolbench passive \
   to read** — cache-read alone misleads (S39). The eval
   `test_prefix_sharing_trap_read_drop_offset_by_creation_rise` pins exactly this.
 - **Incomplete run total** = a `detached-HEAD (unattributable)` line appears. Detached
-  checkouts stamp `gitBranch="HEAD"`, which can never match a manifest branch (TB-28). That
-  usage is named (including input/output, so an uncached first turn is not invisible) and
-  **never folded into the run** — folding would fabricate attribution; dropping would
-  silently undercount. Treat a large detached line as "the headline may be low."
+  checkouts stamp `gitBranch="HEAD"`, which can never match a manifest branch (TB-28). HEAD
+  usage whose `cwd` is inside a manifest worktree has already been folded (see the `via
+  worktree cwd` sub-line); what remains here ran outside every listed worktree. It is named
+  (including input/output, so an uncached first turn is not invisible) and **never folded
+  into the run** — folding would fabricate attribution; dropping would silently undercount.
+  Treat a large detached line as "the headline may be low" — and check for a `worktrees
+  matched no entries` line, the usual sign of a mistyped or missing worktree path.
 - **Narrow slice** = a large `unattributed` line. That is same-session work on non-run
   branches inside candidate sessions (S40), not corpus-wide `main`. The run total is only
   the in-set entry slice.

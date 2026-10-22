@@ -529,3 +529,51 @@ def test_claude_parser_no_usage_leaves_usage_by_branch_empty() -> None:
 
     assert result.usage_by_branch == {}
     assert result.session_cache_read_tokens is None
+
+
+def test_claude_parser_buckets_usage_by_branch_and_cwd() -> None:
+    """TB-44: each entry's `cwd` rides alongside its `gitBranch`, so a detached (HEAD)
+    delegator can be matched to a manifest worktree. The (branch, cwd) buckets are a
+    finer partition of `usage_by_branch`: summed over cwd they reproduce it exactly."""
+
+    def entry(branch: str, cwd: str | None, read: int) -> str:
+        record: dict[str, object] = {
+            "type": "assistant",
+            "sessionId": "s1",
+            "timestamp": "2026-07-01T00:00:00Z",
+            "gitBranch": branch,
+            "message": {
+                "role": "assistant",
+                "content": [],
+                "usage": {
+                    "cache_read_input_tokens": read,
+                    "cache_creation_input_tokens": 1,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                },
+            },
+        }
+        if cwd is not None:
+            record["cwd"] = cwd
+        return json.dumps(record)
+
+    lines = [
+        entry("HEAD", "/wt/tb-1", 300),
+        entry("HEAD", "/wt/tb-1/src", 20),
+        entry("HEAD", "/other", 5),
+        entry("HEAD", None, 7),
+        entry("main", "/repo", 100),
+    ]
+    result = ClaudeParser().parse(lines, agent="claude-code", source="raw", project="p")
+
+    by_cwd = result.usage_by_branch_cwd
+    assert by_cwd[("HEAD", "/wt/tb-1")].read == 300
+    assert by_cwd[("HEAD", "/wt/tb-1/src")].read == 20
+    assert by_cwd[("HEAD", "/other")].read == 5
+    assert by_cwd[("HEAD", "")].read == 7  # no cwd -> "" bucket, never dropped
+    assert by_cwd[("main", "/repo")].read == 100
+    for branch, bucket in result.usage_by_branch.items():
+        parts = [u for (b, _), u in by_cwd.items() if b == branch]
+        assert sum(u.read for u in parts) == bucket.read
+        assert sum(u.creation for u in parts) == bucket.creation
+        assert sum(u.messages for u in parts) == bucket.messages

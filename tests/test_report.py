@@ -786,6 +786,48 @@ class CorpusFingerprintRenderTests(unittest.TestCase):
         )
         self.assertNotIn("detached-HEAD", report)
 
+    def test_worktree_attributed_usage_is_its_own_sub_line(self) -> None:
+        """TB-44: cwd-in-worktree usage is IN the headline, and shown apart so a reader
+        can see how much came by path rather than by branch. A worktree that matched
+        nothing is named; detached work outside every worktree stays in its line."""
+        manifest = RunManifest(
+            run="3",
+            tickets=("TB-1",),
+            branches=frozenset({"b1"}),
+            worktrees=("/wt/tb-1", "/wt/typo"),
+        )
+        reducer = Reducer(run=manifest)
+        reducer.absorb(
+            "claude-code",
+            ParseResult(
+                calls=[],
+                malformed=0,
+                usage_by_branch={"HEAD": BranchUsage(read=750, creation=75, messages=2)},
+                usage_by_branch_cwd={
+                    ("HEAD", "/wt/tb-1/src"): BranchUsage(read=700, creation=70, messages=1),
+                    ("HEAD", "/elsewhere"): BranchUsage(read=50, creation=5, messages=1),
+                },
+            ),
+        )
+        report = render_report(
+            reducer,
+            index_source="raw",
+            fallback_reason=None,
+            skips=[],
+            include_subagents=True,
+            subagents_found=0,
+            sessions_discovered=0,
+            since_note=None,
+            census=AgentCensus(totals={}, archive_total=0),
+        )
+        self.assertIn("Run cache tokens (run 3): read=700 creation=70 (1 candidate session;", report)
+        self.assertIn(
+            "via worktree cwd (detached, included above): read=700 creation=70 (1 session)",
+            report,
+        )
+        self.assertIn("detached-HEAD (unattributable): read=50 creation=5", report)
+        self.assertIn("worktrees matched no entries: /wt/typo", report)
+
 
 def _reducer_with(**sessions_by_agent: int) -> Reducer:
     r = Reducer()

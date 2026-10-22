@@ -193,6 +193,11 @@ class ParseResult:
     # totals -- the invariant `session total == sum of buckets` is an eval. Entries
     # with usage but no gitBranch bucket under "" so no billed token is dropped.
     usage_by_branch: dict[str, BranchUsage] = field(default_factory=dict)
+    # S40/TB-44: the same usage keyed by (gitBranch, cwd) -- a finer partition of
+    # `usage_by_branch`, so summing it over cwd reproduces each branch bucket. Lets a
+    # detached (`HEAD`) entry be matched to a manifest worktree by the path it ran in.
+    # Entries with usage but no string cwd bucket under "" for that branch.
+    usage_by_branch_cwd: dict[tuple[str, str], BranchUsage] = field(default_factory=dict)
     unjoinable: dict[str, int] = field(default_factory=dict)
     # Populated only when ClaudeParser(track_turns=True); empty otherwise.
     turns: dict[str, TurnStats] = field(default_factory=dict)

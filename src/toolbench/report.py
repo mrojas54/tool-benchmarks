@@ -702,6 +702,16 @@ def _summary_run_lines(reducer: Reducer, run_tickets: int | None) -> list[str]:
             f"  - per ticket ({tickets}): "
             f"read={norm['cache_read']:.1f} creation={norm['cache_creation']:.1f}"
         )
+    if run_stats.worktree_sessions:
+        # TB-44: the part of the total above that came in by cwd-under-worktree
+        # rather than by branch name -- shown so a reader can weigh the two keys.
+        out.append(
+            f"  - via worktree cwd (detached, included above): "
+            f"read={run_stats.worktree_read} "
+            f"creation={run_stats.worktree_creation} "
+            f"({run_stats.worktree_sessions} session"
+            f"{'' if run_stats.worktree_sessions == 1 else 's'})"
+        )
     if run_stats.unattributed_read or run_stats.unattributed_creation:
         # Straddle spillover: same-session work on branches outside the run. A
         # large value means the run total is a narrow slice of what was spent.
@@ -733,6 +743,9 @@ def _summary_run_lines(reducer: Reducer, run_tickets: int | None) -> list[str]:
     missing = run_stats.missing_branches(reducer.run)
     if missing:
         out.append(f"  - matched no entries: {', '.join(missing)}")
+    missing_worktrees = run_stats.missing_worktrees(reducer.run)
+    if missing_worktrees:
+        out.append(f"  - worktrees matched no entries: {', '.join(missing_worktrees)}")
     return out
 
 

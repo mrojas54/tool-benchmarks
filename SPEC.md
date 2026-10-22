@@ -343,9 +343,21 @@ and re-exports the public symbols historical imports expect.
   scoped corpus-wide it would be dominated by unrelated `main` work. A manifest
   branch matching zero entries is reported, never a silent zero (S23/S38). An
   empty or missing `branches` list is `MalformedRunManifest` (exit 1) — a run
-  with no branch set would attribute nothing. Optional manifest `worktrees` is
-  accepted and stored but unused for attribution (branches-only; TB-28 rejected
-  cwd-based membership). The run section renders read + creation together,
+  with no branch set would attribute nothing. Optional manifest `worktrees`
+  (TB-44) is a second dispatch-time correlation key, of the same standing as a
+  branch name: `ClaudeParser` also buckets each entry's usage by
+  `(gitBranch, cwd)` into `usage_by_branch_cwd` (a finer partition of
+  `usage_by_branch`), and a **detached** (`HEAD`) entry whose `cwd` equals or is
+  nested under a manifest worktree — after `expanduser` + lexical normalization,
+  compared by path component so `/wt/tb-1` never claims `/wt/tb-12` — folds into
+  the run total and makes its session a candidate. Only `HEAD` entries are
+  re-keyed by cwd (a branch-named entry is already attributed; re-keying would
+  double-count), nested worktrees credit the deepest, and no time-window or
+  heuristic matching exists. Worktree-attributed usage is shown as its own
+  sub-line under the run total; the remaining detached usage stays in the
+  `detached_*` line; a manifest worktree matching zero entries is named, as a
+  branch is. A relative worktree path is `MalformedRunManifest` (it would match
+  against the analyzer's own cwd). The run section renders read + creation together,
   normalized per ticket (`--tickets N` when set, else `len(manifest.tickets)`;
   `--tickets` without `--run-manifest` is a no-op; `--tickets 0` is rejected at
   parse), as a Summary caveat — never a ranking column (S19).

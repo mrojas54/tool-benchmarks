@@ -89,6 +89,7 @@ class _UsageTally:
     output_tokens: int = 0
     usage_messages: int = 0
     by_branch: dict[str, BranchUsage] = field(default_factory=dict)
+    by_branch_cwd: dict[tuple[str, str], BranchUsage] = field(default_factory=dict)
 
 
 def _account_usage(tally: _UsageTally, entry: dict[str, object], message: object) -> None:
@@ -113,15 +114,21 @@ def _account_usage(tally: _UsageTally, entry: dict[str, object], message: object
     tally.output_tokens += entry_output
     # S40: same pass, no second interpreter (CQ 1.2). Bucket by the ENTRY's branch,
     # not the session's -- sessions straddle.
-    branch = entry.get("gitBranch")
-    bucket = tally.by_branch.setdefault(
-        branch if isinstance(branch, str) else "", BranchUsage()
-    )
-    bucket.read += entry_read
-    bucket.creation += entry_creation
-    bucket.input += entry_input
-    bucket.output += entry_output
-    bucket.messages += 1
+    raw_branch = entry.get("gitBranch")
+    branch = raw_branch if isinstance(raw_branch, str) else ""
+    # TB-44: the entry's cwd rides alongside its branch so a detached (`HEAD`) entry
+    # can be matched to a manifest worktree by path. Same entry, same pass.
+    raw_cwd = entry.get("cwd")
+    cwd = raw_cwd if isinstance(raw_cwd, str) else ""
+    for bucket in (
+        tally.by_branch.setdefault(branch, BranchUsage()),
+        tally.by_branch_cwd.setdefault((branch, cwd), BranchUsage()),
+    ):
+        bucket.read += entry_read
+        bucket.creation += entry_creation
+        bucket.input += entry_input
+        bucket.output += entry_output
+        bucket.messages += 1
 
 
 def _track_turn(
@@ -465,6 +472,7 @@ class ClaudeParser(TranscriptParser):
             session_output_tokens=tally.output_tokens,
             session_usage_messages=tally.usage_messages,
             usage_by_branch=tally.by_branch,
+            usage_by_branch_cwd=tally.by_branch_cwd,
             turns=turns,
         )
 

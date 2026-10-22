@@ -14,17 +14,43 @@ key we filter on.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 
 
 class MalformedRunManifest(RuntimeError):
     """The run-manifest is unreadable or cannot define a run's branch set."""
 
 
+def normalize_path(path: str) -> PurePath:
+    """`expanduser` + lexical normalization (collapse `//`, `.`, `..`, trailing `/`).
+
+    Deliberately lexical, never `resolve()`: a run is measured after its worktrees
+    are reclaimed, so the paths usually no longer exist, and a filesystem read here
+    would make attribution depend on what happens to be on disk today.
+    """
+    return PurePath(os.path.normpath(os.path.expanduser(path)))
+
+
+def is_within(cwd: PurePath, root: PurePath) -> bool:
+    """Is `cwd` equal to `root` or nested under it? Both are already normalized.
+
+    Compared by path COMPONENT, not string prefix: `/wt/tb-1` must not claim
+    `/wt/tb-12`, which a `startswith` check would.
+    """
+    # `parents` excludes the path itself, so the worktree root needs its own case.
+    return cwd == root or root in cwd.parents
+
+
 @dataclass(frozen=True)
 class RunManifest:
-    """One orchestration run: its tickets and the branches its delegators worked on."""
+    """One orchestration run: its tickets and the branches its delegators worked on.
+
+    `worktrees` (TB-44) are the paths the orchestrator dispatched delegators into. A
+    path recorded at dispatch is a correlation key of the same standing as a branch
+    name: a detached (`HEAD`) entry whose `cwd` sits inside one belongs to the run.
+    """
 
     run: str
     tickets: tuple[str, ...]
@@ -34,6 +60,18 @@ class RunManifest:
     @property
     def ticket_count(self) -> int:
         return len(self.tickets)
+
+    def worktree_for(self, cwd: str) -> str | None:
+        """The manifest worktree containing `cwd`, as written in the manifest, or None.
+
+        When worktrees nest, the deepest one wins, so usage is credited to the most
+        specific key. An empty cwd (the entry recorded none) never matches.
+        """
+        if not cwd:
+            return None
+        target = normalize_path(cwd)
+        matches = [w for w in self.worktrees if is_within(target, normalize_path(w))]
+        return max(matches, key=lambda w: len(normalize_path(w).parts), default=None)
 
 
 def _str_tuple(data: dict[str, object], key: str) -> tuple[str, ...]:
@@ -73,9 +111,17 @@ def read_run_manifest(path: str) -> RunManifest:
     run = data.get("run", "")
     if not isinstance(run, (str, int)):
         raise MalformedRunManifest(f"`run` must be a string or int, got {type(run).__name__}")
+    worktrees = _str_tuple(data, "worktrees")
+    relative = [w for w in worktrees if not normalize_path(w).is_absolute()]
+    if relative:
+        # A relative path would match against whatever cwd the ANALYZER runs from --
+        # a correlation key that changes meaning with the caller is no key at all.
+        raise MalformedRunManifest(
+            f"`worktrees` must be absolute (or `~`-rooted) paths; got {', '.join(relative)}"
+        )
     return RunManifest(
         run=str(run),
         tickets=_str_tuple(data, "tickets"),
         branches=frozenset(branches),
-        worktrees=_str_tuple(data, "worktrees"),
+        worktrees=worktrees,
     )
